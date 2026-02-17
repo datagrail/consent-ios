@@ -9,9 +9,6 @@ Native iOS SDK for displaying consent banners and managing user privacy preferen
 CocoaPods is the recommended installation method. Add the DataGrail pod source and dependency to your `Podfile`:
 
 ```ruby
-source 'https://github.com/datagrail/podspecs.git'
-source 'https://cdn.cocoapods.org/'
-
 target 'YourApp' do
   use_frameworks!
   pod 'DataGrailConsent', '~> 1.0'
@@ -31,14 +28,14 @@ Open the generated `.xcworkspace` file (not `.xcodeproj`) going forward.
 If you prefer SPM, add the package in Xcode:
 
 1. File > Add Packages
-2. Enter: `https://github.com/datagrail/consent-banner.git`
+2. Enter: `https://github.com/datagrail/consent-ios.git`
 3. Select version `1.0.0` or higher
 
 Or add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/datagrail/consent-banner.git", from: "1.0.0")
+    .package(url: "https://github.com/datagrail/consent-ios.git", from: "1.0.0")
 ]
 ```
 
@@ -95,7 +92,7 @@ if DataGrailConsent.shared.isCategoryEnabled("category_marketing") {
 
   ```bash
   brew install pre-commit
-  cd /path/to/consent-banner
+  cd /path/to/consent-ios
   pre-commit install
   ```
 
