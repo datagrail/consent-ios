@@ -11,7 +11,7 @@ Pod::Spec.new do |s|
 
   s.homepage     = 'https://github.com/datagrail/consent-ios'
   s.license      = { type: 'Apache-2.0', file: 'LICENSE' }
-  s.author       = { 'DataGrail' => 'support@datagrail.com' }
+  s.author       = { 'DataGrail' => 'support@datagrail.io' }
 
   s.source       = {
     git: 'https://github.com/datagrail/consent-ios.git',
