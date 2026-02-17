@@ -9,12 +9,12 @@ Pod::Spec.new do |s|
     backend synchronization.
   DESC
 
-  s.homepage     = 'https://github.com/datagrail/consent-banner'
+  s.homepage     = 'https://github.com/datagrail/consent-ios'
   s.license      = { type: 'Apache-2.0', file: 'LICENSE' }
   s.author       = { 'DataGrail' => 'support@datagrail.com' }
 
   s.source       = {
-    git: 'https://github.com/datagrail/consent-banner.git',
+    git: 'https://github.com/datagrail/consent-ios.git',
     tag: s.version.to_s
   }
 
