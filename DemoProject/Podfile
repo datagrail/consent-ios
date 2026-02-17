@@ -1,0 +1,8 @@
+platform :ios, '13.0'
+
+target 'Demo' do
+  use_frameworks!
+
+  # Reference the local Swift Package
+  pod 'DataGrailConsent', :path => '../'
+end

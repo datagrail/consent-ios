@@ -1,0 +1,120 @@
+# SwiftLint Configuration for DataGrail Consent iOS SDK
+
+# Paths to include/exclude
+included:
+  - Sources
+  - Tests
+
+excluded:
+  - Pods
+  - build
+  - .build
+  - DerivedData
+  - Demo/Build
+
+# Disable rules
+disabled_rules:
+  - trailing_whitespace # Will be handled by formatter
+  - todo # Allow TODO comments
+  - file_length # Some files legitimately need to be longer
+  - blanket_disable_command # Allow blanket disables in test files
+  - trailing_comma # SwiftFormat adds these, they're fine
+  - opening_brace # Conflicts with SwiftFormat's multi-line formatting
+  - optional_data_string_conversion # String(decoding:as:) is a valid UTF-8 conversion
+
+# Opt-in rules
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - explicit_init
+  - first_where
+  - contains_over_first_not_nil
+  - fallthrough
+  - fatal_error_message
+  - force_unwrapping
+  - implicit_return
+  - joined_default_parameter
+  - multiline_parameters
+  - overridden_super_call
+  - prohibited_super_call
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - unavailable_function
+  - unneeded_parentheses_in_closure_argument
+
+# Rule configurations
+line_length:
+  warning: 120
+  error: 150
+  ignores_comments: true
+  ignores_urls: true
+  ignores_function_declarations: true
+
+type_body_length:
+  warning: 300
+  error: 400
+
+function_body_length:
+  warning: 60
+  error: 100
+
+function_parameter_count:
+  warning: 6
+  error: 8
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+
+nesting:
+  type_level:
+    warning: 3
+  statement_level:
+    warning: 5
+
+identifier_name:
+  min_length:
+    warning: 2
+    error: 1
+  max_length:
+    warning: 40
+    error: 50
+  excluded:
+    - id
+    - URL
+    - url
+    - db
+
+type_name:
+  min_length: 3
+  max_length:
+    warning: 40
+    error: 50
+
+# Custom rules
+custom_rules:
+  no_print:
+    name: "No Print Statements"
+    regex: "\\bprint\\("
+    match_kinds:
+      - identifier
+    message: "Use proper logging instead of print()"
+    severity: warning
+
+  no_force_cast:
+    name: "No Force Casts"
+    regex: "\\sas!\\s"
+    message: "Use safe casting with 'as?' or guard statements"
+    severity: error
+
+  no_force_try:
+    name: "No Force Try"
+    regex: "\\btry!\\s"
+    message: "Use proper error handling with do-catch"
+    severity: error
+
+# Warnings to treat as errors (strict mode)
+strict: false
+
+# Reporter type
+reporter: "xcode"
