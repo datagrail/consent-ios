@@ -197,7 +197,7 @@ let preferences = ConsentPreferences(
     cookieOptions: [
         CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
         CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: true),
-        CategoryConsent(gtmKey: "dg-category-analytics", isEnabled: false)
+        CategoryConsent(gtmKey: "dg-category-performance", isEnabled: false)
     ]
 )
 
