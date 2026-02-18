@@ -51,7 +51,7 @@ DataGrailConsent.shared.initialize(configUrl: configUrl) { result in
     switch result {
     case .success:
         // Check if user needs to see the consent banner
-        if try DataGrailConsent.shared.shouldDisplayBanner() {
+        if (try? DataGrailConsent.shared.shouldDisplayBanner()) == true {
             DataGrailConsent.shared.showBanner(from: viewController) { preferences in
                 // User completed the consent flow
             }
@@ -67,7 +67,7 @@ DataGrailConsent.shared.onConsentChanged { preferences in
 }
 
 // Check consent for a specific category
-if try DataGrailConsent.shared.isCategoryEnabled("dg-category-marketing") {
+if (try? DataGrailConsent.shared.isCategoryEnabled("dg-category-marketing")) == true {
     enableMarketingTracking()
 }
 ```
@@ -234,7 +234,7 @@ DataGrailConsent.shared.showBanner(from: viewController, style: .modal) { prefer
 ### Check Category Status
 
 ```swift
-if try DataGrailConsent.shared.isCategoryEnabled("dg-category-marketing") {
+if (try? DataGrailConsent.shared.isCategoryEnabled("dg-category-marketing")) == true {
     enableMarketingTracking()
 }
 ```
