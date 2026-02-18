@@ -6,7 +6,7 @@ Native iOS SDK for displaying consent banners and managing user privacy preferen
 
 ### CocoaPods (Recommended)
 
-CocoaPods is the recommended installation method. Add the DataGrail pod source and dependency to your `Podfile`:
+Add the DataGrail pod to your `Podfile`:
 
 ```ruby
 target 'YourApp' do
@@ -25,7 +25,7 @@ Open the generated `.xcworkspace` file (not `.xcodeproj`) going forward.
 
 ### Swift Package Manager
 
-If you prefer SPM, add the package in Xcode:
+Add the package in Xcode:
 
 1. File > Add Packages
 2. Enter: `https://github.com/datagrail/consent-ios.git`
@@ -45,29 +45,29 @@ dependencies: [
 import DataGrailConsent
 
 // In AppDelegate or SceneDelegate
-DataGrailConsent.shared.initialize(
-    configUrl: "https://consent.datagrail.io/config/YOUR_CONFIG.json"
-) { result in
+let configUrl = URL(string: "https://consent.datagrail.io/config/YOUR_CONFIG.json")!
+
+DataGrailConsent.shared.initialize(configUrl: configUrl) { result in
     switch result {
     case .success:
-        // Check if user needs to consent
-        if DataGrailConsent.shared.needsConsent() {
-            // Show your consent UI
+        // Check if user needs to see the consent banner
+        if try DataGrailConsent.shared.shouldDisplayBanner() {
+            DataGrailConsent.shared.showBanner(from: viewController) { preferences in
+                // User completed the consent flow
+            }
         }
     case .failure(let error):
         print("Failed to initialize: \(error)")
     }
 }
 
-// Listen for changes
+// Listen for consent changes
 DataGrailConsent.shared.onConsentChanged { preferences in
-    // Update your tracking configuration
     updateTracking(preferences)
 }
 
-// Check consent status
-if DataGrailConsent.shared.isCategoryEnabled("category_marketing") {
-    // Marketing category enabled
+// Check consent for a specific category
+if try DataGrailConsent.shared.isCategoryEnabled("dg-category-marketing") {
     enableMarketingTracking()
 }
 ```
@@ -96,22 +96,96 @@ if DataGrailConsent.shared.isCategoryEnabled("category_marketing") {
   pre-commit install
   ```
 
-## API Documentation
+## API Reference
 
-See [main README](../README.md#api-reference) for full API documentation.
+### Initialization
 
-### Key Methods
+| Method | Description |
+|--------|-------------|
+| `DataGrailConsent.shared` | Singleton instance |
+| `initialize(configUrl:completion:)` | Initialize the SDK with a remote config URL. `configUrl` is a `URL`. |
 
-- `initialize(configUrl:completion:)` - Initialize SDK with config URL
-- `needsConsent() -> Bool` - Check if user needs to provide consent
-- `getUserPreferences() -> ConsentPreferences?` - Get user's saved preferences
-- `getCategories() -> ConsentPreferences?` - Get categories with current consent state
-- `savePreferences(_:completion:)` - Save user preferences
-- `acceptAll(completion:)` - Accept all categories
-- `rejectAll(completion:)` - Reject all non-essential categories
-- `isCategoryEnabled(_:) -> Bool` - Check specific category
-- `onConsentChanged(_:)` - Listen for consent changes
-- `reset()` - Clear all stored data
+### Consent Status
+
+These methods throw `ConsentError.notInitialized` if called before `initialize` completes.
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `shouldDisplayBanner()` | `Bool` | Whether the consent banner should be shown |
+| `hasUserConsent()` | `Bool` | Whether the user has previously saved preferences |
+| `getUserPreferences()` | `ConsentPreferences?` | The user's saved preferences, if any |
+| `getCategories()` | `ConsentPreferences?` | Effective categories (saved preferences or config defaults) |
+| `isCategoryEnabled(_:)` | `Bool` | Whether a specific category is enabled |
+| `getConfig()` | `ConsentConfig?` | The loaded configuration (does not throw) |
+
+### Consent Management
+
+| Method | Description |
+|--------|-------------|
+| `savePreferences(_:completion:)` | Save user preferences and sync to backend |
+| `acceptAll(completion:)` | Accept all consent categories |
+| `rejectAll(completion:)` | Reject all non-essential categories |
+| `reset()` | Clear all stored consent data |
+
+### Banner Display
+
+| Method | Description |
+|--------|-------------|
+| `showBanner(from:completion:)` | Present the consent banner modally from a view controller |
+| `showBanner(from:style:completion:)` | Present with a specific `BannerDisplayStyle` |
+
+`BannerDisplayStyle` options:
+- `.modal` — 90% height sheet with rounded corners (default)
+- `.fullScreen` — Full screen presentation
+
+### Event Tracking & Callbacks
+
+| Method | Description |
+|--------|-------------|
+| `trackBannerShown(completion:)` | Record a banner impression event |
+| `onConsentChanged(_:)` | Register a callback invoked whenever preferences change |
+
+### Offline Support
+
+| Method | Description |
+|--------|-------------|
+| `retryPendingRequests(completion:)` | Retry any queued requests that failed while offline. Completion receives `(successCount, failureCount)`. |
+
+## Models
+
+### ConsentPreferences
+
+```swift
+public struct ConsentPreferences: Codable, Equatable {
+    public var isCustomised: Bool
+    public var cookieOptions: [CategoryConsent]
+
+    public func isCategoryEnabled(_ categoryKey: String) -> Bool
+}
+```
+
+### CategoryConsent
+
+```swift
+public struct CategoryConsent: Codable, Equatable {
+    public let gtmKey: String
+    public var isEnabled: Bool
+}
+```
+
+### ConsentError
+
+```swift
+public enum ConsentError: LocalizedError {
+    case notInitialized
+    case invalidConfiguration(String)
+    case invalidConfigUrl(String)
+    case networkError(String)
+    case parseError(String)
+    case storageError(String)
+    case validationError(String)
+}
+```
 
 ## Example Usage
 
@@ -121,9 +195,9 @@ See [main README](../README.md#api-reference) for full API documentation.
 let preferences = ConsentPreferences(
     isCustomised: true,
     cookieOptions: [
-        CategoryConsent(gtmKey: "category_marketing", isEnabled: true),
-        CategoryConsent(gtmKey: "category_analytics", isEnabled: false),
-        CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true)
+        CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
+        CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: true),
+        CategoryConsent(gtmKey: "dg-category-analytics", isEnabled: false)
     ]
 )
 
@@ -145,14 +219,36 @@ DataGrailConsent.shared.acceptAll { result in
 }
 ```
 
+### Show Consent Banner
+
+```swift
+DataGrailConsent.shared.showBanner(from: viewController, style: .modal) { preferences in
+    if let prefs = preferences {
+        print("User saved preferences: \(prefs)")
+    } else {
+        print("User dismissed without saving")
+    }
+}
+```
+
 ### Check Category Status
 
 ```swift
-if DataGrailConsent.shared.isCategoryEnabled("category_marketing") {
-    // Marketing category is enabled
+if try DataGrailConsent.shared.isCategoryEnabled("dg-category-marketing") {
     enableMarketingTracking()
 }
 ```
+
+## Demo Project
+
+A full-featured demo app is included under `DemoProject/`. To run it:
+
+```bash
+./launch_demo.sh          # Build and run
+./launch_demo.sh --clean  # Clean build first
+```
+
+The demo app provides config URL input, banner display in both modal and fullscreen modes, live category status, and debug logging.
 
 ## Testing
 
@@ -160,22 +256,18 @@ if DataGrailConsent.shared.isCategoryEnabled("category_marketing") {
 swift test
 ```
 
-**Status:** ✅ 14/14 tests passing
-
 ## Architecture
 
-The SDK uses a callback-based API for iOS 13+ compatibility:
+The SDK uses a callback-based API for iOS 13+ compatibility with zero external dependencies.
 
-- **Models**: `ConsentConfig`, `ConsentPreferences`, `CategoryConsent`
-- **Storage**: `ConsentStorage` using UserDefaults
-- **Network**: `NetworkClient` with retry logic
-- **Services**: `ConfigService`, `ConsentService`
-- **Manager**: `ConsentManager` orchestrates all layers
-- **Public API**: `DataGrailConsent` singleton
-
-## UI Implementation
-
-**Status:** UI components currently under reconstruction. Core functionality (initialization, preference management, backend sync) is complete and tested.
+- **Public API**: `DataGrailConsent` — singleton entry point
+- **Manager**: `ConsentManager` — orchestrates config, storage, and network layers
+- **Services**: `ConfigService`, `ConsentService` — config fetching and backend sync
+- **Network**: `NetworkClient` — HTTP client with exponential backoff retry
+- **Storage**: `ConsentStorage` — UserDefaults-based persistence with offline request queuing
+- **UI**: `BannerViewController` — multi-layer consent banner with locale-aware translations
+- **Models**: `ConsentConfig`, `ConsentPreferences`, `CategoryConsent`, `ConsentError`
+- **Utils**: `ConfigValidator` — configuration validation
 
 ## License
 
