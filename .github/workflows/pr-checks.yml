@@ -72,9 +72,15 @@ jobs:
 
       - name: Run UIKit Tests on iOS Simulator
         run: |
+          # Find the first available iPhone simulator
+          SIMULATOR=$(xcrun simctl list devices available iPhone | grep -m 1 "iPhone" | sed -E 's/.*\(([0-9A-F-]+)\).*/\1/')
+          SIMULATOR_NAME=$(xcrun simctl list devices available iPhone | grep -m 1 "iPhone" | sed -E 's/^[[:space:]]*([^(]+).*/\1/' | xargs)
+
+          echo "Using simulator: $SIMULATOR_NAME (ID: $SIMULATOR)"
+
           xcodebuild test \
             -scheme DataGrailConsent \
-            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+            -destination "platform=iOS Simulator,id=$SIMULATOR" \
             -enableCodeCoverage YES
 
       - name: Upload UIKit coverage to Codecov
