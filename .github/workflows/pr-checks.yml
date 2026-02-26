@@ -91,6 +91,7 @@ jobs:
           # Use simulator ID directly as destination
           xcodebuild test \
             -scheme DataGrailConsent \
+            -sdk iphonesimulator \
             -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
             -enableCodeCoverage YES
 
