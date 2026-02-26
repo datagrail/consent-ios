@@ -5,122 +5,401 @@
 
     // MARK: - Test Helpers
 
+    // swiftlint:disable type_body_length
     /// Shared test utilities for BannerViewController accessibility tests
     enum BannerAccessibilityTestHelpers {
+        // swiftlint:disable:next function_body_length
         static func createTestConfig() -> ConsentConfig {
-            ConsentConfig(
+            let element = ConsentLayerElement(
+                id: "text1",
+                order: 1,
+                type: "text",
+                style: nil,
+                buttonAction: nil,
+                targetConsentLayer: nil,
+                categories: nil,
+                links: nil,
+                consentLayerCategories: nil,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: [
+                    "en": ElementTranslation(
+                        id: nil,
+                        locale: "en",
+                        value: "We value your privacy",
+                        text: nil,
+                        url: nil
+                    ),
+                ]
+            )
+
+            let layer = ConsentLayer(
+                id: "layer1",
+                name: "First Layer",
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: true,
+                bannerApiId: "first",
+                elements: [element]
+            )
+
+            let layout = Layout(
+                id: "layout1",
+                name: "Test Layout",
+                description: nil,
+                status: "published",
+                defaultLayout: true,
+                collapsedOnMobile: false,
+                firstLayerId: "layer1",
+                gpcDntLayerId: nil,
+                consentLayers: ["layer1": layer]
+            )
+
+            return ConsentConfig(
                 version: "1.0",
+                consentContainerVersionId: "container1",
                 dgCustomerId: "test-customer",
+                publishDate: 0,
+                dch: "categorize",
+                dc: "dg-category-essential",
                 privacyDomain: "test.com",
+                plugins: Plugins(
+                    scriptControl: false,
+                    allCookieSubdomains: false,
+                    cookieBlocking: false,
+                    localStorageBlocking: false,
+                    syncOTConsent: false
+                ),
+                testMode: false,
+                ignoreDoNotTrack: false,
+                trackingDetailsUrl: "https://example.com/tracking",
                 consentMode: "optin",
                 showBanner: true,
-                initialCategories: InitialCategories(initial: []),
-                layout: ConsentLayout(
-                    firstLayerId: "layer1",
-                    consentLayers: [
-                        "layer1": ConsentLayer(elements: [
-                            ConsentLayerElement(
-                                type: "text",
-                                id: "text1",
-                                translations: [
-                                    "en": ElementTranslation(value: "We value your privacy"),
-                                ]
-                            ),
-                        ]),
-                    ]
-                )
+                consentPolicy: ConsentPolicy(name: "Test", default: true),
+                gppUsNat: false,
+                initialCategories: InitialCategories(
+                    respectGpc: false,
+                    respectDnt: false,
+                    respectOptout: false,
+                    initial: [],
+                    gpc: [],
+                    optout: []
+                ),
+                layout: layout
             )
         }
 
-        static func createConfigWithButton(action: ButtonAction, text: String) -> ConsentConfig {
-            ConsentConfig(
+        // swiftlint:disable:next function_body_length
+        static func createConfigWithButton(action: String, text: String) -> ConsentConfig {
+            let element = ConsentLayerElement(
+                id: "btn1",
+                order: 1,
+                type: "button",
+                style: nil,
+                buttonAction: action,
+                targetConsentLayer: nil,
+                categories: nil,
+                links: nil,
+                consentLayerCategories: nil,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: [
+                    "en": ElementTranslation(
+                        id: nil,
+                        locale: "en",
+                        value: nil,
+                        text: text,
+                        url: nil
+                    ),
+                ]
+            )
+
+            let layer = ConsentLayer(
+                id: "layer1",
+                name: "First Layer",
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: true,
+                bannerApiId: "first",
+                elements: [element]
+            )
+
+            let layout = Layout(
+                id: "layout1",
+                name: "Test Layout",
+                description: nil,
+                status: "published",
+                defaultLayout: true,
+                collapsedOnMobile: false,
+                firstLayerId: "layer1",
+                gpcDntLayerId: nil,
+                consentLayers: ["layer1": layer]
+            )
+
+            return ConsentConfig(
                 version: "1.0",
+                consentContainerVersionId: "container1",
                 dgCustomerId: "test-customer",
+                publishDate: 0,
+                dch: "categorize",
+                dc: "dg-category-essential",
                 privacyDomain: "test.com",
+                plugins: Plugins(
+                    scriptControl: false,
+                    allCookieSubdomains: false,
+                    cookieBlocking: false,
+                    localStorageBlocking: false,
+                    syncOTConsent: false
+                ),
+                testMode: false,
+                ignoreDoNotTrack: false,
+                trackingDetailsUrl: "https://example.com/tracking",
                 consentMode: "optin",
                 showBanner: true,
-                initialCategories: InitialCategories(initial: []),
-                layout: ConsentLayout(
-                    firstLayerId: "layer1",
-                    consentLayers: [
-                        "layer1": ConsentLayer(elements: [
-                            ConsentLayerElement(
-                                type: "button",
-                                id: "btn1",
-                                buttonAction: action,
-                                translations: ["en": ElementTranslation(text: text)]
-                            ),
-                        ]),
-                    ]
-                )
+                consentPolicy: ConsentPolicy(name: "Test", default: true),
+                gppUsNat: false,
+                initialCategories: InitialCategories(
+                    respectGpc: false,
+                    respectDnt: false,
+                    respectOptout: false,
+                    initial: [],
+                    gpc: [],
+                    optout: []
+                ),
+                layout: layout
             )
         }
 
+        // swiftlint:disable:next function_body_length
         static func createConfigWithCategories() -> ConsentConfig {
-            ConsentConfig(
+            let categories = [
+                ConsentLayerCategory(
+                    id: "essential",
+                    consentCategoryId: "cat1",
+                    order: 1,
+                    hidden: false,
+                    primitive: "essential",
+                    alwaysOn: true,
+                    gtmKey: "category_essential",
+                    uuids: [],
+                    cookiePatterns: [],
+                    translations: [
+                        "en": CategoryTranslation(
+                            id: nil,
+                            locale: "en",
+                            name: "Essential",
+                            description: nil,
+                            essentialLabel: nil,
+                            trackingDetailsLink: nil
+                        ),
+                    ],
+                    showTrackingDetailsLink: false
+                ),
+                ConsentLayerCategory(
+                    id: "marketing",
+                    consentCategoryId: "cat2",
+                    order: 2,
+                    hidden: false,
+                    primitive: "marketing",
+                    alwaysOn: false,
+                    gtmKey: "category_marketing",
+                    uuids: [],
+                    cookiePatterns: [],
+                    translations: [
+                        "en": CategoryTranslation(
+                            id: nil,
+                            locale: "en",
+                            name: "Marketing",
+                            description: nil,
+                            essentialLabel: nil,
+                            trackingDetailsLink: nil
+                        ),
+                    ],
+                    showTrackingDetailsLink: false
+                ),
+            ]
+
+            let element = ConsentLayerElement(
+                id: "categories",
+                order: 1,
+                type: "category",
+                style: nil,
+                buttonAction: nil,
+                targetConsentLayer: nil,
+                categories: nil,
+                links: nil,
+                consentLayerCategories: categories,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: nil
+            )
+
+            let layer = ConsentLayer(
+                id: "layer1",
+                name: "First Layer",
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: true,
+                bannerApiId: "first",
+                elements: [element]
+            )
+
+            let layout = Layout(
+                id: "layout1",
+                name: "Test Layout",
+                description: nil,
+                status: "published",
+                defaultLayout: true,
+                collapsedOnMobile: false,
+                firstLayerId: "layer1",
+                gpcDntLayerId: nil,
+                consentLayers: ["layer1": layer]
+            )
+
+            return ConsentConfig(
                 version: "1.0",
+                consentContainerVersionId: "container1",
                 dgCustomerId: "test-customer",
+                publishDate: 0,
+                dch: "categorize",
+                dc: "dg-category-essential",
                 privacyDomain: "test.com",
+                plugins: Plugins(
+                    scriptControl: false,
+                    allCookieSubdomains: false,
+                    cookieBlocking: false,
+                    localStorageBlocking: false,
+                    syncOTConsent: false
+                ),
+                testMode: false,
+                ignoreDoNotTrack: false,
+                trackingDetailsUrl: "https://example.com/tracking",
                 consentMode: "optin",
                 showBanner: true,
-                initialCategories: InitialCategories(initial: [
-                    "category_essential", "category_marketing",
-                ]),
-                layout: ConsentLayout(
-                    firstLayerId: "layer1",
-                    consentLayers: [
-                        "layer1": ConsentLayer(elements: [
-                            ConsentLayerElement(
-                                type: "category",
-                                id: "categories",
-                                consentLayerCategories: [
-                                    ConsentLayerCategory(
-                                        id: "essential",
-                                        gtmKey: "category_essential",
-                                        primitive: "essential",
-                                        alwaysOn: true,
-                                        translations: ["en": CategoryTranslation(name: "Essential")]
-                                    ),
-                                    ConsentLayerCategory(
-                                        id: "marketing",
-                                        gtmKey: "category_marketing",
-                                        primitive: "marketing",
-                                        alwaysOn: false,
-                                        translations: ["en": CategoryTranslation(name: "Marketing")]
-                                    ),
-                                ]
-                            ),
-                        ]),
-                    ]
-                )
+                consentPolicy: ConsentPolicy(name: "Test", default: true),
+                gppUsNat: false,
+                initialCategories: InitialCategories(
+                    respectGpc: false,
+                    respectDnt: false,
+                    respectOptout: false,
+                    initial: ["category_essential", "category_marketing"],
+                    gpc: [],
+                    optout: []
+                ),
+                layout: layout
             )
         }
 
+        // swiftlint:disable:next function_body_length
         static func createConfigWithLink() -> ConsentConfig {
-            ConsentConfig(
+            let element = ConsentLayerElement(
+                id: "link1",
+                order: 1,
+                type: "link",
+                style: nil,
+                buttonAction: nil,
+                targetConsentLayer: nil,
+                categories: nil,
+                links: nil,
+                consentLayerCategories: nil,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: [
+                    "en": ElementTranslation(
+                        id: nil,
+                        locale: "en",
+                        value: nil,
+                        text: "Privacy Policy",
+                        url: "https://example.com/privacy"
+                    ),
+                ]
+            )
+
+            let layer = ConsentLayer(
+                id: "layer1",
+                name: "First Layer",
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: true,
+                bannerApiId: "first",
+                elements: [element]
+            )
+
+            let layout = Layout(
+                id: "layout1",
+                name: "Test Layout",
+                description: nil,
+                status: "published",
+                defaultLayout: true,
+                collapsedOnMobile: false,
+                firstLayerId: "layer1",
+                gpcDntLayerId: nil,
+                consentLayers: ["layer1": layer]
+            )
+
+            return ConsentConfig(
                 version: "1.0",
+                consentContainerVersionId: "container1",
                 dgCustomerId: "test-customer",
+                publishDate: 0,
+                dch: "categorize",
+                dc: "dg-category-essential",
                 privacyDomain: "test.com",
+                plugins: Plugins(
+                    scriptControl: false,
+                    allCookieSubdomains: false,
+                    cookieBlocking: false,
+                    localStorageBlocking: false,
+                    syncOTConsent: false
+                ),
+                testMode: false,
+                ignoreDoNotTrack: false,
+                trackingDetailsUrl: "https://example.com/tracking",
                 consentMode: "optin",
                 showBanner: true,
-                initialCategories: InitialCategories(initial: []),
-                layout: ConsentLayout(
-                    firstLayerId: "layer1",
-                    consentLayers: [
-                        "layer1": ConsentLayer(elements: [
-                            ConsentLayerElement(
-                                type: "link",
-                                id: "link1",
-                                translations: [
-                                    "en": ElementTranslation(
-                                        text: "Privacy Policy",
-                                        url: "https://example.com/privacy"
-                                    ),
-                                ]
-                            ),
-                        ]),
-                    ]
-                )
+                consentPolicy: ConsentPolicy(name: "Test", default: true),
+                gppUsNat: false,
+                initialCategories: InitialCategories(
+                    respectGpc: false,
+                    respectDnt: false,
+                    respectOptout: false,
+                    initial: [],
+                    gpc: [],
+                    optout: []
+                ),
+                layout: layout
             )
         }
 
@@ -214,7 +493,7 @@
     final class BannerButtonAccessibilityTests: XCTestCase {
         func testAcceptAllButton_HasAccessibilityHint() {
             let config = BannerAccessibilityTestHelpers.createConfigWithButton(
-                action: .acceptAll, text: "Accept All"
+                action: "accept_all", text: "Accept All"
             )
             let vc = BannerViewController(
                 config: config,
@@ -233,7 +512,7 @@
 
         func testRejectAllButton_HasAccessibilityHint() {
             let config = BannerAccessibilityTestHelpers.createConfigWithButton(
-                action: .rejectAll, text: "Reject All"
+                action: "reject_all", text: "Reject All"
             )
             let vc = BannerViewController(
                 config: config,
@@ -252,7 +531,7 @@
 
         func testCustomButton_HasAccessibilityHint() {
             let config = BannerAccessibilityTestHelpers.createConfigWithButton(
-                action: .custom, text: "Save Preferences"
+                action: "save", text: "Save Preferences"
             )
             let vc = BannerViewController(
                 config: config,
