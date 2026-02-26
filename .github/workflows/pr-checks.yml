@@ -76,25 +76,22 @@ jobs:
           echo "Available iPhone simulators:"
           xcrun simctl list devices available iPhone | head -10 || true
 
-          # Get first available iPhone simulator
-          SIMULATOR=$(xcrun simctl list devices available iPhone | \
+          # Get first available iPhone simulator UUID
+          SIMULATOR_ID=$(xcrun simctl list devices available iPhone | \
             grep -m 1 "iPhone" | \
-            sed -E 's/^[[:space:]]*([^(]+).*/\1/' | \
-            xargs)
+            sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')
 
-          # Fallback to a generic name if detection fails
-          if [ -z "$SIMULATOR" ]; then
-            SIMULATOR="iPhone 15"
-            echo "No simulator detected, using fallback: $SIMULATOR"
-          else
-            echo "Using simulator: $SIMULATOR"
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "Error: No iPhone simulator found"
+            exit 1
           fi
 
-          # Use -sdk iphonesimulator to ensure iOS Simulator destinations are available
+          echo "Using simulator ID: $SIMULATOR_ID"
+
+          # Use simulator ID directly as destination
           xcodebuild test \
             -scheme DataGrailConsent \
-            -sdk iphonesimulator \
-            -destination "platform=iOS Simulator,name=$SIMULATOR" \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
             -enableCodeCoverage YES
 
       - name: Upload UIKit coverage to Codecov
