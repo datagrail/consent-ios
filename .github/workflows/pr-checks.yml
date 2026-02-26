@@ -60,6 +60,49 @@ jobs:
       - name: Lint
         run: swiftlint lint --strict
 
+  uikit-tests:
+    name: UIKit Tests (iOS Simulator)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 'latest-stable'
+
+      - name: Run UIKit Tests on iOS Simulator
+        run: |
+          # List available simulators
+          echo "Available iPhone simulators:"
+          xcrun simctl list devices available iPhone | head -10 || true
+
+          # Get first available iPhone simulator UUID
+          SIMULATOR_ID=$(xcrun simctl list devices available iPhone | \
+            grep -m 1 "iPhone" | \
+            sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')
+
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "Error: No iPhone simulator found"
+            exit 1
+          fi
+
+          echo "Using simulator ID: $SIMULATOR_ID"
+
+          # Use simulator ID directly as destination
+          xcodebuild test \
+            -scheme DataGrailConsent \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -enableCodeCoverage YES
+
+      - name: Upload UIKit coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          flags: uikit-tests
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   pod-lint:
     name: Podspec Validation
     runs-on: macos-latest
