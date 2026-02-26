@@ -168,29 +168,90 @@
         // MARK: - Tracking Details Dark Mode Tests
 
         func testTrackingDetailsText_UsesSecondaryLabelColor() {
+            let element = ConsentLayerElement(
+                id: "details1",
+                order: 1,
+                type: "tracking_details",
+                style: nil,
+                buttonAction: nil,
+                targetConsentLayer: nil,
+                categories: nil,
+                links: nil,
+                consentLayerCategories: nil,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: [
+                    "en": ElementTranslation(
+                        id: nil,
+                        locale: "en",
+                        value: "Tracking details text",
+                        text: nil,
+                        url: nil
+                    )
+                ]
+            )
+
+            let layer = ConsentLayer(
+                id: "layer1",
+                name: "First Layer",
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: true,
+                bannerApiId: "first",
+                elements: [element]
+            )
+
+            let layout = Layout(
+                id: "layout1",
+                name: "Test Layout",
+                description: nil,
+                status: "published",
+                defaultLayout: true,
+                collapsedOnMobile: false,
+                firstLayerId: "layer1",
+                gpcDntLayerId: nil,
+                consentLayers: ["layer1": layer]
+            )
+
             let config = ConsentConfig(
                 version: "1.0",
+                consentContainerVersionId: "container1",
                 dgCustomerId: "test-customer",
+                publishDate: 0,
+                dch: "categorize",
+                dc: "dg-category-essential",
                 privacyDomain: "test.com",
+                plugins: Plugins(
+                    scriptControl: false,
+                    allCookieSubdomains: false,
+                    cookieBlocking: false,
+                    localStorageBlocking: false,
+                    syncOTConsent: false
+                ),
+                testMode: false,
+                ignoreDoNotTrack: false,
+                trackingDetailsUrl: "https://example.com/tracking",
                 consentMode: "optin",
                 showBanner: true,
-                initialCategories: InitialCategories(initial: []),
-                layout: ConsentLayout(
-                    firstLayerId: "layer1",
-                    consentLayers: [
-                        "layer1": ConsentLayer(elements: [
-                            ConsentLayerElement(
-                                type: "tracking_details",
-                                id: "details1",
-                                translations: [
-                                    "en": ElementTranslation(
-                                        value: "Tracking details text"
-                                    )
-                                ]
-                            )
-                        ])
-                    ]
-                )
+                consentPolicy: ConsentPolicy(name: "Test", default: true),
+                gppUsNat: false,
+                initialCategories: InitialCategories(
+                    respectGpc: false,
+                    respectDnt: false,
+                    respectOptout: false,
+                    initial: [],
+                    gpc: [],
+                    optout: []
+                ),
+                layout: layout
             )
             let vc = BannerViewController(
                 config: config,
