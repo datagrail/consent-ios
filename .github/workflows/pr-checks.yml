@@ -72,6 +72,10 @@ jobs:
 
       - name: Run UIKit Tests on iOS Simulator
         run: |
+          # Show all available destinations for debugging
+          echo "All available destinations:"
+          xcodebuild -showdestinations -scheme DataGrailConsent 2>&1 | grep -E "(platform|Ineligible)"
+
           # Get the first available iPhone simulator from xcodebuild's supported destinations
           SIMULATOR=$(xcodebuild -showdestinations -scheme DataGrailConsent 2>&1 | \
             grep "platform:iOS Simulator" | \
@@ -80,6 +84,22 @@ jobs:
             head -1 | \
             sed -E 's/.*name:([^,}]+).*/\1/' | \
             xargs)
+
+          # If no iPhone found, try any iOS Simulator (iPad, etc)
+          if [ -z "$SIMULATOR" ]; then
+            echo "No iPhone simulator found, trying any iOS Simulator device..."
+            SIMULATOR=$(xcodebuild -showdestinations -scheme DataGrailConsent 2>&1 | \
+              grep "platform:iOS Simulator" | \
+              grep -v "Any iOS" | \
+              head -1 | \
+              sed -E 's/.*name:([^,}]+).*/\1/' | \
+              xargs)
+          fi
+
+          if [ -z "$SIMULATOR" ]; then
+            echo "Error: No iOS Simulator found!"
+            exit 1
+          fi
 
           echo "Using simulator: $SIMULATOR"
 
