@@ -60,6 +60,31 @@ jobs:
       - name: Lint
         run: swiftlint lint --strict
 
+  uikit-tests:
+    name: UIKit Tests (iOS Simulator)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.0'
+
+      - name: Run UIKit Tests on iOS Simulator
+        run: |
+          xcodebuild test \
+            -scheme DataGrailConsent \
+            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+            -enableCodeCoverage YES
+
+      - name: Upload UIKit coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          flags: uikit-tests
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   pod-lint:
     name: Podspec Validation
     runs-on: macos-latest
