@@ -72,25 +72,20 @@ jobs:
 
       - name: Run UIKit Tests on iOS Simulator
         run: |
-          # List available simulators for debugging
-          echo "Available iPhone simulators:"
-          xcrun simctl list devices available iPhone
+          # Get the first available iPhone simulator from xcodebuild's supported destinations
+          SIMULATOR=$(xcodebuild -showdestinations -scheme DataGrailConsent 2>&1 | \
+            grep "platform:iOS Simulator" | \
+            grep -i "iPhone" | \
+            grep -v "Any iOS" | \
+            head -1 | \
+            sed -E 's/.*name:([^,}]+).*/\1/' | \
+            xargs)
 
-          # Use a common simulator that exists across Xcode versions
-          # Try iPhone 15, fall back to any available iPhone if not found
-          DEVICE_NAME="iPhone 15"
-          if xcrun simctl list devices available | grep -q "$DEVICE_NAME"; then
-            echo "Using iPhone 15"
-          else
-            echo "iPhone 15 not found, using first available iPhone simulator"
-            DEVICE_NAME=$(xcrun simctl list devices available iPhone | grep -m 1 "iPhone" | sed -E 's/^[[:space:]]*([^(]+).*/\1/' | xargs)
-          fi
-
-          echo "Using simulator: $DEVICE_NAME"
+          echo "Using simulator: $SIMULATOR"
 
           xcodebuild test \
             -scheme DataGrailConsent \
-            -destination "platform=iOS Simulator,name=$DEVICE_NAME" \
+            -destination "platform=iOS Simulator,name=$SIMULATOR" \
             -enableCodeCoverage YES
 
       - name: Upload UIKit coverage to Codecov
