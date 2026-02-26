@@ -5,8 +5,10 @@
 
     // MARK: - Test Helpers
 
+    // swiftlint:disable type_body_length
     /// Shared test utilities for BannerViewController accessibility tests
     enum BannerAccessibilityTestHelpers {
+        // swiftlint:disable:next function_body_length
         static func createTestConfig() -> ConsentConfig {
             let element = ConsentLayerElement(
                 id: "text1",
@@ -95,6 +97,7 @@
             )
         }
 
+        // swiftlint:disable:next function_body_length
         static func createConfigWithButton(action: String, text: String) -> ConsentConfig {
             let element = ConsentLayerElement(
                 id: "btn1",
@@ -183,6 +186,7 @@
             )
         }
 
+        // swiftlint:disable:next function_body_length
         static func createConfigWithCategories() -> ConsentConfig {
             let categories = [
                 ConsentLayerCategory(
@@ -310,6 +314,7 @@
             )
         }
 
+        // swiftlint:disable:next function_body_length
         static func createConfigWithLink() -> ConsentConfig {
             let element = ConsentLayerElement(
                 id: "link1",
