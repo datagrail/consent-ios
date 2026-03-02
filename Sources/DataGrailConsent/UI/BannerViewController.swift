@@ -141,7 +141,7 @@
             view.backgroundColor = UIColor.black.withAlphaComponent(0.5)
 
             // Container view
-            containerView.backgroundColor = .white
+            containerView.backgroundColor = .systemBackground
             containerView.layer.cornerRadius = 12
             containerView.layer.shadowColor = UIColor.black.cgColor
             containerView.layer.shadowOpacity = 0.2
@@ -209,10 +209,10 @@
 
         // swiftlint:disable:next function_body_length
         private func setupFullScreenUI() {
-            view.backgroundColor = .white
+            view.backgroundColor = .systemBackground
 
             // Container view (full screen, no rounded corners)
-            containerView.backgroundColor = .white
+            containerView.backgroundColor = .systemBackground
             containerView.translatesAutoresizingMaskIntoConstraints = false
             containerView.isAccessibilityElement = false
             containerView.accessibilityLabel = "Consent Banner"
@@ -308,7 +308,7 @@
         private func setupCloseButton() {
             closeButton.setTitle("✕", for: .normal)
             closeButton.titleLabel?.font = .systemFont(ofSize: 24)
-            closeButton.tintColor = .gray
+            closeButton.tintColor = .secondaryLabel
             closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
             closeButton.translatesAutoresizingMaskIntoConstraints = false
             closeButton.accessibilityLabel = "Close consent banner"
@@ -433,7 +433,7 @@
             label.text = text
             label.numberOfLines = 0
             label.font = .systemFont(ofSize: 16)
-            label.textColor = .darkGray
+            label.textColor = .label
             label.isAccessibilityElement = true
             label.accessibilityLabel = text
             label.accessibilityTraits = .staticText
@@ -612,6 +612,7 @@
                     from: category.translations)
                 label.text = catTranslation?.name ?? "Category"
                 label.font = .systemFont(ofSize: 16, weight: .medium)
+                label.textColor = .label
                 label.numberOfLines = 0
 
                 // Toggle switch
@@ -663,7 +664,7 @@
                 label.text = text
                 label.numberOfLines = 0
                 label.font = .systemFont(ofSize: 14)
-                label.textColor = .gray
+                label.textColor = .secondaryLabel
                 containerView.addArrangedSubview(label)
             }
 
@@ -701,7 +702,7 @@
             label.text = text
             label.numberOfLines = 0
             label.font = .systemFont(ofSize: 14)
-            label.textColor = .darkGray
+            label.textColor = .label
             label.isAccessibilityElement = true
             label.accessibilityLabel = text
             containerView.addArrangedSubview(label)
