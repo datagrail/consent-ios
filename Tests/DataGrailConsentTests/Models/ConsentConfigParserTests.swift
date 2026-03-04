@@ -36,7 +36,7 @@ final class ConsentConfigParserTests: XCTestCase {
         XCTAssertTrue(config.plugins.allCookieSubdomains)
         XCTAssertTrue(config.plugins.cookieBlocking)
         XCTAssertTrue(config.plugins.localStorageBlocking)
-        XCTAssertEqual(config.plugins.syncOTConsent, false)
+        XCTAssertFalse(config.plugins.syncOTConsent)
 
         // Verify consent policy
         XCTAssertEqual(config.consentPolicy.name, "CPRA")
@@ -101,7 +101,7 @@ final class ConsentConfigParserTests: XCTestCase {
         XCTAssertTrue(config.plugins.allCookieSubdomains)
         XCTAssertTrue(config.plugins.cookieBlocking)
         XCTAssertTrue(config.plugins.localStorageBlocking)
-        XCTAssertEqual(config.plugins.syncOTConsent, false)
+        XCTAssertFalse(config.plugins.syncOTConsent)
 
         // Verify consent policy
         XCTAssertEqual(config.consentPolicy.name, "US Standard Policy")
@@ -299,12 +299,12 @@ final class ConsentConfigParserTests: XCTestCase {
         XCTAssertFalse(config.showBanner)
         XCTAssertTrue(config.gppUsNat)
 
-        // Verify plugins - syncOTConsent should be nil when absent
+        // Verify plugins - syncOTConsent defaults to false when absent
         XCTAssertTrue(config.plugins.scriptControl)
         XCTAssertTrue(config.plugins.allCookieSubdomains)
         XCTAssertTrue(config.plugins.cookieBlocking)
         XCTAssertTrue(config.plugins.localStorageBlocking)
-        XCTAssertNil(config.plugins.syncOTConsent)
+        XCTAssertFalse(config.plugins.syncOTConsent)
 
         // Verify layout
         XCTAssertEqual(config.layout.id, "0c74436b-1c80-4078-89f8-e0840903252a")
