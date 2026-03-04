@@ -23,6 +23,7 @@ let package = Package(
             resources: [
                 .copy("Resources/test-config.json"),
                 .copy("Resources/config-bys.json"),
+                .copy("Resources/config-no-sync-ot.json"),
             ]
         ),
     ]

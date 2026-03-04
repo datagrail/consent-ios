@@ -36,7 +36,7 @@ final class ConsentConfigParserTests: XCTestCase {
         XCTAssertTrue(config.plugins.allCookieSubdomains)
         XCTAssertTrue(config.plugins.cookieBlocking)
         XCTAssertTrue(config.plugins.localStorageBlocking)
-        XCTAssertFalse(config.plugins.syncOTConsent)
+        XCTAssertEqual(config.plugins.syncOTConsent, false)
 
         // Verify consent policy
         XCTAssertEqual(config.consentPolicy.name, "CPRA")
@@ -101,7 +101,7 @@ final class ConsentConfigParserTests: XCTestCase {
         XCTAssertTrue(config.plugins.allCookieSubdomains)
         XCTAssertTrue(config.plugins.cookieBlocking)
         XCTAssertTrue(config.plugins.localStorageBlocking)
-        XCTAssertFalse(config.plugins.syncOTConsent)
+        XCTAssertEqual(config.plugins.syncOTConsent, false)
 
         // Verify consent policy
         XCTAssertEqual(config.consentPolicy.name, "US Standard Policy")
@@ -274,6 +274,53 @@ final class ConsentConfigParserTests: XCTestCase {
                 }
             }
         }
+    }
+
+    func testParseConfigWithoutSyncOTConsent() throws {
+        // Config where plugins does not include syncOTConsent field
+        guard
+            let configUrl = Bundle.module.url(forResource: "config-no-sync-ot", withExtension: "json")
+        else {
+            XCTFail("Could not find config-no-sync-ot.json in test bundle")
+            return
+        }
+
+        let configData = try Data(contentsOf: configUrl)
+        let decoder = JSONDecoder()
+        let config = try decoder.decode(ConsentConfig.self, from: configData)
+
+        // Verify top-level properties
+        XCTAssertEqual(config.version, "3a5a8a4a-067a-4ffb-9d22-7ac2849503e4")
+        XCTAssertEqual(config.dgCustomerId, "cfbae663-019d-46a6-807c-2bb82295ffa2")
+        XCTAssertEqual(config.publishDate, 1_771_948_106_926)
+        XCTAssertEqual(config.dch, "allow_all")
+        XCTAssertEqual(config.dc, "dg-category-essential")
+        XCTAssertEqual(config.consentMode, "optout")
+        XCTAssertTrue(config.showBanner)
+        XCTAssertFalse(config.gppUsNat)
+
+        // Verify plugins - syncOTConsent should be nil when absent
+        XCTAssertTrue(config.plugins.scriptControl)
+        XCTAssertFalse(config.plugins.allCookieSubdomains)
+        XCTAssertFalse(config.plugins.cookieBlocking)
+        XCTAssertFalse(config.plugins.localStorageBlocking)
+        XCTAssertNil(config.plugins.syncOTConsent)
+
+        // Verify layout
+        XCTAssertEqual(config.layout.id, "7c03263d-6063-4b91-9de7-7ab80c681b2f")
+        XCTAssertEqual(config.layout.name, "Default Layout")
+        XCTAssertTrue(config.layout.defaultLayout)
+        XCTAssertNil(config.layout.gpcDntLayerId)
+
+        // Verify consent layers
+        XCTAssertEqual(config.layout.consentLayers.count, 2)
+        XCTAssertNotNil(config.layout.consentLayers["05fa0767-b659-4199-be1a-f061eb6c4c6c"])
+        XCTAssertNotNil(config.layout.consentLayers["d8d89193-631c-49aa-b519-c932dbec2610"])
+
+        // Verify categories layer has 4 categories
+        let categoriesLayer = config.layout.consentLayers["05fa0767-b659-4199-be1a-f061eb6c4c6c"]
+        let categoryElement = categoriesLayer?.elements.first { $0.type == "ConsentLayerCategoryElement" }
+        XCTAssertEqual(categoryElement?.consentLayerCategories?.count, 4)
     }
 
     func testParseInvalidJSON() {

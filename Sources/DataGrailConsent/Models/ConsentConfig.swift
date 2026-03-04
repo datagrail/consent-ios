@@ -34,7 +34,7 @@ public struct Plugins: Codable {
     public let allCookieSubdomains: Bool
     public let cookieBlocking: Bool
     public let localStorageBlocking: Bool
-    public let syncOTConsent: Bool
+    public let syncOTConsent: Bool?
 }
 
 /// Consent policy information
