@@ -35,6 +35,33 @@ public struct Plugins: Codable {
     public let cookieBlocking: Bool
     public let localStorageBlocking: Bool
     public let syncOTConsent: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case scriptControl, allCookieSubdomains, cookieBlocking, localStorageBlocking, syncOTConsent
+    }
+
+    public init(
+        scriptControl: Bool,
+        allCookieSubdomains: Bool,
+        cookieBlocking: Bool,
+        localStorageBlocking: Bool,
+        syncOTConsent: Bool = false
+    ) {
+        self.scriptControl = scriptControl
+        self.allCookieSubdomains = allCookieSubdomains
+        self.cookieBlocking = cookieBlocking
+        self.localStorageBlocking = localStorageBlocking
+        self.syncOTConsent = syncOTConsent
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        scriptControl = try container.decode(Bool.self, forKey: .scriptControl)
+        allCookieSubdomains = try container.decode(Bool.self, forKey: .allCookieSubdomains)
+        cookieBlocking = try container.decode(Bool.self, forKey: .cookieBlocking)
+        localStorageBlocking = try container.decode(Bool.self, forKey: .localStorageBlocking)
+        syncOTConsent = try container.decodeIfPresent(Bool.self, forKey: .syncOTConsent) ?? false
+    }
 }
 
 /// Consent policy information
