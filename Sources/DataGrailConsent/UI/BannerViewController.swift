@@ -137,6 +137,7 @@
             }
         }
 
+        // swiftlint:disable:next function_body_length
         private func setupModalUI() {
             view.backgroundColor = UIColor.black.withAlphaComponent(0.5)
 
