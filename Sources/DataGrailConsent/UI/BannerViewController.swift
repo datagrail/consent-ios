@@ -152,10 +152,6 @@
             containerView.accessibilityLabel = "Consent Banner"
             view.addSubview(containerView)
 
-            // Close button (always shown in modal)
-            setupCloseButton()
-            containerView.addSubview(closeButton)
-
             // Scroll view
             scrollView.translatesAutoresizingMaskIntoConstraints = false
             containerView.addSubview(scrollView)
@@ -166,45 +162,85 @@
             contentStackView.translatesAutoresizingMaskIntoConstraints = false
             scrollView.addSubview(contentStackView)
 
-            // Constraints
-            NSLayoutConstraint.activate([
-                // Container - 90% height, centered
-                containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-                containerView.trailingAnchor.constraint(
-                    equalTo: view.trailingAnchor, constant: -20
-                ),
-                containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-                containerView.heightAnchor.constraint(
-                    equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.9
-                ),
+            // Check if current layer has show_close_button enabled
+            let currentLayer = config.layout.consentLayers[currentLayerKey]
+            let showCloseButton = currentLayer?.showCloseButton ?? false
 
-                // Close button
-                closeButton.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
-                closeButton.trailingAnchor.constraint(
-                    equalTo: containerView.trailingAnchor, constant: -12
-                ),
-                closeButton.widthAnchor.constraint(equalToConstant: 44),
-                closeButton.heightAnchor.constraint(equalToConstant: 44),
+            if showCloseButton {
+                setupCloseButton()
+                containerView.addSubview(closeButton)
 
-                // Scroll view
-                scrollView.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 8),
-                scrollView.leadingAnchor.constraint(
-                    equalTo: containerView.leadingAnchor, constant: 20
-                ),
-                scrollView.trailingAnchor.constraint(
-                    equalTo: containerView.trailingAnchor, constant: -20
-                ),
-                scrollView.bottomAnchor.constraint(
-                    equalTo: containerView.bottomAnchor, constant: -20
-                ),
+                NSLayoutConstraint.activate([
+                    // Container - 90% height, centered
+                    containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+                    containerView.trailingAnchor.constraint(
+                        equalTo: view.trailingAnchor, constant: -20
+                    ),
+                    containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                    containerView.heightAnchor.constraint(
+                        equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.9
+                    ),
 
-                // Content stack
-                contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
-                contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-                contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-                contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-                contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-            ])
+                    // Close button
+                    closeButton.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
+                    closeButton.trailingAnchor.constraint(
+                        equalTo: containerView.trailingAnchor, constant: -12
+                    ),
+                    closeButton.widthAnchor.constraint(equalToConstant: 44),
+                    closeButton.heightAnchor.constraint(equalToConstant: 44),
+
+                    // Scroll view
+                    scrollView.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 8),
+                    scrollView.leadingAnchor.constraint(
+                        equalTo: containerView.leadingAnchor, constant: 20
+                    ),
+                    scrollView.trailingAnchor.constraint(
+                        equalTo: containerView.trailingAnchor, constant: -20
+                    ),
+                    scrollView.bottomAnchor.constraint(
+                        equalTo: containerView.bottomAnchor, constant: -20
+                    ),
+
+                    // Content stack
+                    contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
+                    contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+                    contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+                    contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+                    contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+                ])
+            } else {
+                // No close button - scroll view starts from top
+                NSLayoutConstraint.activate([
+                    // Container - 90% height, centered
+                    containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+                    containerView.trailingAnchor.constraint(
+                        equalTo: view.trailingAnchor, constant: -20
+                    ),
+                    containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                    containerView.heightAnchor.constraint(
+                        equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.9
+                    ),
+
+                    // Scroll view (from top)
+                    scrollView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20),
+                    scrollView.leadingAnchor.constraint(
+                        equalTo: containerView.leadingAnchor, constant: 20
+                    ),
+                    scrollView.trailingAnchor.constraint(
+                        equalTo: containerView.trailingAnchor, constant: -20
+                    ),
+                    scrollView.bottomAnchor.constraint(
+                        equalTo: containerView.bottomAnchor, constant: -20
+                    ),
+
+                    // Content stack
+                    contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
+                    contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+                    contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+                    contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+                    contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+                ])
+            }
         }
 
         // swiftlint:disable:next function_body_length
