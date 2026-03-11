@@ -202,12 +202,13 @@
             ])
 
             // Scroll view constraints - store top anchor for dynamic updates during navigation
-            scrollViewTopConstraint = showCloseButton
+            let topConstraint = showCloseButton
                 ? scrollView.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 8)
                 : scrollView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20)
+            scrollViewTopConstraint = topConstraint
 
             NSLayoutConstraint.activate([
-                scrollViewTopConstraint!,
+                topConstraint,
                 scrollView.leadingAnchor.constraint(
                     equalTo: containerView.leadingAnchor, constant: 20
                 ),
@@ -263,12 +264,13 @@
             ])
 
             // Scroll view constraints - store top anchor for dynamic updates during navigation
-            scrollViewTopConstraint = showCloseButton
+            let topConstraint = showCloseButton
                 ? scrollView.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 8)
                 : scrollView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20)
+            scrollViewTopConstraint = topConstraint
 
             NSLayoutConstraint.activate([
-                scrollViewTopConstraint!,
+                topConstraint,
                 scrollView.leadingAnchor.constraint(
                     equalTo: containerView.leadingAnchor, constant: 20
                 ),
