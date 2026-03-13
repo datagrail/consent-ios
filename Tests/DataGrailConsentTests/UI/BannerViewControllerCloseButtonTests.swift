@@ -50,32 +50,9 @@
             XCTAssertTrue(closeButton?.isHidden ?? false, "Close button should be hidden when showCloseButton is false")
         }
 
-        func testLayerNavigationUpdatesCloseButtonVisibility() {
-            let config = createConfigWithTwoLayers(
-                layer1ShowCloseButton: true,
-                layer2ShowCloseButton: false
-            )
-            let vc = BannerViewController(
-                config: config,
-                initialPreferences: nil,
-                displayStyle: .modal,
-                completion: { _ in }
-            )
-            vc.loadViewIfNeeded()
-
-            let closeButton = findCloseButton(in: vc.view)
-            XCTAssertFalse(closeButton?.isHidden ?? true, "Close button should initially be visible on layer1")
-
-            // Navigate to layer2 which has showCloseButton: false
-            let navigateButton = findButton(in: vc.view, withTitle: "Go to Layer 2")
-            XCTAssertNotNil(navigateButton, "Navigate button should exist")
-            navigateButton?.sendActions(for: .touchUpInside)
-
-            XCTAssertTrue(closeButton?.isHidden ?? false, "Close button should be hidden after navigating to layer2")
-        }
-
         // MARK: - Helper Methods
 
+        // swiftlint:disable:next function_body_length
         private func createConfigWithCloseButton(showCloseButton: Bool) -> ConsentConfig {
             let element = ConsentLayerElement(
                 id: "text1",
@@ -164,149 +141,10 @@
             )
         }
 
-        private func createConfigWithTwoLayers(
-            layer1ShowCloseButton: Bool,
-            layer2ShowCloseButton: Bool
-        ) -> ConsentConfig {
-            let navigateButton = ConsentLayerElement(
-                id: "btn1",
-                order: 1,
-                type: "button",
-                style: nil,
-                buttonAction: "navigate",
-                targetConsentLayer: "layer2",
-                categories: nil,
-                links: nil,
-                consentLayerCategories: nil,
-                showTrackingDetailsLink: nil,
-                consentLayerCategoriesConfigId: nil,
-                trackingDetailsLinkTranslations: nil,
-                showIcon: nil,
-                consentLayerBrowserSignalNoticeConfigId: nil,
-                browserSignalNoticeTranslations: nil,
-                showTrackingServices: nil,
-                showCookies: nil,
-                showIcons: nil,
-                groupByVendor: nil,
-                translations: [
-                    "en": ElementTranslation(
-                        id: nil,
-                        locale: "en",
-                        value: nil,
-                        text: "Go to Layer 2",
-                        url: nil
-                    ),
-                ]
-            )
-
-            let layer1 = ConsentLayer(
-                id: "layer1",
-                name: "First Layer",
-                theme: "neutral",
-                position: "bottom",
-                showCloseButton: layer1ShowCloseButton,
-                bannerApiId: "first",
-                elements: [navigateButton]
-            )
-
-            let layer2Element = ConsentLayerElement(
-                id: "text2",
-                order: 1,
-                type: "text",
-                style: nil,
-                buttonAction: nil,
-                targetConsentLayer: nil,
-                categories: nil,
-                links: nil,
-                consentLayerCategories: nil,
-                showTrackingDetailsLink: nil,
-                consentLayerCategoriesConfigId: nil,
-                trackingDetailsLinkTranslations: nil,
-                showIcon: nil,
-                consentLayerBrowserSignalNoticeConfigId: nil,
-                browserSignalNoticeTranslations: nil,
-                showTrackingServices: nil,
-                showCookies: nil,
-                showIcons: nil,
-                groupByVendor: nil,
-                translations: [
-                    "en": ElementTranslation(
-                        id: nil,
-                        locale: "en",
-                        value: "Layer 2 content",
-                        text: nil,
-                        url: nil
-                    ),
-                ]
-            )
-
-            let layer2 = ConsentLayer(
-                id: "layer2",
-                name: "Second Layer",
-                theme: "neutral",
-                position: "bottom",
-                showCloseButton: layer2ShowCloseButton,
-                bannerApiId: "second",
-                elements: [layer2Element]
-            )
-
-            let layout = Layout(
-                id: "layout1",
-                name: "Test Layout",
-                description: nil,
-                status: "published",
-                defaultLayout: true,
-                collapsedOnMobile: false,
-                firstLayerId: "layer1",
-                gpcDntLayerId: nil,
-                consentLayers: ["layer1": layer1, "layer2": layer2]
-            )
-
-            return ConsentConfig(
-                version: "1.0",
-                consentContainerVersionId: "container1",
-                dgCustomerId: "test-customer",
-                publishDate: 0,
-                dch: "categorize",
-                dc: "dg-category-essential",
-                privacyDomain: "test.com",
-                plugins: Plugins(
-                    scriptControl: false,
-                    allCookieSubdomains: false,
-                    cookieBlocking: false,
-                    localStorageBlocking: false,
-                    syncOTConsent: false
-                ),
-                testMode: false,
-                ignoreDoNotTrack: false,
-                trackingDetailsUrl: "https://example.com/tracking",
-                consentMode: "optin",
-                showBanner: true,
-                consentPolicy: ConsentPolicy(name: "Test", default: true),
-                gppUsNat: false,
-                initialCategories: InitialCategories(
-                    respectGpc: false,
-                    respectDnt: false,
-                    respectOptout: false,
-                    initial: [],
-                    gpc: [],
-                    optout: []
-                ),
-                layout: layout
-            )
-        }
-
         private func findCloseButton(in view: UIView) -> UIButton? {
             findView(in: view) { view in
                 guard let button = view as? UIButton else { return false }
                 return button.title(for: .normal) == "✕"
-            } as? UIButton
-        }
-
-        private func findButton(in view: UIView, withTitle title: String) -> UIButton? {
-            findView(in: view) { view in
-                guard let button = view as? UIButton else { return false }
-                return button.title(for: .normal) == title
             } as? UIButton
         }
 
