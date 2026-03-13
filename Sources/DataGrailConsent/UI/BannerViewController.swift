@@ -183,12 +183,12 @@
             let currentLayer = config.layout.consentLayers[currentLayerKey]
             let showCloseButton = currentLayer?.showCloseButton ?? false
 
-            // Container constraints - centered with 90% height
+            // Container constraints - centered with 90% height within safe area
             NSLayoutConstraint.activate([
                 containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
                 containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
                 containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-                containerView.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.9),
+                containerView.heightAnchor.constraint(equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.9),
             ])
 
             // Close button constraints (always set, visibility controlled by isHidden)
