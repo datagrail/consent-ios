@@ -50,6 +50,20 @@
             XCTAssertTrue(closeButton?.isHidden ?? false, "Close button should be hidden when showCloseButton is false")
         }
 
+        func testConfigSupportsMultipleLayersWithDifferentCloseButtonValues() {
+            let config = createConfigWithTwoLayersHavingDifferentCloseButtonValues()
+
+            // Verify layer1 has showCloseButton: true
+            let layer1 = config.layout.consentLayers["layer1"]
+            XCTAssertNotNil(layer1, "Layer1 should exist")
+            XCTAssertTrue(layer1?.showCloseButton ?? false, "Layer1 should have showCloseButton: true")
+
+            // Verify layer2 has showCloseButton: false
+            let layer2 = config.layout.consentLayers["layer2"]
+            XCTAssertNotNil(layer2, "Layer2 should exist")
+            XCTAssertFalse(layer2?.showCloseButton ?? true, "Layer2 should have showCloseButton: false")
+        }
+
         // MARK: - Helper Methods
 
         // swiftlint:disable:next function_body_length
@@ -105,6 +119,136 @@
                 firstLayerId: "layer1",
                 gpcDntLayerId: nil,
                 consentLayers: ["layer1": layer]
+            )
+
+            return ConsentConfig(
+                version: "1.0",
+                consentContainerVersionId: "container1",
+                dgCustomerId: "test-customer",
+                publishDate: 0,
+                dch: "categorize",
+                dc: "dg-category-essential",
+                privacyDomain: "test.com",
+                plugins: Plugins(
+                    scriptControl: false,
+                    allCookieSubdomains: false,
+                    cookieBlocking: false,
+                    localStorageBlocking: false,
+                    syncOTConsent: false
+                ),
+                testMode: false,
+                ignoreDoNotTrack: false,
+                trackingDetailsUrl: "https://example.com/tracking",
+                consentMode: "optin",
+                showBanner: true,
+                consentPolicy: ConsentPolicy(name: "Test", default: true),
+                gppUsNat: false,
+                initialCategories: InitialCategories(
+                    respectGpc: false,
+                    respectDnt: false,
+                    respectOptout: false,
+                    initial: [],
+                    gpc: [],
+                    optout: []
+                ),
+                layout: layout
+            )
+        }
+
+        // swiftlint:disable:next function_body_length
+        private func createConfigWithTwoLayersHavingDifferentCloseButtonValues() -> ConsentConfig {
+            let layer1Element = ConsentLayerElement(
+                id: "text1",
+                order: 1,
+                type: "text",
+                style: nil,
+                buttonAction: nil,
+                targetConsentLayer: nil,
+                categories: nil,
+                links: nil,
+                consentLayerCategories: nil,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: [
+                    "en": ElementTranslation(
+                        id: nil,
+                        locale: "en",
+                        value: "Layer 1 content",
+                        text: nil,
+                        url: nil
+                    ),
+                ]
+            )
+
+            let layer1 = ConsentLayer(
+                id: "layer1",
+                name: "First Layer",
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: true,
+                bannerApiId: "first",
+                elements: [layer1Element]
+            )
+
+            let layer2Element = ConsentLayerElement(
+                id: "text2",
+                order: 1,
+                type: "text",
+                style: nil,
+                buttonAction: nil,
+                targetConsentLayer: nil,
+                categories: nil,
+                links: nil,
+                consentLayerCategories: nil,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: [
+                    "en": ElementTranslation(
+                        id: nil,
+                        locale: "en",
+                        value: "Layer 2 content",
+                        text: nil,
+                        url: nil
+                    ),
+                ]
+            )
+
+            let layer2 = ConsentLayer(
+                id: "layer2",
+                name: "Second Layer",
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: false,
+                bannerApiId: "second",
+                elements: [layer2Element]
+            )
+
+            let layout = Layout(
+                id: "layout1",
+                name: "Test Layout",
+                description: nil,
+                status: "published",
+                defaultLayout: true,
+                collapsedOnMobile: false,
+                firstLayerId: "layer1",
+                gpcDntLayerId: nil,
+                consentLayers: ["layer1": layer1, "layer2": layer2]
             )
 
             return ConsentConfig(
