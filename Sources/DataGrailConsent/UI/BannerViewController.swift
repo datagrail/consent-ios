@@ -191,43 +191,7 @@
                 containerView.heightAnchor.constraint(equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.9),
             ])
 
-            // Close button constraints (always set, visibility controlled by isHidden)
-            NSLayoutConstraint.activate([
-                closeButton.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
-                closeButton.trailingAnchor.constraint(
-                    equalTo: containerView.trailingAnchor, constant: -12
-                ),
-                closeButton.widthAnchor.constraint(equalToConstant: 44),
-                closeButton.heightAnchor.constraint(equalToConstant: 44),
-            ])
-
-            // Scroll view constraints - store top anchor for dynamic updates during navigation
-            let topConstraint = showCloseButton
-                ? scrollView.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 8)
-                : scrollView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20)
-            scrollViewTopConstraint = topConstraint
-
-            NSLayoutConstraint.activate([
-                topConstraint,
-                scrollView.leadingAnchor.constraint(
-                    equalTo: containerView.leadingAnchor, constant: 20
-                ),
-                scrollView.trailingAnchor.constraint(
-                    equalTo: containerView.trailingAnchor, constant: -20
-                ),
-                scrollView.bottomAnchor.constraint(
-                    equalTo: containerView.bottomAnchor, constant: -20
-                ),
-            ])
-
-            // Content stack constraints
-            NSLayoutConstraint.activate([
-                contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
-                contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-                contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-                contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-                contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-            ])
+            setupSharedConstraints(showCloseButton: showCloseButton)
         }
 
         private func setupFullScreenUI() {
@@ -253,6 +217,10 @@
                 containerView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             ])
 
+            setupSharedConstraints(showCloseButton: showCloseButton)
+        }
+
+        private func setupSharedConstraints(showCloseButton: Bool) {
             // Close button constraints (always set, visibility controlled by isHidden)
             NSLayoutConstraint.activate([
                 closeButton.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
