@@ -179,10 +179,6 @@
         }
 
         private func setupModalConstraints() {
-            // Get current layer to determine close button visibility
-            let currentLayer = config.layout.consentLayers[currentLayerKey]
-            let showCloseButton = currentLayer?.showCloseButton ?? false
-
             // Container constraints - centered with 90% height within safe area
             NSLayoutConstraint.activate([
                 containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -191,7 +187,8 @@
                 containerView.heightAnchor.constraint(equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.9),
             ])
 
-            setupSharedConstraints(showCloseButton: showCloseButton)
+            // Close button visibility was already set in setupCommonUI
+            setupSharedConstraints(showCloseButton: !closeButton.isHidden)
         }
 
         private func setupFullScreenUI() {
@@ -205,10 +202,6 @@
         }
 
         private func setupFullScreenConstraints() {
-            // Get current layer to determine close button visibility
-            let currentLayer = config.layout.consentLayers[currentLayerKey]
-            let showCloseButton = currentLayer?.showCloseButton ?? false
-
             // Container constraints - full screen
             NSLayoutConstraint.activate([
                 containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -217,7 +210,8 @@
                 containerView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             ])
 
-            setupSharedConstraints(showCloseButton: showCloseButton)
+            // Close button visibility was already set in setupCommonUI
+            setupSharedConstraints(showCloseButton: !closeButton.isHidden)
         }
 
         private func setupSharedConstraints(showCloseButton: Bool) {
@@ -795,13 +789,17 @@
             let previouslyHidden = closeButton.isHidden
 
             if previouslyHidden != !showCloseButton {
-                // Close button visibility is changing - update constraint
+                // Close button visibility is changing - animate constraint update
                 scrollViewTopConstraint?.isActive = false
                 scrollViewTopConstraint = showCloseButton
                     ? scrollView.topAnchor.constraint(
                         equalTo: closeButton.bottomAnchor, constant: 8)
                     : scrollView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20)
                 scrollViewTopConstraint?.isActive = true
+
+                UIView.animate(withDuration: 0.3) {
+                    self.containerView.layoutIfNeeded()
+                }
             }
 
             closeButton.isHidden = !showCloseButton
