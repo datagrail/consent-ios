@@ -15,7 +15,9 @@
             )
             vc.loadViewIfNeeded()
 
-            let closeButton = findCloseButton(in: vc.view)
+            let closeButton = BannerAccessibilityTestHelpers.findButton(
+                in: vc.view, withAccessibilityLabel: "Close consent banner"
+            )
             XCTAssertNotNil(closeButton, "Close button should exist in view hierarchy")
             XCTAssertTrue(closeButton?.isHidden ?? false, "Close button should be hidden when showCloseButton is false")
         }
@@ -30,7 +32,9 @@
             )
             vc.loadViewIfNeeded()
 
-            let closeButton = findCloseButton(in: vc.view)
+            let closeButton = BannerAccessibilityTestHelpers.findButton(
+                in: vc.view, withAccessibilityLabel: "Close consent banner"
+            )
             XCTAssertNotNil(closeButton, "Close button should exist in view hierarchy")
             XCTAssertFalse(closeButton?.isHidden ?? true, "Close button should be visible when showCloseButton is true")
         }
@@ -45,7 +49,9 @@
             )
             vc.loadViewIfNeeded()
 
-            let closeButton = findCloseButton(in: vc.view)
+            let closeButton = BannerAccessibilityTestHelpers.findButton(
+                in: vc.view, withAccessibilityLabel: "Close consent banner"
+            )
             XCTAssertNotNil(closeButton, "Close button should exist in view hierarchy")
             XCTAssertTrue(closeButton?.isHidden ?? false, "Close button should be hidden when showCloseButton is false")
         }
@@ -60,7 +66,9 @@
             )
             vc.loadViewIfNeeded()
 
-            let closeButton = findCloseButton(in: vc.view)
+            let closeButton = BannerAccessibilityTestHelpers.findButton(
+                in: vc.view, withAccessibilityLabel: "Close consent banner"
+            )
             XCTAssertNotNil(closeButton, "Close button should exist in view hierarchy")
             XCTAssertFalse(closeButton?.isHidden ?? true, "Close button should be visible when showCloseButton is true")
         }
@@ -77,7 +85,9 @@
             )
             vc.loadViewIfNeeded()
 
-            let closeButton = findCloseButton(in: vc.view)
+            let closeButton = BannerAccessibilityTestHelpers.findButton(
+                in: vc.view, withAccessibilityLabel: "Close consent banner"
+            )
             XCTAssertNotNil(closeButton, "Close button should exist in view hierarchy")
             XCTAssertFalse(
                 closeButton?.isHidden ?? true,
@@ -97,11 +107,53 @@
             )
             vc.loadViewIfNeeded()
 
-            let closeButton = findCloseButton(in: vc.view)
+            let closeButton = BannerAccessibilityTestHelpers.findButton(
+                in: vc.view, withAccessibilityLabel: "Close consent banner"
+            )
             XCTAssertNotNil(closeButton, "Close button should exist in view hierarchy")
             XCTAssertTrue(
                 closeButton?.isHidden ?? false,
                 "Close button should be hidden for layer2 with showCloseButton: false"
+            )
+        }
+
+        func testNavigationTogglesCloseButtonVisibility() {
+            // Create config with navigation button to move between layers
+            let config = createConfigWithNavigationBetweenLayers()
+
+            // Start with layer1 which has showCloseButton: true
+            let vc = BannerViewController(
+                config: config,
+                initialPreferences: nil,
+                displayStyle: .modal,
+                completion: { _ in }
+            )
+            vc.loadViewIfNeeded()
+
+            let closeButton = BannerAccessibilityTestHelpers.findButton(
+                in: vc.view, withAccessibilityLabel: "Close consent banner"
+            )
+            XCTAssertNotNil(closeButton, "Close button should exist in view hierarchy")
+            XCTAssertFalse(
+                closeButton?.isHidden ?? true,
+                "Close button should be visible initially on layer1 with showCloseButton: true"
+            )
+
+            // Find and tap the navigation button to go to layer2
+            let navigationButton = findNavigationButton(in: vc.view)
+            XCTAssertNotNil(navigationButton, "Navigation button should exist")
+
+            // Simulate button tap by invoking the target-action directly
+            if let target = navigationButton?.allTargets.first as? NSObject,
+               let actions = navigationButton?.actions(forTarget: target, forControlEvent: .touchUpInside),
+               let action = actions.first {
+                _ = target.perform(Selector(action), with: navigationButton)
+            }
+
+            // After navigation to layer2 (which has showCloseButton: false), close button should be hidden
+            XCTAssertTrue(
+                closeButton?.isHidden ?? false,
+                "Close button should be hidden after navigating to layer2 with showCloseButton: false"
             )
         }
 
@@ -273,23 +325,97 @@
             )
         }
 
-        private func findCloseButton(in view: UIView) -> UIButton? {
-            findView(in: view) { view in
-                guard let button = view as? UIButton else { return false }
-                return button.title(for: .normal) == "✕"
-            } as? UIButton
+        private func createConfigWithNavigationBetweenLayers() -> ConsentConfig {
+            // Create layer1 with showCloseButton: true and a navigation button
+            let textElement = ConsentLayerElement(
+                id: "layer1_text",
+                order: 1,
+                type: "text",
+                style: nil,
+                buttonAction: nil,
+                targetConsentLayer: nil,
+                categories: nil,
+                links: nil,
+                consentLayerCategories: nil,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: [
+                    "en": ElementTranslation(
+                        id: nil,
+                        locale: "en",
+                        value: "Layer 1 content",
+                        text: nil,
+                        url: nil
+                    ),
+                ]
+            )
+
+            let navigationButtonElement = ConsentLayerElement(
+                id: "nav_button",
+                order: 2,
+                type: "button",
+                style: nil,
+                buttonAction: "navigate",
+                targetConsentLayer: "layer2",
+                categories: nil,
+                links: nil,
+                consentLayerCategories: nil,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: [
+                    "en": ElementTranslation(
+                        id: nil,
+                        locale: "en",
+                        value: "Go to Layer 2",
+                        text: nil,
+                        url: nil
+                    ),
+                ]
+            )
+
+            let layer1 = ConsentLayer(
+                id: "layer1",
+                name: "First Layer",
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: true,
+                bannerApiId: "layer1",
+                elements: [textElement, navigationButtonElement]
+            )
+
+            // Create layer2 with showCloseButton: false
+            let layer2 = createLayer(
+                id: "layer2",
+                name: "Second Layer",
+                showCloseButton: false,
+                content: "Layer 2 content"
+            )
+
+            return createConfig(
+                consentLayers: ["layer1": layer1, "layer2": layer2],
+                firstLayerId: "layer1"
+            )
         }
 
-        private func findView(in view: UIView, matching predicate: (UIView) -> Bool) -> UIView? {
-            if predicate(view) {
-                return view
-            }
-            for subview in view.subviews {
-                if let found = findView(in: subview, matching: predicate) {
-                    return found
-                }
-            }
-            return nil
+        private func findNavigationButton(in view: UIView) -> UIButton? {
+            BannerAccessibilityTestHelpers.findButton(in: view, withTitle: "Go to Layer 2")
         }
+
     }
 #endif
