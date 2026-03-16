@@ -66,39 +66,43 @@
         }
 
         func testMultipleLayersStartingWithCloseButtonVisible() {
-            let config = createConfigWithTwoLayersHavingDifferentCloseButtonValues()
+            let config = createConfigWithTwoLayersHavingDifferentCloseButtonValues(firstLayerId: "layer1")
 
             // Start with layer1 which has showCloseButton: true
             let vc = BannerViewController(
                 config: config,
                 initialPreferences: nil,
                 displayStyle: .modal,
-                firstLayerId: "layer1",
                 completion: { _ in }
             )
             vc.loadViewIfNeeded()
 
             let closeButton = findCloseButton(in: vc.view)
             XCTAssertNotNil(closeButton, "Close button should exist in view hierarchy")
-            XCTAssertFalse(closeButton?.isHidden ?? true, "Close button should be visible for layer1 with showCloseButton: true")
+            XCTAssertFalse(
+                closeButton?.isHidden ?? true,
+                "Close button should be visible for layer1 with showCloseButton: true"
+            )
         }
 
         func testMultipleLayersStartingWithCloseButtonHidden() {
-            let config = createConfigWithTwoLayersHavingDifferentCloseButtonValues()
+            let config = createConfigWithTwoLayersHavingDifferentCloseButtonValues(firstLayerId: "layer2")
 
             // Start with layer2 which has showCloseButton: false
             let vc = BannerViewController(
                 config: config,
                 initialPreferences: nil,
                 displayStyle: .modal,
-                firstLayerId: "layer2",
                 completion: { _ in }
             )
             vc.loadViewIfNeeded()
 
             let closeButton = findCloseButton(in: vc.view)
             XCTAssertNotNil(closeButton, "Close button should exist in view hierarchy")
-            XCTAssertTrue(closeButton?.isHidden ?? false, "Close button should be hidden for layer2 with showCloseButton: false")
+            XCTAssertTrue(
+                closeButton?.isHidden ?? false,
+                "Close button should be hidden for layer2 with showCloseButton: false"
+            )
         }
 
         // MARK: - Helper Methods
@@ -198,92 +202,74 @@
             return createConfig(consentLayers: ["layer1": layer], firstLayerId: "layer1")
         }
 
-        private func createConfigWithTwoLayersHavingDifferentCloseButtonValues() -> ConsentConfig {
-            let layer1Element = ConsentLayerElement(
-                id: "text1",
-                order: 1,
-                type: "text",
-                style: nil,
-                buttonAction: nil,
-                targetConsentLayer: nil,
-                categories: nil,
-                links: nil,
-                consentLayerCategories: nil,
-                showTrackingDetailsLink: nil,
-                consentLayerCategoriesConfigId: nil,
-                trackingDetailsLinkTranslations: nil,
-                showIcon: nil,
-                consentLayerBrowserSignalNoticeConfigId: nil,
-                browserSignalNoticeTranslations: nil,
-                showTrackingServices: nil,
-                showCookies: nil,
-                showIcons: nil,
-                groupByVendor: nil,
-                translations: [
-                    "en": ElementTranslation(
-                        id: nil,
-                        locale: "en",
-                        value: "Layer 1 content",
-                        text: nil,
-                        url: nil
-                    ),
-                ]
-            )
-
-            let layer1 = ConsentLayer(
+        private func createConfigWithTwoLayersHavingDifferentCloseButtonValues(
+            firstLayerId: String
+        ) -> ConsentConfig {
+            let layer1 = createLayer(
                 id: "layer1",
                 name: "First Layer",
-                theme: "neutral",
-                position: "bottom",
                 showCloseButton: true,
-                bannerApiId: "first",
-                elements: [layer1Element]
+                content: "Layer 1 content"
             )
 
-            let layer2Element = ConsentLayerElement(
-                id: "text2",
-                order: 1,
-                type: "text",
-                style: nil,
-                buttonAction: nil,
-                targetConsentLayer: nil,
-                categories: nil,
-                links: nil,
-                consentLayerCategories: nil,
-                showTrackingDetailsLink: nil,
-                consentLayerCategoriesConfigId: nil,
-                trackingDetailsLinkTranslations: nil,
-                showIcon: nil,
-                consentLayerBrowserSignalNoticeConfigId: nil,
-                browserSignalNoticeTranslations: nil,
-                showTrackingServices: nil,
-                showCookies: nil,
-                showIcons: nil,
-                groupByVendor: nil,
-                translations: [
-                    "en": ElementTranslation(
-                        id: nil,
-                        locale: "en",
-                        value: "Layer 2 content",
-                        text: nil,
-                        url: nil
-                    ),
-                ]
-            )
-
-            let layer2 = ConsentLayer(
+            let layer2 = createLayer(
                 id: "layer2",
                 name: "Second Layer",
-                theme: "neutral",
-                position: "bottom",
                 showCloseButton: false,
-                bannerApiId: "second",
-                elements: [layer2Element]
+                content: "Layer 2 content"
             )
 
             return createConfig(
                 consentLayers: ["layer1": layer1, "layer2": layer2],
-                firstLayerId: "layer1"
+                firstLayerId: firstLayerId
+            )
+        }
+
+        private func createLayer(
+            id: String,
+            name: String,
+            showCloseButton: Bool,
+            content: String
+        ) -> ConsentLayer {
+            let element = ConsentLayerElement(
+                id: id + "_text",
+                order: 1,
+                type: "text",
+                style: nil,
+                buttonAction: nil,
+                targetConsentLayer: nil,
+                categories: nil,
+                links: nil,
+                consentLayerCategories: nil,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: [
+                    "en": ElementTranslation(
+                        id: nil,
+                        locale: "en",
+                        value: content,
+                        text: nil,
+                        url: nil
+                    ),
+                ]
+            )
+
+            return ConsentLayer(
+                id: id,
+                name: name,
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: showCloseButton,
+                bannerApiId: id,
+                elements: [element]
             )
         }
 
