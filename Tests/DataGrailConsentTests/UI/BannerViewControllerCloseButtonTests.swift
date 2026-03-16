@@ -158,6 +158,46 @@
             )
         }
 
+        func testNavigationTogglesCloseButtonVisibilityReverse() {
+            // Create config with reverse navigation (hidden -> visible)
+            let config = createConfigWithReverseNavigation()
+
+            // Start with layer2 which has showCloseButton: false
+            let vc = BannerViewController(
+                config: config,
+                initialPreferences: nil,
+                displayStyle: .modal,
+                completion: { _ in }
+            )
+            vc.loadViewIfNeeded()
+
+            let closeButton = BannerAccessibilityTestHelpers.findButton(
+                in: vc.view, withAccessibilityLabel: "Close consent banner"
+            )
+            XCTAssertNotNil(closeButton, "Close button should exist in view hierarchy")
+            XCTAssertTrue(
+                closeButton?.isHidden ?? false,
+                "Close button should be hidden initially on layer2 with showCloseButton: false"
+            )
+
+            // Find and tap the navigation button to go to layer1
+            let navigationButton = findReverseNavigationButton(in: vc.view)
+            XCTAssertNotNil(navigationButton, "Navigation button should exist")
+
+            // Simulate button tap by invoking the target-action directly
+            if let target = navigationButton?.allTargets.first as? NSObject,
+               let actions = navigationButton?.actions(forTarget: target, forControlEvent: .touchUpInside),
+               let action = actions.first {
+                _ = target.perform(Selector(action), with: navigationButton)
+            }
+
+            // After navigation to layer1 (which has showCloseButton: true), close button should be visible
+            XCTAssertFalse(
+                closeButton?.isHidden ?? true,
+                "Close button should be visible after navigating to layer1 with showCloseButton: true"
+            )
+        }
+
         // MARK: - Helper Methods
 
         private func createConfig(
@@ -424,6 +464,72 @@
 
         private func findNavigationButton(in view: UIView) -> UIButton? {
             BannerAccessibilityTestHelpers.findButton(in: view, withTitle: "Go to Layer 2")
+        }
+
+        private func createConfigWithReverseNavigation() -> ConsentConfig {
+            // Layer1 with showCloseButton: true (destination)
+            let layer1 = createLayer(
+                id: "layer1",
+                name: "First Layer",
+                showCloseButton: true,
+                content: "Layer 1 content"
+            )
+
+            // Layer2 with showCloseButton: false and navigation button back to layer1
+            let textElement = createTextElement(id: "layer2_text", value: "Layer 2 content")
+            let navigationButtonElement = createReverseNavigationElement()
+
+            let layer2 = ConsentLayer(
+                id: "layer2",
+                name: "Second Layer",
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: false,
+                bannerApiId: "layer2",
+                elements: [textElement, navigationButtonElement]
+            )
+
+            return createConfig(
+                consentLayers: ["layer1": layer1, "layer2": layer2],
+                firstLayerId: "layer2"
+            )
+        }
+
+        private func createReverseNavigationElement() -> ConsentLayerElement {
+            ConsentLayerElement(
+                id: "nav_button_back",
+                order: 2,
+                type: "button",
+                style: nil,
+                buttonAction: "navigate",
+                targetConsentLayer: "layer1",
+                categories: nil,
+                links: nil,
+                consentLayerCategories: nil,
+                showTrackingDetailsLink: nil,
+                consentLayerCategoriesConfigId: nil,
+                trackingDetailsLinkTranslations: nil,
+                showIcon: nil,
+                consentLayerBrowserSignalNoticeConfigId: nil,
+                browserSignalNoticeTranslations: nil,
+                showTrackingServices: nil,
+                showCookies: nil,
+                showIcons: nil,
+                groupByVendor: nil,
+                translations: [
+                    "en": ElementTranslation(
+                        id: nil,
+                        locale: "en",
+                        value: "Go to Layer 1",
+                        text: nil,
+                        url: nil
+                    ),
+                ]
+            )
+        }
+
+        private func findReverseNavigationButton(in view: UIView) -> UIButton? {
+            BannerAccessibilityTestHelpers.findButton(in: view, withTitle: "Go to Layer 1")
         }
 
     }
