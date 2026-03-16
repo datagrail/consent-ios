@@ -798,11 +798,10 @@
                 scrollViewTopConstraint?.isActive = true
 
                 UIView.animate(withDuration: 0.3) {
+                    self.closeButton.isHidden = !showCloseButton
                     self.containerView.layoutIfNeeded()
                 }
             }
-
-            closeButton.isHidden = !showCloseButton
 
             UIView.transition(
                 with: contentStackView, duration: 0.3, options: .transitionCrossDissolve
