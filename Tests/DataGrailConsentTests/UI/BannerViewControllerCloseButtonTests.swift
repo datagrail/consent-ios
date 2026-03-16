@@ -3,6 +3,7 @@
 
     @testable import DataGrailConsent
 
+    // swiftlint:disable type_body_length
     final class BannerViewControllerCloseButtonTests: XCTestCase {
 
         func testModalWithCloseButtonHidden() {
@@ -326,9 +327,38 @@
         }
 
         private func createConfigWithNavigationBetweenLayers() -> ConsentConfig {
-            // Create layer1 with showCloseButton: true and a navigation button
-            let textElement = ConsentLayerElement(
-                id: "layer1_text",
+            let layer1 = createLayerWithNavigation()
+            let layer2 = createLayer(
+                id: "layer2",
+                name: "Second Layer",
+                showCloseButton: false,
+                content: "Layer 2 content"
+            )
+
+            return createConfig(
+                consentLayers: ["layer1": layer1, "layer2": layer2],
+                firstLayerId: "layer1"
+            )
+        }
+
+        private func createLayerWithNavigation() -> ConsentLayer {
+            let textElement = createTextElement(id: "layer1_text", value: "Layer 1 content")
+            let navigationButtonElement = createNavigationElement()
+
+            return ConsentLayer(
+                id: "layer1",
+                name: "First Layer",
+                theme: "neutral",
+                position: "bottom",
+                showCloseButton: true,
+                bannerApiId: "layer1",
+                elements: [textElement, navigationButtonElement]
+            )
+        }
+
+        private func createTextElement(id: String, value: String) -> ConsentLayerElement {
+            ConsentLayerElement(
+                id: id,
                 order: 1,
                 type: "text",
                 style: nil,
@@ -351,14 +381,16 @@
                     "en": ElementTranslation(
                         id: nil,
                         locale: "en",
-                        value: "Layer 1 content",
+                        value: value,
                         text: nil,
                         url: nil
                     ),
                 ]
             )
+        }
 
-            let navigationButtonElement = ConsentLayerElement(
+        private func createNavigationElement() -> ConsentLayerElement {
+            ConsentLayerElement(
                 id: "nav_button",
                 order: 2,
                 type: "button",
@@ -387,29 +419,6 @@
                         url: nil
                     ),
                 ]
-            )
-
-            let layer1 = ConsentLayer(
-                id: "layer1",
-                name: "First Layer",
-                theme: "neutral",
-                position: "bottom",
-                showCloseButton: true,
-                bannerApiId: "layer1",
-                elements: [textElement, navigationButtonElement]
-            )
-
-            // Create layer2 with showCloseButton: false
-            let layer2 = createLayer(
-                id: "layer2",
-                name: "Second Layer",
-                showCloseButton: false,
-                content: "Layer 2 content"
-            )
-
-            return createConfig(
-                consentLayers: ["layer1": layer1, "layer2": layer2],
-                firstLayerId: "layer1"
             )
         }
 
