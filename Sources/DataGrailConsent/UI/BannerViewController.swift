@@ -24,6 +24,7 @@
         private let scrollView = UIScrollView()
         private let contentStackView = UIStackView()
         private let closeButton = UIButton(type: .system)
+        private var scrollViewTopConstraint: NSLayoutConstraint?
 
         // MARK: - Initialization
 
@@ -140,21 +141,24 @@
         private func setupModalUI() {
             view.backgroundColor = UIColor.black.withAlphaComponent(0.5)
 
-            // Container view
+            // Configure container for modal style
             containerView.backgroundColor = .systemBackground
             containerView.layer.cornerRadius = 12
             containerView.layer.shadowColor = UIColor.black.cgColor
             containerView.layer.shadowOpacity = 0.2
             containerView.layer.shadowOffset = CGSize(width: 0, height: 4)
             containerView.layer.shadowRadius = 8
+
+            setupCommonUI()
+            setupModalConstraints()
+        }
+
+        private func setupCommonUI() {
+            // Container view setup
             containerView.translatesAutoresizingMaskIntoConstraints = false
             containerView.isAccessibilityElement = false
             containerView.accessibilityLabel = "Consent Banner"
             view.addSubview(containerView)
-
-            // Close button (always shown in modal)
-            setupCloseButton()
-            containerView.addSubview(closeButton)
 
             // Scroll view
             scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -166,28 +170,69 @@
             contentStackView.translatesAutoresizingMaskIntoConstraints = false
             scrollView.addSubview(contentStackView)
 
-            // Constraints
-            NSLayoutConstraint.activate([
-                // Container - 90% height, centered
-                containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-                containerView.trailingAnchor.constraint(
-                    equalTo: view.trailingAnchor, constant: -20
-                ),
-                containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-                containerView.heightAnchor.constraint(
-                    equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.9
-                ),
+            // Setup close button and set initial visibility based on first layer
+            setupCloseButton()
+            containerView.addSubview(closeButton)
+            let currentLayer = config.layout.consentLayers[currentLayerKey]
+            let showCloseButton = currentLayer?.showCloseButton ?? false
+            closeButton.isHidden = !showCloseButton
+        }
 
-                // Close button
+        private func setupModalConstraints() {
+            // Container constraints - centered with 90% height within safe area
+            NSLayoutConstraint.activate([
+                containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+                containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+                containerView.heightAnchor.constraint(equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.9),
+            ])
+
+            // Close button visibility was already set in setupCommonUI
+            setupSharedConstraints(showCloseButton: !closeButton.isHidden)
+        }
+
+        private func setupFullScreenUI() {
+            view.backgroundColor = .systemBackground
+
+            // Container view (full screen, no rounded corners)
+            containerView.backgroundColor = .systemBackground
+
+            setupCommonUI()
+            setupFullScreenConstraints()
+        }
+
+        private func setupFullScreenConstraints() {
+            // Container constraints - full screen
+            NSLayoutConstraint.activate([
+                containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+                containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                containerView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            ])
+
+            // Close button visibility was already set in setupCommonUI
+            setupSharedConstraints(showCloseButton: !closeButton.isHidden)
+        }
+
+        private func setupSharedConstraints(showCloseButton: Bool) {
+            // Close button constraints (always set, visibility controlled by isHidden)
+            NSLayoutConstraint.activate([
                 closeButton.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
                 closeButton.trailingAnchor.constraint(
                     equalTo: containerView.trailingAnchor, constant: -12
                 ),
                 closeButton.widthAnchor.constraint(equalToConstant: 44),
                 closeButton.heightAnchor.constraint(equalToConstant: 44),
+            ])
 
-                // Scroll view
-                scrollView.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 8),
+            // Scroll view constraints - store top anchor for dynamic updates during navigation
+            let topConstraint = showCloseButton
+                ? scrollView.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 8)
+                : scrollView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20)
+            scrollViewTopConstraint = topConstraint
+
+            NSLayoutConstraint.activate([
+                topConstraint,
                 scrollView.leadingAnchor.constraint(
                     equalTo: containerView.leadingAnchor, constant: 20
                 ),
@@ -197,112 +242,16 @@
                 scrollView.bottomAnchor.constraint(
                     equalTo: containerView.bottomAnchor, constant: -20
                 ),
+            ])
 
-                // Content stack
+            // Content stack constraints
+            NSLayoutConstraint.activate([
                 contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
                 contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
                 contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
                 contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
                 contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
             ])
-        }
-
-        // swiftlint:disable:next function_body_length
-        private func setupFullScreenUI() {
-            view.backgroundColor = .systemBackground
-
-            // Container view (full screen, no rounded corners)
-            containerView.backgroundColor = .systemBackground
-            containerView.translatesAutoresizingMaskIntoConstraints = false
-            containerView.isAccessibilityElement = false
-            containerView.accessibilityLabel = "Consent Banner"
-            view.addSubview(containerView)
-
-            // Scroll view
-            scrollView.translatesAutoresizingMaskIntoConstraints = false
-            containerView.addSubview(scrollView)
-
-            // Content stack view
-            contentStackView.axis = .vertical
-            contentStackView.spacing = 16
-            contentStackView.translatesAutoresizingMaskIntoConstraints = false
-            scrollView.addSubview(contentStackView)
-
-            // Check if current layer has show_close_button enabled
-            let currentLayer = config.layout.consentLayers[currentLayerKey]
-            let showCloseButton = currentLayer?.showCloseButton ?? false
-
-            if showCloseButton {
-                setupCloseButton()
-                containerView.addSubview(closeButton)
-
-                NSLayoutConstraint.activate([
-                    // Container - full screen
-                    containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-                    containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                    containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                    containerView.bottomAnchor.constraint(
-                        equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-
-                    // Close button
-                    closeButton.topAnchor.constraint(
-                        equalTo: containerView.topAnchor, constant: 12
-                    ),
-                    closeButton.trailingAnchor.constraint(
-                        equalTo: containerView.trailingAnchor, constant: -12
-                    ),
-                    closeButton.widthAnchor.constraint(equalToConstant: 44),
-                    closeButton.heightAnchor.constraint(equalToConstant: 44),
-
-                    // Scroll view (below close button)
-                    scrollView.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 8),
-                    scrollView.leadingAnchor.constraint(
-                        equalTo: containerView.leadingAnchor, constant: 20
-                    ),
-                    scrollView.trailingAnchor.constraint(
-                        equalTo: containerView.trailingAnchor, constant: -20
-                    ),
-                    scrollView.bottomAnchor.constraint(
-                        equalTo: containerView.bottomAnchor, constant: -20
-                    ),
-
-                    // Content stack
-                    contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
-                    contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-                    contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-                    contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-                    contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-                ])
-            } else {
-                // No close button - scroll view starts from top
-                NSLayoutConstraint.activate([
-                    // Container - full screen
-                    containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-                    containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                    containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                    containerView.bottomAnchor.constraint(
-                        equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-
-                    // Scroll view (from top)
-                    scrollView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20),
-                    scrollView.leadingAnchor.constraint(
-                        equalTo: containerView.leadingAnchor, constant: 20
-                    ),
-                    scrollView.trailingAnchor.constraint(
-                        equalTo: containerView.trailingAnchor, constant: -20
-                    ),
-                    scrollView.bottomAnchor.constraint(
-                        equalTo: containerView.bottomAnchor, constant: -20
-                    ),
-
-                    // Content stack
-                    contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
-                    contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-                    contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-                    contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-                    contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-                ])
-            }
         }
 
         private func setupCloseButton() {
@@ -833,6 +782,27 @@
 
         private func navigateToLayer(_ layerKey: String) {
             currentLayerKey = layerKey
+
+            // Update close button visibility and scroll view top constraint
+            let targetLayer = config.layout.consentLayers[layerKey]
+            let showCloseButton = targetLayer?.showCloseButton ?? false
+            let previouslyHidden = closeButton.isHidden
+
+            if previouslyHidden != !showCloseButton {
+                // Close button visibility is changing - animate constraint update
+                scrollViewTopConstraint?.isActive = false
+                scrollViewTopConstraint = showCloseButton
+                    ? scrollView.topAnchor.constraint(
+                        equalTo: closeButton.bottomAnchor, constant: 8)
+                    : scrollView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20)
+                scrollViewTopConstraint?.isActive = true
+
+                UIView.animate(withDuration: 0.3) {
+                    self.closeButton.isHidden = !showCloseButton
+                    self.containerView.layoutIfNeeded()
+                }
+            }
+
             UIView.transition(
                 with: contentStackView, duration: 0.3, options: .transitionCrossDissolve
             ) {
