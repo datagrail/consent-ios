@@ -113,14 +113,13 @@ public struct Layout: Codable {
 public struct ConsentLayer: Codable {
     public let id: String
     public let name: String
-    public let theme: String
     public let position: String
     public let showCloseButton: Bool
     public let bannerApiId: String
     public let elements: [ConsentLayerElement]
 
     enum CodingKeys: String, CodingKey {
-        case id, name, theme, position, elements
+        case id, name, position, elements
         case showCloseButton = "show_close_button"
         case bannerApiId = "banner_api_id"
     }

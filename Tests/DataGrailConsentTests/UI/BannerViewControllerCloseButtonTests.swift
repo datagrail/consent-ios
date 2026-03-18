@@ -285,7 +285,6 @@
             let layer = ConsentLayer(
                 id: "layer1",
                 name: "First Layer",
-                theme: "neutral",
                 position: "bottom",
                 showCloseButton: showCloseButton,
                 bannerApiId: "first",
@@ -358,7 +357,6 @@
             return ConsentLayer(
                 id: id,
                 name: name,
-                theme: "neutral",
                 position: "bottom",
                 showCloseButton: showCloseButton,
                 bannerApiId: id,
@@ -388,7 +386,6 @@
             return ConsentLayer(
                 id: "layer1",
                 name: "First Layer",
-                theme: "neutral",
                 position: "bottom",
                 showCloseButton: true,
                 bannerApiId: "layer1",
@@ -482,7 +479,6 @@
             let layer2 = ConsentLayer(
                 id: "layer2",
                 name: "Second Layer",
-                theme: "neutral",
                 position: "bottom",
                 showCloseButton: false,
                 bannerApiId: "layer2",

@@ -156,7 +156,6 @@ final class ConsentConfigParserTests: XCTestCase {
         }
 
         XCTAssertEqual(categoriesLayer.name, "Categories Ler")
-        XCTAssertEqual(categoriesLayer.theme, "neutral")
         XCTAssertEqual(categoriesLayer.position, "left")
         XCTAssertTrue(categoriesLayer.showCloseButton)
         XCTAssertEqual(categoriesLayer.bannerApiId, "categories-layer")

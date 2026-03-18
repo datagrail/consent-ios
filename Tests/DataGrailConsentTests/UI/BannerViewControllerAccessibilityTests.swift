@@ -44,7 +44,6 @@
             let layer = ConsentLayer(
                 id: "layer1",
                 name: "First Layer",
-                theme: "neutral",
                 position: "bottom",
                 showCloseButton: true,
                 bannerApiId: "first",
@@ -133,7 +132,6 @@
             let layer = ConsentLayer(
                 id: "layer1",
                 name: "First Layer",
-                theme: "neutral",
                 position: "bottom",
                 showCloseButton: true,
                 bannerApiId: "first",
@@ -261,7 +259,6 @@
             let layer = ConsentLayer(
                 id: "layer1",
                 name: "First Layer",
-                theme: "neutral",
                 position: "bottom",
                 showCloseButton: true,
                 bannerApiId: "first",
@@ -350,7 +347,6 @@
             let layer = ConsentLayer(
                 id: "layer1",
                 name: "First Layer",
-                theme: "neutral",
                 position: "bottom",
                 showCloseButton: true,
                 bannerApiId: "first",
@@ -439,7 +435,6 @@
             let layer = ConsentLayer(
                 id: "layer1",
                 name: "First Layer",
-                theme: "neutral",
                 position: "bottom",
                 showCloseButton: true,
                 bannerApiId: "first",
