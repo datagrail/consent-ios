@@ -357,6 +357,10 @@
                 // GPC/DNT are web browser signals that don't apply to mobile apps
                 // Return nil to hide the notice on mobile
                 return nil
+            case "languagepicker", "language_picker":
+                // Language picker is a web-only feature for changing banner locale
+                // Return nil to hide on mobile (apps use device language settings)
+                return nil
             default:
                 // Create a label showing the unknown type for debugging
                 let label = UILabel()
