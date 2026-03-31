@@ -26,7 +26,8 @@ rules:
   overprovisioned-secrets: {}
 
   # === DISABLED (have findings, need dedicated work) ===
-  artipacked: {}
+  artipacked:
+    disable: true
 
   # 6 finding(s)
   excessive-permissions:
