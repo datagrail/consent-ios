@@ -9,6 +9,13 @@ public class DataGrailConsent {
     /// Shared singleton instance
     public static let shared = DataGrailConsent()
 
+    /// SDK log level. Default is .none (no logging in production).
+    /// Set to .debug to see all internal SDK logging.
+    public static var logLevel: LogLevel {
+        get { Logger.logLevel }
+        set { Logger.logLevel = newValue }
+    }
+
     private var manager: ConsentManager?
     private var configUrl: URL?
     private var _onConsentChangedCallback: ((ConsentPreferences) -> Void)?

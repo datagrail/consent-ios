@@ -284,6 +284,9 @@ struct ContentView: View {
     }
 
     private func initializeSDK() {
+        // Enable debug logging for demo app
+        DataGrailConsent.logLevel = .debug
+
         statusText = "Initializing SDK..."
         log("INFO", "Initializing SDK...")
 
