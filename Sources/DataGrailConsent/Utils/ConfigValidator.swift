@@ -49,10 +49,8 @@ public enum ConfigValidator {
         }
 
         // Validate that all layers have at least one element
-        for (layerId, layer) in config.layout.consentLayers {
-            guard !layer.elements.isEmpty else {
-                throw ConsentError.validationError("Layer '\(layerId)' has no elements")
-            }
+        for (layerId, layer) in config.layout.consentLayers where layer.elements.isEmpty {
+            Logger.warn("Layer '\(layerId)' has no elements")
         }
     }
 
