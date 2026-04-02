@@ -7,7 +7,7 @@ public struct ConsentConfig: Codable {
     public let dgCustomerId: String
     public let publishDate: Int64
     public let dch: String
-    public let dc: String
+    public let dc: String?
     public let privacyDomain: String
     public let plugins: Plugins
     public let testMode: Bool
