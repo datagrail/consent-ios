@@ -6,7 +6,8 @@ public enum LogLevel: Int, Comparable {
     case none = 0   // No logging
     case error = 1  // Only errors
     case warn = 2   // Warnings + errors
-    case debug = 3  // Debug + warnings + errors (most verbose)
+    case info = 3   // Info + warnings + errors
+    case debug = 4  // Debug + info + warnings + errors (most verbose)
 
     public static func < (lhs: LogLevel, rhs: LogLevel) -> Bool {
         lhs.rawValue < rhs.rawValue
@@ -35,6 +36,13 @@ enum Logger {
     static func warn(_ message: String) {
         guard logLevel >= .warn else { return }
         os_log("%{public}@", log: log, type: .default, "[WARN] \(message)")
+    }
+
+    /// Log an info message
+    /// - Parameter message: The info message to log
+    static func info(_ message: String) {
+        guard logLevel >= .info else { return }
+        os_log("%{public}@", log: log, type: .info, "[INFO] \(message)")
     }
 
     /// Log an error message
