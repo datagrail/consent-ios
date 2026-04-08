@@ -134,10 +134,10 @@ final class LoggerTests: XCTestCase {
         expectation.expectedFulfillmentCount = iterations * 2
 
         // Spawn multiple threads that read and write logLevel concurrently
-        for i in 0..<iterations {
+        for iteration in 0..<iterations {
             DispatchQueue.global().async {
                 let levels: [LogLevel] = [.none, .error, .warn, .info, .debug]
-                Logger.logLevel = levels[i % levels.count]
+                Logger.logLevel = levels[iteration % levels.count]
                 expectation.fulfill()
             }
 
@@ -157,10 +157,10 @@ final class LoggerTests: XCTestCase {
         expectation.expectedFulfillmentCount = iterations * 2
 
         // Spawn multiple threads that read and write via public API concurrently
-        for i in 0..<iterations {
+        for iteration in 0..<iterations {
             DispatchQueue.global().async {
                 let levels: [LogLevel] = [.none, .error, .warn, .info, .debug]
-                DataGrailConsent.logLevel = levels[i % levels.count]
+                DataGrailConsent.logLevel = levels[iteration % levels.count]
                 expectation.fulfill()
             }
 

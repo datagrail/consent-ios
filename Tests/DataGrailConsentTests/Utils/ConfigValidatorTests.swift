@@ -71,6 +71,7 @@ final class ConfigValidatorTests: XCTestCase {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     func testEmptyLayerDoesNotThrow() throws {
         // Behavior change: empty layers now log a warning instead of throwing an error
         // This test documents that intentional change and prevents accidental reversion
