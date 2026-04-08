@@ -20,9 +20,22 @@ public enum LogLevel: Int, Comparable {
 enum Logger {
     private static let subsystem = "com.datagrail.consent"
     private static let log = OSLog(subsystem: subsystem, category: "DataGrailConsent")
+    private static let lock = NSLock()
+    private static var _logLevel: LogLevel = .none
 
     /// Current log level - controls which messages are logged
-    static var logLevel: LogLevel = .none
+    static var logLevel: LogLevel {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _logLevel
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _logLevel = newValue
+        }
+    }
 
     /// Log a debug message
     /// - Parameter message: The debug message to log
