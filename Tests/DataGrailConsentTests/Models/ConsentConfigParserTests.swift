@@ -341,4 +341,64 @@ final class ConsentConfigParserTests: XCTestCase {
         let decoder = JSONDecoder()
         XCTAssertThrowsError(try decoder.decode(ConsentConfig.self, from: data))
     }
+
+    func testParseConfigWithoutDc() throws {
+        // Minimal config without the optional "dc" field
+        let configWithoutDc = """
+            {
+                "version": "test-version",
+                "consentContainerVersionId": "test-container-id",
+                "dgCustomerId": "test-customer-id",
+                "p": 1234567890,
+                "dch": "categorize",
+                "privacyDomain": "test.example.com",
+                "plugins": {
+                    "scriptControl": true,
+                    "allCookieSubdomains": true,
+                    "cookieBlocking": true,
+                    "localStorageBlocking": true
+                },
+                "testMode": false,
+                "ignoreDoNotTrack": false,
+                "trackingDetailsUrl": "https://test.example.com/tracking.json",
+                "consentMode": "optout",
+                "showBanner": false,
+                "consentPolicy": {
+                    "name": "Test Policy",
+                    "default": false
+                },
+                "gppUsNat": false,
+                "initialCategories": {
+                    "respect_gpc": false,
+                    "respect_dnt": false,
+                    "respect_optout": false,
+                    "initial": [],
+                    "gpc": [],
+                    "optout": []
+                },
+                "layout": {
+                    "id": "test-layout-id",
+                    "name": "Test Layout",
+                    "description": null,
+                    "status": "published",
+                    "default_layout": false,
+                    "collapsed_on_mobile": false,
+                    "first_layer_id": "test-layer-id",
+                    "consent_layers": {}
+                }
+            }
+            """
+        guard let data = configWithoutDc.data(using: .utf8) else {
+            XCTFail("Failed to create data from string")
+            return
+        }
+
+        let decoder = JSONDecoder()
+        let config = try decoder.decode(ConsentConfig.self, from: data)
+
+        // Verify the config decoded successfully and dc is nil
+        XCTAssertNil(config.dc, "dc field should be nil when omitted from JSON")
+        XCTAssertEqual(config.version, "test-version")
+        XCTAssertEqual(config.dch, "categorize")
+    }
 }
