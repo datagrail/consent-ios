@@ -162,7 +162,6 @@
 
             // Scroll view
             scrollView.translatesAutoresizingMaskIntoConstraints = false
-            scrollView.clipsToBounds = false
             containerView.addSubview(scrollView)
 
             // Content stack view
@@ -249,9 +248,13 @@
             NSLayoutConstraint.activate([
                 contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
                 contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-                contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+                contentStackView.trailingAnchor.constraint(
+                    equalTo: scrollView.trailingAnchor, constant: -12
+                ),
                 contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-                contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+                contentStackView.widthAnchor.constraint(
+                    equalTo: scrollView.widthAnchor, constant: -12
+                ),
             ])
         }
 
