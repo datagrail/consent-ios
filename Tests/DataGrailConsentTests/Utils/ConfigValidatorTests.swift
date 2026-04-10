@@ -71,6 +71,106 @@ final class ConfigValidatorTests: XCTestCase {
         }
     }
 
+    // swiftlint:disable:next function_body_length
+    func testEmptyLayerDoesNotThrow() throws {
+        // Behavior change: empty layers now log a warning instead of throwing an error
+        // This test documents that intentional change and prevents accidental reversion
+
+        let emptyLayer = ConsentLayer(
+            id: "empty-layer",
+            name: "Empty Layer",
+            position: "bottom",
+            showCloseButton: false,
+            bannerApiId: "empty",
+            elements: []  // Empty elements array
+        )
+
+        let element = ConsentLayerElement(
+            id: "elem1",
+            order: 1,
+            type: "ConsentLayerTextElement",
+            style: nil,
+            buttonAction: nil,
+            targetConsentLayer: nil,
+            categories: nil,
+            links: nil,
+            consentLayerCategories: nil,
+            showTrackingDetailsLink: nil,
+            consentLayerCategoriesConfigId: nil,
+            trackingDetailsLinkTranslations: nil,
+            showIcon: nil,
+            consentLayerBrowserSignalNoticeConfigId: nil,
+            browserSignalNoticeTranslations: nil,
+            showTrackingServices: nil,
+            showCookies: nil,
+            showIcons: nil,
+            groupByVendor: nil,
+            translations: [
+                "en": ElementTranslation(id: "t1", locale: "en", value: "Test", text: nil, url: nil),
+            ]
+        )
+
+        let validLayer = ConsentLayer(
+            id: "layer1",
+            name: "Valid Layer",
+            position: "bottom",
+            showCloseButton: true,
+            bannerApiId: "first",
+            elements: [element]
+        )
+
+        let layout = Layout(
+            id: "layout1",
+            name: "Test Layout",
+            description: nil,
+            status: "published",
+            defaultLayout: true,
+            collapsedOnMobile: false,
+            firstLayerId: "layer1",
+            gpcDntLayerId: nil,
+            consentLayers: [
+                "layer1": validLayer,
+                "empty-layer": emptyLayer,
+            ]
+        )
+
+        let config = ConsentConfig(
+            version: "1.0.0",
+            consentContainerVersionId: "container1",
+            dgCustomerId: "customer1",
+            publishDate: 0,
+            dch: "categorize",
+            dc: "dg-category-essential",
+            privacyDomain: "consent.datagrail.io",
+            plugins: Plugins(
+                scriptControl: false,
+                allCookieSubdomains: false,
+                cookieBlocking: false,
+                localStorageBlocking: false,
+                syncOTConsent: false
+            ),
+            testMode: false,
+            ignoreDoNotTrack: false,
+            trackingDetailsUrl: "https://example.com/tracking",
+            consentMode: "optin",
+            showBanner: true,
+            consentPolicy: ConsentPolicy(name: "GDPR", default: true),
+            gppUsNat: false,
+            initialCategories: InitialCategories(
+                respectGpc: false,
+                respectDnt: false,
+                respectOptout: false,
+                initial: ["dg-category-essential"],
+                gpc: [],
+                optout: []
+            ),
+            layout: layout
+        )
+
+        // Empty layer should not throw - it logs a warning instead
+        XCTAssertNoThrow(try ConfigValidator.validate(config))
+    }
+
     // MARK: - Helper Methods
 
     // swiftlint:disable:next function_body_length
