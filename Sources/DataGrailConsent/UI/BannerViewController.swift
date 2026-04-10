@@ -162,6 +162,7 @@
 
             // Scroll view
             scrollView.translatesAutoresizingMaskIntoConstraints = false
+            scrollView.clipsToBounds = false
             containerView.addSubview(scrollView)
 
             // Content stack view
@@ -567,6 +568,9 @@
                 label.font = .systemFont(ofSize: 16, weight: .medium)
                 label.textColor = .label
                 label.numberOfLines = 0
+                // Allow label to compress and wrap when space is limited
+                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                label.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
                 // Toggle switch
                 let toggle = UISwitch()
@@ -586,6 +590,9 @@
                     toggle.accessibilityHint = "Double tap to toggle"
                 }
                 toggle.addTarget(self, action: #selector(categoryToggled(_:)), for: .valueChanged)
+                // Prevent toggle from being compressed or clipped
+                toggle.setContentCompressionResistancePriority(.required, for: .horizontal)
+                toggle.setContentHuggingPriority(.required, for: .horizontal)
 
                 stackView.addArrangedSubview(label)
                 stackView.addArrangedSubview(toggle)
