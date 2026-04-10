@@ -67,6 +67,13 @@ struct ContentView: View {
                             }
                             .buttonStyle(.bordered)
 
+                            NavigationLink(destination: WebViewDemoView()) {
+                                Label("WebView Demo", systemImage: "safari")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(!isInitialized)
+
                             HStack(spacing: 12) {
                                 Button {
                                     showBanner(style: .modal)

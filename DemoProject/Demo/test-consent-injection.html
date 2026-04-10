@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataGrail Consent Injection Test</title>
+    <style>
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 { color: #333; }
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        pre {
+            background: #f4f4f4;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+        .category {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            margin: 5px 0;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .enabled { border-left: 4px solid #28a745; }
+        .disabled { border-left: 4px solid #dc3545; }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .badge.enabled { background: #28a745; color: white; }
+        .badge.disabled { background: #dc3545; color: white; }
+    </style>
+</head>
+<body>
+    <h1>DataGrail Consent Injection Test</h1>
+
+    <div id="status"></div>
+
+    <h2>1. Check window.datagrailConsent</h2>
+    <div id="consent-status"></div>
+
+    <h2>2. Check window.DG_BANNER_API</h2>
+    <div id="api-status"></div>
+
+    <h2>3. Raw Consent Data</h2>
+    <pre id="raw-data"></pre>
+
+    <h2>4. Category Details</h2>
+    <div id="categories"></div>
+
+    <script>
+        function checkConsent() {
+            const statusDiv = document.getElementById('status');
+            const consentStatusDiv = document.getElementById('consent-status');
+            const apiStatusDiv = document.getElementById('api-status');
+            const rawDataPre = document.getElementById('raw-data');
+            const categoriesDiv = document.getElementById('categories');
+
+            // Check if consent data exists
+            if (window.datagrailConsent) {
+                statusDiv.innerHTML = '<div class="status success">✅ Consent preferences successfully injected from iOS SDK!</div>';
+
+                // Display consent status
+                const consent = window.datagrailConsent;
+                consentStatusDiv.innerHTML = `
+                    <div class="status info">
+                        <strong>Status:</strong> ${consent.isCustomised ? 'Customized' : 'Default'}<br>
+                        <strong>Categories:</strong> ${consent.cookieOptions.length}
+                    </div>
+                `;
+
+                // Display raw JSON
+                rawDataPre.textContent = JSON.stringify(consent, null, 2);
+
+                // Display categories
+                let categoriesHTML = '';
+                consent.cookieOptions.forEach(category => {
+                    const statusClass = category.isEnabled ? 'enabled' : 'disabled';
+                    const statusText = category.isEnabled ? 'ENABLED' : 'DISABLED';
+                    categoriesHTML += `
+                        <div class="category ${statusClass}">
+                            <strong>${category.gtm_key}</strong>
+                            <span class="badge ${statusClass}">${statusText}</span>
+                        </div>
+                    `;
+                });
+                categoriesDiv.innerHTML = categoriesHTML;
+
+            } else {
+                statusDiv.innerHTML = '<div class="status error">❌ No consent preferences found in window.datagrailConsent</div>';
+                consentStatusDiv.innerHTML = '<div class="status error">window.datagrailConsent is undefined</div>';
+            }
+
+            // Check if DG_BANNER_API exists
+            if (window.DG_BANNER_API) {
+                if (typeof window.DG_BANNER_API.setConsentPreferences === 'function') {
+                    apiStatusDiv.innerHTML = '<div class="status success">✅ window.DG_BANNER_API.setConsentPreferences() is available</div>';
+                } else {
+                    apiStatusDiv.innerHTML = '<div class="status error">❌ window.DG_BANNER_API exists but setConsentPreferences is not a function</div>';
+                }
+            } else {
+                apiStatusDiv.innerHTML = '<div class="status info">ℹ️ window.DG_BANNER_API is not available (normal if DataGrail JS SDK not loaded)</div>';
+            }
+        }
+
+        // Run check on load
+        checkConsent();
+
+        // Also run after a short delay in case there's async loading
+        setTimeout(checkConsent, 100);
+    </script>
+</body>
+</html>
