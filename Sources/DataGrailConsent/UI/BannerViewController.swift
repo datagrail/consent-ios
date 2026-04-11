@@ -245,15 +245,16 @@
             ])
 
             // Content stack constraints
+            let contentRightPadding: CGFloat = 12
             NSLayoutConstraint.activate([
                 contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
                 contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
                 contentStackView.trailingAnchor.constraint(
-                    equalTo: scrollView.trailingAnchor, constant: -12
+                    equalTo: scrollView.trailingAnchor, constant: -contentRightPadding
                 ),
                 contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
                 contentStackView.widthAnchor.constraint(
-                    equalTo: scrollView.widthAnchor, constant: -12
+                    equalTo: scrollView.widthAnchor, constant: -contentRightPadding
                 ),
             ])
         }
