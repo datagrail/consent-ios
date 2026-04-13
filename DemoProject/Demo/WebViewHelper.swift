@@ -5,10 +5,10 @@ import DataGrailConsent
 /// Helper for injecting DataGrail consent preferences into WKWebViews
 class DataGrailWebViewHelper {
 
-    /// Inject consent preferences into a WebView configuration
-    /// Call this before loading web content
-    /// - Parameter configuration: The WKWebViewConfiguration to inject into
-    static func injectConsentPreferences(into configuration: WKWebViewConfiguration) {
+    /// Inject consent preferences into a WebView
+    /// Call this in WKNavigationDelegate's didFinish callback after page loads
+    /// - Parameter webView: The WKWebView to inject into
+    static func injectConsentPreferences(into webView: WKWebView) {
         guard let preferences = try? DataGrailConsent.shared.getCategories() else {
             return
         }
@@ -17,13 +17,11 @@ class DataGrailWebViewHelper {
             return
         }
 
-        let userScript = WKUserScript(
-            source: script,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        )
-
-        configuration.userContentController.addUserScript(userScript)
+        webView.evaluateJavaScript(script) { _, error in
+            if let error = error {
+                print("[DataGrail iOS SDK] Injection error: \(error.localizedDescription)")
+            }
+        }
     }
 
     /// Update consent preferences in an already-loaded WebView

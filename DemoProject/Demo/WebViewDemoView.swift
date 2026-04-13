@@ -161,10 +161,6 @@ struct WebViewContainer: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
 
-        // Inject consent preferences before loading
-        DataGrailWebViewHelper.injectConsentPreferences(into: configuration)
-        onLog("[iOS SDK] Injected consent preferences into WebView configuration")
-
         // Add message handler to receive console logs from JavaScript
         configuration.userContentController.add(
             context.coordinator,
@@ -231,6 +227,7 @@ struct WebViewContainer: UIViewRepresentable {
     class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var parent: WebViewContainer
         var lastLoadedURL: String
+        var lastInjectedURL: String?
         weak var webView: WKWebView?
 
         init(parent: WebViewContainer, lastLoadedURL: String) {
@@ -242,10 +239,24 @@ struct WebViewContainer: UIViewRepresentable {
             _ webView: WKWebView,
             didFinish navigation: WKNavigation!
         ) {
-            parent.onLog("[WebView] Page loaded: \(webView.url?.absoluteString ?? "unknown")")
+            let currentURL = webView.url?.absoluteString
+            parent.onLog("[WebView] Page loaded: \(currentURL ?? "unknown")")
 
-            // Automatically check if consent preferences were injected
-            checkInjectedConsent(webView: webView)
+            // Only inject if this is a new URL (prevent duplicate injections on same page)
+            if currentURL != lastInjectedURL {
+                lastInjectedURL = currentURL
+
+                // Inject consent preferences after page loads
+                DataGrailWebViewHelper.injectConsentPreferences(into: webView)
+                parent.onLog("[iOS SDK] Injected consent preferences into WebView")
+
+                // Automatically check if consent preferences were injected (with small delay)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.checkInjectedConsent(webView: webView)
+                }
+            } else {
+                parent.onLog("[WebView] Same URL, skipping injection")
+            }
         }
 
         private func checkInjectedConsent(webView: WKWebView) {
