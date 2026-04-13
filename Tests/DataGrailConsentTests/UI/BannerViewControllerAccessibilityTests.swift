@@ -70,6 +70,7 @@
                 dch: "categorize",
                 dc: "dg-category-essential",
                 privacyDomain: "test.com",
+                analyticsEndpoint: nil,
                 plugins: Plugins(
                     scriptControl: false,
                     allCookieSubdomains: false,
@@ -158,6 +159,7 @@
                 dch: "categorize",
                 dc: "dg-category-essential",
                 privacyDomain: "test.com",
+                analyticsEndpoint: nil,
                 plugins: Plugins(
                     scriptControl: false,
                     allCookieSubdomains: false,
@@ -285,6 +287,7 @@
                 dch: "categorize",
                 dc: "dg-category-essential",
                 privacyDomain: "test.com",
+                analyticsEndpoint: nil,
                 plugins: Plugins(
                     scriptControl: false,
                     allCookieSubdomains: false,
@@ -373,6 +376,7 @@
                 dch: "categorize",
                 dc: "dg-category-essential",
                 privacyDomain: "test.com",
+                analyticsEndpoint: nil,
                 plugins: Plugins(
                     scriptControl: false,
                     allCookieSubdomains: false,
@@ -461,6 +465,7 @@
                 dch: "categorize",
                 dc: "dg-category-essential",
                 privacyDomain: "test.com",
+                analyticsEndpoint: nil,
                 plugins: Plugins(
                     scriptControl: false,
                     allCookieSubdomains: false,

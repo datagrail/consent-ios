@@ -86,16 +86,31 @@ public class ConsentService {
     ) {
         let consentId = storage.getOrCreateUniqueId()
 
-        var components = URLComponents(string: "https://\(privacyDomain)/save_open")
-        components?.queryItems = [
-            URLQueryItem(name: "dg_customer_id", value: config.dgCustomerId),
-            URLQueryItem(name: "consent_id", value: consentId),
-            URLQueryItem(name: "config_version", value: config.version),
-            URLQueryItem(name: "timestamp", value: ISO8601DateFormatter().string(from: Date())),
+        let baseUrl: String
+        if let analyticsEndpoint = config.analyticsEndpoint {
+            baseUrl = "https://\(analyticsEndpoint)"
+        } else {
+            baseUrl = "https://\(privacyDomain)"
+        }
+
+        guard let url = URL(string: "\(baseUrl)/save_open") else {
+            completion(.failure(.networkError("Invalid URL")))
+            return
+        }
+
+        let payload: [String: Any] = [
+            "customer": config.dgCustomerId,
+            "user_id": consentId,
+            "current_page": "",
+            "policy_name": config.consentPolicy.name,
+            "action": "open",
+            "user_agent": Self.userAgentString(),
+            "language": Locale.current.languageCode ?? "",
+            "timestamp": ISO8601DateFormatter().string(from: Date()),
         ]
 
-        guard let url = components?.url else {
-            completion(.failure(.networkError("Invalid URL")))
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
+            completion(.failure(.parseError("Failed to encode save_open payload")))
             return
         }
 
@@ -103,7 +118,8 @@ public class ConsentService {
             operation: { operationCompletion in
                 self.networkClient.request(
                     url: url,
-                    method: .get,
+                    method: .post,
+                    body: body,
                     completion: { result in
                         switch result {
                         case .success:
@@ -119,17 +135,29 @@ public class ConsentService {
                 case .success:
                     completion(.success(()))
                 case let .failure(error):
-                    // Queue for retry if network failed
-                    let payload: [String: Any] = [
-                        "dg_customer_id": config.dgCustomerId,
-                        "consent_id": consentId,
-                        "config_version": config.version,
+                    // Queue for retry if network failed — store full URL so retry uses correct endpoint
+                    let queuePayload: [String: Any] = [
+                        "url": url.absoluteString,
+                        "body": payload,
                     ]
-                    self.queueFailedRequest(payload: payload, endpoint: "save_open")
+                    self.queueFailedRequest(payload: queuePayload, endpoint: "save_open")
                     completion(.failure(error))
                 }
             }
         )
+    }
+
+    private static func userAgentString() -> String {
+        let info = ProcessInfo.processInfo
+        let osVersion = info.operatingSystemVersion
+        let versionString = "\(osVersion.majorVersion).\(osVersion.minorVersion).\(osVersion.patchVersion)"
+        #if os(iOS)
+        return "iOS/\(versionString)"
+        #elseif os(macOS)
+        return "macOS/\(versionString)"
+        #else
+        return "Apple/\(versionString)"
+        #endif
     }
 
     /// Retry any pending requests that failed previously
@@ -171,16 +199,31 @@ public class ConsentService {
                     group.leave()
                 }
             } else if endpoint == "save_open" {
-                var components = URLComponents(string: "https://\(privacyDomain)/save_open")
-                components?.queryItems = payload.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
+                // New format stores url + body dict; legacy format stores query params
+                let url: URL
+                let body: Data?
 
-                guard let url = components?.url else {
-                    failureCount += 1
-                    group.leave()
-                    continue
+                if let urlString = payload["url"] as? String,
+                   let parsedUrl = URL(string: urlString),
+                   let bodyDict = payload["body"] as? [String: Any] {
+                    // New format: POST with JSON body
+                    url = parsedUrl
+                    body = try? JSONSerialization.data(withJSONObject: bodyDict)
+                } else {
+                    // Legacy format: reconstruct GET URL from query params
+                    var components = URLComponents(string: "https://\(privacyDomain)/save_open")
+                    components?.queryItems = payload.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
+                    guard let legacyUrl = components?.url else {
+                        failureCount += 1
+                        group.leave()
+                        continue
+                    }
+                    url = legacyUrl
+                    body = nil
                 }
 
-                networkClient.request(url: url, method: .get) { result in
+                let method: HTTPMethod = body != nil ? .post : .get
+                networkClient.request(url: url, method: method, body: body) { result in
                     if case .success = result {
                         successCount += 1
                     } else {

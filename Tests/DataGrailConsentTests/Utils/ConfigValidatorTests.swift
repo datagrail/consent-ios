@@ -19,6 +19,7 @@ final class ConfigValidatorTests: XCTestCase {
             dch: config.dch,
             dc: config.dc,
             privacyDomain: config.privacyDomain,
+            analyticsEndpoint: nil,
             plugins: config.plugins,
             testMode: config.testMode,
             ignoreDoNotTrack: config.ignoreDoNotTrack,
@@ -50,6 +51,7 @@ final class ConfigValidatorTests: XCTestCase {
             dch: config.dch,
             dc: config.dc,
             privacyDomain: config.privacyDomain,
+            analyticsEndpoint: nil,
             plugins: config.plugins,
             testMode: config.testMode,
             ignoreDoNotTrack: config.ignoreDoNotTrack,
@@ -129,6 +131,7 @@ final class ConfigValidatorTests: XCTestCase {
             dch: "categorize",
             dc: "dg-category-essential",
             privacyDomain: "consent.datagrail.io",
+            analyticsEndpoint: nil,
             plugins: Plugins(
                 scriptControl: false,
                 allCookieSubdomains: false,

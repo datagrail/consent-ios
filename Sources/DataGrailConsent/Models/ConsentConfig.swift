@@ -9,6 +9,7 @@ public struct ConsentConfig: Codable {
     public let dch: String
     public let dc: String
     public let privacyDomain: String
+    public let analyticsEndpoint: String?
     public let plugins: Plugins
     public let testMode: Bool
     public let ignoreDoNotTrack: Bool
@@ -22,6 +23,7 @@ public struct ConsentConfig: Codable {
 
     enum CodingKeys: String, CodingKey {
         case version, consentContainerVersionId, dgCustomerId, dch, dc, privacyDomain
+        case analyticsEndpoint
         case plugins, testMode, ignoreDoNotTrack, trackingDetailsUrl, consentMode
         case showBanner, consentPolicy, gppUsNat, initialCategories, layout
         case publishDate = "p"

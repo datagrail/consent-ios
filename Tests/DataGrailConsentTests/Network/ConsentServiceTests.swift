@@ -97,9 +97,70 @@ final class ConsentServiceTests: XCTestCase {
             switch result {
             case .success:
                 XCTAssertTrue(self.mockNetworkClient.requestCalled)
-                XCTAssertEqual(self.mockNetworkClient.lastMethod, .get)
+                XCTAssertEqual(self.mockNetworkClient.lastMethod, .post)
                 XCTAssertTrue(self.mockNetworkClient.lastURL?.absoluteString.contains("/save_open") ?? false)
-                XCTAssertTrue(self.mockNetworkClient.lastURL?.absoluteString.contains("dg_customer_id=") ?? false)
+
+                // Verify POST body contains expected fields
+                if let body = self.mockNetworkClient.lastBody,
+                   let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                    XCTAssertEqual(json["customer"] as? String, "customer123")
+                    XCTAssertEqual(json["user_id"] as? String, "test-id-123")
+                    XCTAssertEqual(json["action"] as? String, "open")
+                    XCTAssertNotNil(json["user_agent"])
+                    XCTAssertNotNil(json["language"])
+                    XCTAssertNotNil(json["timestamp"])
+                    XCTAssertNotNil(json["policy_name"])
+                } else {
+                    XCTFail("Expected JSON body in POST request")
+                }
+            case let .failure(error):
+                XCTFail("Expected success but got error: \(error)")
+            }
+            expectation.fulfill()
+        }
+
+        waitForExpectations(timeout: 1.0)
+    }
+
+    func testSaveOpenUsesAnalyticsEndpoint() {
+        let expectation = expectation(description: "saveOpen uses analyticsEndpoint")
+
+        mockNetworkClient.requestResult = .success(Data())
+        mockStorage.uniqueId = "test-id-123"
+
+        let config = createTestConfig(analyticsEndpoint: "analytics.test.com")
+
+        service.saveOpen(config: config) { result in
+            switch result {
+            case .success:
+                XCTAssertTrue(
+                    self.mockNetworkClient.lastURL?.absoluteString.hasPrefix("https://analytics.test.com/") ?? false,
+                    "Expected analyticsEndpoint URL, got: \(self.mockNetworkClient.lastURL?.absoluteString ?? "nil")"
+                )
+            case let .failure(error):
+                XCTFail("Expected success but got error: \(error)")
+            }
+            expectation.fulfill()
+        }
+
+        waitForExpectations(timeout: 1.0)
+    }
+
+    func testSaveOpenFallsBackToPrivacyDomain() {
+        let expectation = expectation(description: "saveOpen falls back to privacyDomain")
+
+        mockNetworkClient.requestResult = .success(Data())
+        mockStorage.uniqueId = "test-id-123"
+
+        let config = createTestConfig(analyticsEndpoint: nil)
+
+        service.saveOpen(config: config) { result in
+            switch result {
+            case .success:
+                XCTAssertTrue(
+                    self.mockNetworkClient.lastURL?.absoluteString.hasPrefix("https://consent.test.com/") ?? false,
+                    "Expected privacyDomain URL, got: \(self.mockNetworkClient.lastURL?.absoluteString ?? "nil")"
+                )
             case let .failure(error):
                 XCTFail("Expected success but got error: \(error)")
             }
@@ -111,7 +172,7 @@ final class ConsentServiceTests: XCTestCase {
 
     // MARK: - Helper Methods
 
-    private func createTestConfig() -> ConsentConfig {
+    private func createTestConfig(analyticsEndpoint: String? = nil) -> ConsentConfig {
         ConsentConfig(
             version: "1.0.0",
             consentContainerVersionId: "container1",
@@ -120,6 +181,7 @@ final class ConsentServiceTests: XCTestCase {
             dch: "categorize",
             dc: "dg-category-essential",
             privacyDomain: testPrivacyDomain,
+            analyticsEndpoint: analyticsEndpoint,
             plugins: Plugins(
                 scriptControl: false,
                 allCookieSubdomains: false,
