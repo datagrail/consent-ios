@@ -60,18 +60,28 @@ class DataGrailWebViewHelper {
         // Create the injection script that calls DG_BANNER_API.setConsentPreferences
         let script = """
         (function() {
-            const preferences = \(preferencesJSON);
-            const config = { "runPreferenceCallbacks": false };
+            try {
+                const preferences = \(preferencesJSON);
+                const config = { "runPreferenceCallbacks": false };
 
-            // Store preferences globally for debugging
-            window.datagrailConsent = preferences;
+                // Store preferences globally for debugging
+                window.datagrailConsent = preferences;
+                console.log('[DataGrail iOS SDK] Preferences stored in window.datagrailConsent:', JSON.stringify(preferences));
 
-            // If DG_BANNER_API is available, use it to set preferences
-            if (window.DG_BANNER_API && typeof window.DG_BANNER_API.setConsentPreferences === 'function') {
-                window.DG_BANNER_API.setConsentPreferences(preferences, config);
-                console.log('[DataGrail iOS SDK] Set consent preferences via DG_BANNER_API');
-            } else {
-                console.log('[DataGrail iOS SDK] DG_BANNER_API not available, preferences stored in window.datagrailConsent');
+                // Try to set preferences via API if available
+                if (window.DG_BANNER_API && typeof window.DG_BANNER_API.setConsentPreferences === 'function') {
+                    console.log('[DataGrail iOS SDK] Calling DG_BANNER_API.setConsentPreferences...');
+                    try {
+                        const result = window.DG_BANNER_API.setConsentPreferences(preferences, config);
+                        console.log('[DataGrail iOS SDK] setConsentPreferences called successfully, result:', result);
+                    } catch (apiError) {
+                        console.error('[DataGrail iOS SDK] setConsentPreferences threw error:', apiError.message);
+                    }
+                } else {
+                    console.log('[DataGrail iOS SDK] DG_BANNER_API not available (type=' + typeof window.DG_BANNER_API + ')');
+                }
+            } catch (error) {
+                console.error('[DataGrail iOS SDK] Error injecting consent:', error.message, error.stack);
             }
         })();
         """
