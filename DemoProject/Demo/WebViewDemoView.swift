@@ -195,17 +195,33 @@ struct WebViewContainer: UIViewRepresentable {
             }
         }
 
-        // Load initial URL
+        // Inject cookies and load initial URL
         if let url = URL(string: urlString) {
             context.coordinator.lastLoadedURL = urlString
-            webView.load(URLRequest(url: url))
+            onLog("[iOS SDK] Injecting consent cookies before loading...")
+
+            DataGrailWebViewHelper.loadWebViewWithConsent(webView: webView, url: url) { result in
+                switch result {
+                case .success:
+                    onLog("[iOS SDK] ✅ Consent cookies injected successfully")
+                case .failure(let error):
+                    onLog("[iOS SDK] ❌ Failed to inject cookies: \(error.localizedDescription)")
+                    // Load page anyway even if cookie injection fails
+                    webView.load(URLRequest(url: url))
+                }
+            }
         }
 
-        // Listen for consent changes and update the WebView
+        // Listen for consent changes and update the WebView cookies
         DataGrailConsent.shared.onConsentChanged { _ in
-            onLog("[iOS SDK] Consent changed, updating WebView...")
-            DataGrailWebViewHelper.updateConsentPreferences(in: webView) { success in
-                onLog("[iOS SDK] WebView update \(success ? "succeeded" : "failed")")
+            onLog("[iOS SDK] Consent changed, updating WebView cookies...")
+            DataGrailWebViewHelper.updateConsentCookies(in: webView) { result in
+                switch result {
+                case .success:
+                    onLog("[iOS SDK] ✅ WebView cookies updated successfully")
+                case .failure(let error):
+                    onLog("[iOS SDK] ❌ Failed to update cookies: \(error.localizedDescription)")
+                }
             }
         }
 
@@ -220,14 +236,24 @@ struct WebViewContainer: UIViewRepresentable {
 
         if let url = URL(string: urlString) {
             context.coordinator.lastLoadedURL = urlString
-            webView.load(URLRequest(url: url))
+            onLog("[iOS SDK] Injecting consent cookies before loading new URL...")
+
+            DataGrailWebViewHelper.loadWebViewWithConsent(webView: webView, url: url) { result in
+                switch result {
+                case .success:
+                    onLog("[iOS SDK] ✅ Consent cookies injected successfully")
+                case .failure(let error):
+                    onLog("[iOS SDK] ❌ Failed to inject cookies: \(error.localizedDescription)")
+                    // Load page anyway even if cookie injection fails
+                    webView.load(URLRequest(url: url))
+                }
+            }
         }
     }
 
     class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var parent: WebViewContainer
         var lastLoadedURL: String
-        var lastInjectedURL: String?
         weak var webView: WKWebView?
 
         init(parent: WebViewContainer, lastLoadedURL: String) {
@@ -240,45 +266,29 @@ struct WebViewContainer: UIViewRepresentable {
             didFinish navigation: WKNavigation!
         ) {
             let currentURL = webView.url?.absoluteString
-            parent.onLog("[WebView] Page loaded: \(currentURL ?? "unknown")")
+            parent.onLog("[WebView] ✅ Page loaded: \(currentURL ?? "unknown")")
+            parent.onLog("[WebView] Consent cookies were injected before page load")
 
-            // Only inject if this is a new URL (prevent duplicate injections on same page)
-            if currentURL != lastInjectedURL {
-                lastInjectedURL = currentURL
-
-                // Inject consent preferences after page loads
-                DataGrailWebViewHelper.injectConsentPreferences(into: webView)
-                parent.onLog("[iOS SDK] Injected consent preferences into WebView")
-
-                // Automatically check if consent preferences were injected (with small delay)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    self?.checkInjectedConsent(webView: webView)
-                }
-            } else {
-                parent.onLog("[WebView] Same URL, skipping injection")
+            // Automatically verify cookies were set (with small delay)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.checkConsentCookies(webView: webView)
             }
         }
 
-        private func checkInjectedConsent(webView: WKWebView) {
-            let script = """
-            (function() {
-                if (window.datagrailConsent) {
-                    return JSON.stringify(window.datagrailConsent, null, 2);
-                } else {
-                    return "window.datagrailConsent is undefined";
-                }
-            })();
-            """
+        private func checkConsentCookies(webView: WKWebView) {
+            let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
 
-            webView.evaluateJavaScript(script) { [weak self] result, error in
+            cookieStore.getAllCookies { [weak self] cookies in
                 guard let self = self else { return }
 
-                if let error = error {
-                    self.parent.onLog("[Auto-Check] Error: \(error.localizedDescription)")
-                } else if let result = result as? String {
-                    self.parent.onLog("[Auto-Check] Consent preferences injected:")
-                    result.split(separator: "\n").forEach { line in
-                        self.parent.onLog("[Auto-Check]   \(line)")
+                let consentCookies = cookies.filter { $0.name.contains("datagrail_consent") }
+
+                if consentCookies.isEmpty {
+                    self.parent.onLog("[Auto-Check] ⚠️ No DataGrail consent cookies found")
+                } else {
+                    self.parent.onLog("[Auto-Check] Found \(consentCookies.count) DataGrail cookie(s):")
+                    for cookie in consentCookies {
+                        self.parent.onLog("[Auto-Check]   - \(cookie.name) = \(cookie.value)")
                     }
                 }
             }
