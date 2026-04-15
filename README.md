@@ -11,7 +11,7 @@ Add the DataGrail pod to your `Podfile`:
 ```ruby
 target 'YourApp' do
   use_frameworks!
-  pod 'DataGrailConsent', '~> 1.4'
+  pod 'DataGrailConsent', '~> 1.0'
 end
 ```
 
@@ -35,7 +35,7 @@ Or add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/datagrail/consent-ios.git", from: "1.4.0")
+    .package(url: "https://github.com/datagrail/consent-ios.git", from: "1.0.0")
 ]
 ```
 

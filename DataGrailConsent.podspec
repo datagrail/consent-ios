@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name         = 'DataGrailConsent'
-  s.version      = '1.4.0'
+  s.version      = '1.3.0'
   s.summary      = 'Native iOS SDK for consent banner display and privacy preference management.'
   s.description  = <<-DESC
     DataGrail Consent SDK provides a native iOS consent banner implementation
