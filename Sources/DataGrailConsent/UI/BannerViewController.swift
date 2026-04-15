@@ -245,12 +245,17 @@
             ])
 
             // Content stack constraints
+            let contentRightPadding: CGFloat = 12
             NSLayoutConstraint.activate([
                 contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor),
                 contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-                contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+                contentStackView.trailingAnchor.constraint(
+                    equalTo: scrollView.trailingAnchor, constant: -contentRightPadding
+                ),
                 contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-                contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+                contentStackView.widthAnchor.constraint(
+                    equalTo: scrollView.widthAnchor, constant: -contentRightPadding
+                ),
             ])
         }
 
@@ -567,6 +572,9 @@
                 label.font = .systemFont(ofSize: 16, weight: .medium)
                 label.textColor = .label
                 label.numberOfLines = 0
+                // Allow label to compress and wrap when space is limited
+                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                label.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
                 // Toggle switch
                 let toggle = UISwitch()
@@ -586,6 +594,9 @@
                     toggle.accessibilityHint = "Double tap to toggle"
                 }
                 toggle.addTarget(self, action: #selector(categoryToggled(_:)), for: .valueChanged)
+                // Prevent toggle from being compressed or clipped
+                toggle.setContentCompressionResistancePriority(.required, for: .horizontal)
+                toggle.setContentHuggingPriority(.required, for: .horizontal)
 
                 stackView.addArrangedSubview(label)
                 stackView.addArrangedSubview(toggle)
