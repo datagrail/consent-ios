@@ -67,7 +67,14 @@ public struct Plugins: Codable {
 /// Consent policy information
 public struct ConsentPolicy: Codable {
     public let name: String
+    public let uuid: String?
     public let `default`: Bool
+
+    public init(name: String, uuid: String? = nil, default: Bool) {
+        self.name = name
+        self.uuid = uuid
+        self.default = `default`
+    }
 }
 
 /// Initial category settings for different scenarios

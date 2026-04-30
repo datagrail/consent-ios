@@ -132,7 +132,7 @@ final class ConsentServiceTests: XCTestCase {
             trackingDetailsUrl: "https://example.com/tracking",
             consentMode: "optin",
             showBanner: true,
-            consentPolicy: ConsentPolicy(name: "GDPR", default: true),
+            consentPolicy: ConsentPolicy(name: "GDPR", uuid: "a1b2c3d4-e5f6-7890-abcd-ef1234567890", default: true),
             gppUsNat: false,
             initialCategories: InitialCategories(
                 respectGpc: false,
