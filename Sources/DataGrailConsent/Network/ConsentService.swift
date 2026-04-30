@@ -129,11 +129,15 @@ public class ConsentService {
                     completion(.success(()))
                 case let .failure(error):
                     // Queue for retry if network failed
-                    let payload: [String: Any] = [
+                    var payload: [String: Any] = [
                         "dg_customer_id": config.dgCustomerId,
                         "consent_id": consentId,
                         "config_version": config.version,
+                        "policy_name": config.consentPolicy.name,
                     ]
+                    if let policyUuid = config.consentPolicy.uuid {
+                        payload["policy_uuid"] = policyUuid
+                    }
                     self.queueFailedRequest(payload: payload, endpoint: "save_open")
                     completion(.failure(error))
                 }
