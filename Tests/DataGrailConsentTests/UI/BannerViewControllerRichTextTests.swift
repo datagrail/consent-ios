@@ -220,7 +220,6 @@
                 dch: "categorize",
                 dc: "dg-category-essential",
                 privacyDomain: "test.com",
-                analyticsEndpoint: nil,
                 plugins: Plugins(
                     scriptControl: false,
                     allCookieSubdomains: false,
@@ -258,9 +257,10 @@
             BannerAccessibilityTestHelpers.findView(in: view) { subview in
                 guard let label = subview as? UILabel else { return false }
                 guard let attr = label.attributedText else { return false }
+                guard attr.length > 0 else { return false }
                 // Check that it was explicitly set (has font attribute applied)
                 let font = attr.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
-                return font != nil && attr.length > 0
+                return font != nil
             } as? UILabel
         }
 

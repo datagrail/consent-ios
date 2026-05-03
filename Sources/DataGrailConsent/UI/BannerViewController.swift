@@ -393,9 +393,13 @@
             let color = UIColor.label
             renderRichText(text, in: label, font: font, color: color)
             label.isAccessibilityElement = true
-            label.accessibilityLabel = text.replacingOccurrences(
-                of: "<[^>]+>", with: "", options: .regularExpression
-            )
+            if let attrText = label.attributedText {
+                label.accessibilityLabel = attrText.string
+            } else {
+                label.accessibilityLabel = text.replacingOccurrences(
+                    of: "<[^>]+>", with: "", options: .regularExpression
+                )
+            }
             label.accessibilityTraits = .staticText
             return label
         }
@@ -416,12 +420,24 @@
                   )
             else {
                 label.text = text
+                label.font = font
+                label.textColor = color
                 return
             }
-            attr.addAttributes(
-                [.font: font, .foregroundColor: color],
-                range: NSRange(location: 0, length: attr.length)
-            )
+            let fullRange = NSRange(location: 0, length: attr.length)
+            attr.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+                if let existingFont = value as? UIFont {
+                    let traits = existingFont.fontDescriptor.symbolicTraits
+                    var descriptor = font.fontDescriptor
+                    if let traitDescriptor = descriptor.withSymbolicTraits(traits) {
+                        descriptor = traitDescriptor
+                    }
+                    attr.addAttribute(.font, value: UIFont(descriptor: descriptor, size: font.pointSize), range: range)
+                } else {
+                    attr.addAttribute(.font, value: font, range: range)
+                }
+            }
+            attr.addAttribute(.foregroundColor, value: color, range: fullRange)
             label.attributedText = attr
         }
 
