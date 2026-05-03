@@ -396,7 +396,7 @@
             if let attrText = label.attributedText {
                 label.accessibilityLabel = attrText.string
             } else {
-                label.accessibilityLabel = text
+                label.accessibilityLabel = label.text ?? text
             }
             label.accessibilityTraits = .staticText
             return label
