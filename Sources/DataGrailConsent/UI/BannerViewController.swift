@@ -388,14 +388,41 @@
             }
 
             let label = UILabel()
-            label.text = text
             label.numberOfLines = 0
-            label.font = .systemFont(ofSize: 16)
-            label.textColor = .label
+            let font = UIFont.systemFont(ofSize: 16)
+            let color = UIColor.label
+            renderRichText(text, in: label, font: font, color: color)
             label.isAccessibilityElement = true
-            label.accessibilityLabel = text
+            label.accessibilityLabel = text.replacingOccurrences(
+                of: "<[^>]+>", with: "", options: .regularExpression
+            )
             label.accessibilityTraits = .staticText
             return label
+        }
+
+        /// Renders HTML-formatted text as an attributed string in the given label.
+        /// Falls back to plain text assignment when the input contains no HTML tags
+        /// or when HTML parsing fails.
+        private func renderRichText(_ text: String, in label: UILabel, font: UIFont, color: UIColor) {
+            guard text.contains("<"),
+                  let data = text.data(using: .utf8),
+                  let attr = try? NSMutableAttributedString(
+                      data: data,
+                      options: [
+                          .documentType: NSAttributedString.DocumentType.html,
+                          .characterEncoding: String.Encoding.utf8.rawValue,
+                      ],
+                      documentAttributes: nil
+                  )
+            else {
+                label.text = text
+                return
+            }
+            attr.addAttributes(
+                [.font: font, .foregroundColor: color],
+                range: NSRange(location: 0, length: attr.length)
+            )
+            label.attributedText = attr
         }
 
         // swiftlint:disable:next function_body_length cyclomatic_complexity
@@ -625,10 +652,10 @@
                let text = translation.value ?? translation.text
             {
                 let label = UILabel()
-                label.text = text
                 label.numberOfLines = 0
-                label.font = .systemFont(ofSize: 14)
-                label.textColor = .secondaryLabel
+                let font = UIFont.systemFont(ofSize: 14)
+                let color = UIColor.secondaryLabel
+                renderRichText(text, in: label, font: font, color: color)
                 containerView.addArrangedSubview(label)
             }
 
