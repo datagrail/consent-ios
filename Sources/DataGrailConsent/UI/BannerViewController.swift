@@ -396,9 +396,7 @@
             if let attrText = label.attributedText {
                 label.accessibilityLabel = attrText.string
             } else {
-                label.accessibilityLabel = text.replacingOccurrences(
-                    of: "<[^>]+>", with: "", options: .regularExpression
-                )
+                label.accessibilityLabel = text
             }
             label.accessibilityTraits = .staticText
             return label
@@ -408,7 +406,7 @@
         /// Falls back to plain text assignment when the input contains no HTML tags
         /// or when HTML parsing fails.
         private func renderRichText(_ text: String, in label: UILabel, font: UIFont, color: UIColor) {
-            guard text.contains("<"),
+            guard text.range(of: "<[a-zA-Z][^>]*>", options: .regularExpression) != nil,
                   let data = text.data(using: .utf8),
                   let attr = try? NSMutableAttributedString(
                       data: data,

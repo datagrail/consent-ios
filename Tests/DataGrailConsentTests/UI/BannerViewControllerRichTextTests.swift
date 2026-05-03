@@ -139,8 +139,8 @@
 
         // MARK: - Invalid HTML Fallback
 
-        func testMalformedHTML_FallsBackToPlainText() {
-            // Text that contains < but is not valid HTML should still render
+        func testAngleBracketInPlainText_UsesPlainTextPath() {
+            // Text that contains < but is not a valid HTML tag should use the plain text path
             let text = "Temperature < 100 degrees"
             let config = createConfigWithText(text)
             let vc = BannerViewController(
@@ -151,9 +151,9 @@
             )
             vc.loadViewIfNeeded()
 
-            // The label should still be rendered (either as plain text fallback or parsed HTML)
-            let label = findAnyLabel(in: vc.view, containingText: "100")
-            XCTAssertNotNil(label, "Malformed HTML should still render text content")
+            let label = findLabel(in: vc.view, withPlainText: text)
+            XCTAssertNotNil(label, "Text with < but no HTML tags should use plain text path")
+            XCTAssertEqual(label?.text, text, "The literal < should be preserved in plain text")
         }
 
         // MARK: - Helpers
