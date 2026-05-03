@@ -406,7 +406,8 @@
         /// Falls back to plain text assignment when the input contains no HTML tags
         /// or when HTML parsing fails.
         private func renderRichText(_ text: String, in label: UILabel, font: UIFont, color: UIColor) {
-            guard text.range(of: "<[a-zA-Z][^>]*>", options: .regularExpression) != nil,
+            let containsHtml = text.range(of: "<[a-zA-Z][^>]*>", options: .regularExpression) != nil
+            guard containsHtml,
                   let data = text.data(using: .utf8),
                   let attr = try? NSMutableAttributedString(
                       data: data,
@@ -417,7 +418,9 @@
                       documentAttributes: nil
                   )
             else {
-                label.text = text
+                label.text = containsHtml
+                    ? text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                    : text
                 label.font = font
                 label.textColor = color
                 return

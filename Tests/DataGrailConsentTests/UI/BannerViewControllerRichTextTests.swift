@@ -264,17 +264,5 @@
             } as? UILabel
         }
 
-        private func findAnyLabel(in view: UIView, containingText text: String) -> UILabel? {
-            BannerAccessibilityTestHelpers.findView(in: view) { subview in
-                guard let label = subview as? UILabel else { return false }
-                if let plainText = label.text, plainText.contains(text) {
-                    return true
-                }
-                if let attrText = label.attributedText?.string, attrText.contains(text) {
-                    return true
-                }
-                return false
-            } as? UILabel
-        }
     }
 #endif
