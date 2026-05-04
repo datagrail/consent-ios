@@ -28,10 +28,11 @@ public class ConsentService {
     ) {
         let url = buildURL(path: "/save_preferences")
 
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "dg_customer_id": config.dgCustomerId,
             "consent_id": storage.getOrCreateUniqueId(),
             "config_version": config.version,
+            "policyName": config.consentPolicy.name,
             "is_customised": preferences.isCustomised,
             "cookie_options": preferences.cookieOptions.map { option in
                 [
@@ -41,6 +42,9 @@ public class ConsentService {
             },
             "timestamp": ISO8601DateFormatter().string(from: Date()),
         ]
+        if let policyUuid = config.consentPolicy.uuid {
+            payload["policyUuid"] = policyUuid
+        }
 
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
             completion(.failure(.parseError("Failed to encode preferences payload")))
@@ -87,12 +91,17 @@ public class ConsentService {
         let consentId = storage.getOrCreateUniqueId()
 
         var components = URLComponents(string: "https://\(privacyDomain)/save_open")
-        components?.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "dg_customer_id", value: config.dgCustomerId),
             URLQueryItem(name: "consent_id", value: consentId),
             URLQueryItem(name: "config_version", value: config.version),
+            URLQueryItem(name: "policy_name", value: config.consentPolicy.name),
             URLQueryItem(name: "timestamp", value: ISO8601DateFormatter().string(from: Date())),
         ]
+        if let policyUuid = config.consentPolicy.uuid {
+            queryItems.append(URLQueryItem(name: "policy_uuid", value: policyUuid))
+        }
+        components?.queryItems = queryItems
 
         guard let url = components?.url else {
             completion(.failure(.networkError("Invalid URL")))
@@ -120,11 +129,15 @@ public class ConsentService {
                     completion(.success(()))
                 case let .failure(error):
                     // Queue for retry if network failed
-                    let payload: [String: Any] = [
+                    var payload: [String: Any] = [
                         "dg_customer_id": config.dgCustomerId,
                         "consent_id": consentId,
                         "config_version": config.version,
+                        "policy_name": config.consentPolicy.name,
                     ]
+                    if let policyUuid = config.consentPolicy.uuid {
+                        payload["policy_uuid"] = policyUuid
+                    }
                     self.queueFailedRequest(payload: payload, endpoint: "save_open")
                     completion(.failure(error))
                 }
