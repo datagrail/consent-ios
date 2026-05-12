@@ -95,6 +95,10 @@ public class ConsentService {
             URLQueryItem(name: "dg_customer_id", value: config.dgCustomerId),
             URLQueryItem(name: "consent_id", value: consentId),
             URLQueryItem(name: "config_version", value: config.version),
+            URLQueryItem(
+                name: "consent_container_version_id",
+                value: config.consentContainerVersionId
+            ),
             URLQueryItem(name: "policy_name", value: config.consentPolicy.name),
             URLQueryItem(name: "timestamp", value: ISO8601DateFormatter().string(from: Date())),
         ]
@@ -133,6 +137,7 @@ public class ConsentService {
                         "dg_customer_id": config.dgCustomerId,
                         "consent_id": consentId,
                         "config_version": config.version,
+                        "consent_container_version_id": config.consentContainerVersionId,
                         "policy_name": config.consentPolicy.name,
                     ]
                     if let policyUuid = config.consentPolicy.uuid {
