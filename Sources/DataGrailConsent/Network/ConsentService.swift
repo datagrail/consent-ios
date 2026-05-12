@@ -80,27 +80,9 @@ public class ConsentService {
         )
     }
 
-    /// Save banner open event to backend
-    /// - Parameters:
-    ///   - config: The consent configuration
-    ///   - action: The open action type (defaults to .open)
-    ///   - layer: Optional layer name (used with .showLayer action)
-    ///   - completion: Completion handler with result
-    public func saveOpen(
-        config: ConsentConfig,
-        action: OpenAction = .open,
-        layer: String? = nil,
-        completion: @escaping (Result<Void, ConsentError>) -> Void
-    ) {
-        let consentId = storage.getOrCreateUniqueId()
-        let localeCode: String = {
-            if #available(iOS 16, macOS 13, *) {
-                return Locale.current.language.languageCode?.identifier ?? "en"
-            } else {
-                return Locale.current.languageCode ?? "en"
-            }
-        }()
-
+    private func buildSaveOpenURL(
+        config: ConsentConfig, action: OpenAction, layer: String?, consentId: String, localeCode: String
+    ) -> URL? {
         var components = URLComponents(string: "https://\(privacyDomain)/save_open")
         var queryItems = [
             URLQueryItem(name: "customer", value: config.dgCustomerId),
@@ -120,49 +102,70 @@ public class ConsentService {
             queryItems.append(URLQueryItem(name: "layer", value: layer))
         }
         components?.queryItems = queryItems
+        return components?.url
+    }
 
-        guard let url = components?.url else {
+    private func buildSaveOpenPayload(
+        config: ConsentConfig, action: OpenAction, layer: String?, consentId: String, localeCode: String
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "customer": config.dgCustomerId,
+            "action": action.rawValue,
+            "policy_name": config.consentPolicy.name,
+            "revision": config.version,
+            "default_policy": String(config.consentPolicy.default),
+            "locale_code": localeCode,
+            "consent_id": consentId,
+            "config_version": config.version,
+        ]
+        if let policyUuid = config.consentPolicy.uuid {
+            payload["policy_uuid"] = policyUuid
+        }
+        if let layer {
+            payload["layer"] = layer
+        }
+        return payload
+    }
+
+    private var currentLocaleCode: String {
+        if #available(iOS 16, macOS 13, *) {
+            return Locale.current.language.languageCode?.identifier ?? "en"
+        } else {
+            return Locale.current.languageCode ?? "en"
+        }
+    }
+
+    public func saveOpen(
+        config: ConsentConfig,
+        action: OpenAction = .open,
+        layer: String? = nil,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
+        let consentId = storage.getOrCreateUniqueId()
+        let localeCode = currentLocaleCode
+
+        guard let url = buildSaveOpenURL(config: config, action: action, layer: layer, consentId: consentId, localeCode: localeCode) else {
             completion(.failure(.networkError("Invalid URL")))
             return
         }
 
         networkClient.retryWithBackoff(
             operation: { operationCompletion in
-                self.networkClient.request(
-                    url: url,
-                    method: .get,
-                    completion: { result in
-                        switch result {
-                        case .success:
-                            operationCompletion(.success(()))
-                        case let .failure(error):
-                            operationCompletion(.failure(error))
-                        }
+                self.networkClient.request(url: url, method: .get) { result in
+                    switch result {
+                    case .success: operationCompletion(.success(()))
+                    case let .failure(error): operationCompletion(.failure(error))
                     }
-                )
+                }
             },
             completion: { result in
                 switch result {
                 case .success:
                     completion(.success(()))
                 case let .failure(error):
-                    // Queue for retry if network failed
-                    var payload: [String: Any] = [
-                        "customer": config.dgCustomerId,
-                        "action": action.rawValue,
-                        "policy_name": config.consentPolicy.name,
-                        "revision": config.version,
-                        "default_policy": String(config.consentPolicy.default),
-                        "locale_code": localeCode,
-                        "consent_id": consentId,
-                        "config_version": config.version,
-                    ]
-                    if let policyUuid = config.consentPolicy.uuid {
-                        payload["policy_uuid"] = policyUuid
-                    }
-                    if let layer {
-                        payload["layer"] = layer
-                    }
+                    let payload = self.buildSaveOpenPayload(
+                        config: config, action: action, layer: layer, consentId: consentId, localeCode: localeCode
+                    )
                     self.queueFailedRequest(payload: payload, endpoint: "save_open")
                     completion(.failure(error))
                 }
