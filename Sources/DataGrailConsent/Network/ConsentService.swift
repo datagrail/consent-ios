@@ -144,7 +144,9 @@ public class ConsentService {
         let consentId = storage.getOrCreateUniqueId()
         let localeCode = currentLocaleCode
 
-        guard let url = buildSaveOpenURL(config: config, action: action, layer: layer, consentId: consentId, localeCode: localeCode) else {
+        guard let url = buildSaveOpenURL(
+            config: config, action: action, layer: layer, consentId: consentId, localeCode: localeCode
+        ) else {
             completion(.failure(.networkError("Invalid URL")))
             return
         }
