@@ -89,6 +89,7 @@ public class ConsentService {
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         let consentId = storage.getOrCreateUniqueId()
+        let timestamp = ISO8601DateFormatter().string(from: Date())
 
         var components = URLComponents(string: "https://\(privacyDomain)/save_open")
         var queryItems = [
@@ -100,7 +101,7 @@ public class ConsentService {
                 value: config.consentContainerVersionId
             ),
             URLQueryItem(name: "policy_name", value: config.consentPolicy.name),
-            URLQueryItem(name: "timestamp", value: ISO8601DateFormatter().string(from: Date())),
+            URLQueryItem(name: "timestamp", value: timestamp),
         ]
         if let policyUuid = config.consentPolicy.uuid {
             queryItems.append(URLQueryItem(name: "policy_uuid", value: policyUuid))
@@ -139,6 +140,7 @@ public class ConsentService {
                         "config_version": config.version,
                         "consent_container_version_id": config.consentContainerVersionId,
                         "policy_name": config.consentPolicy.name,
+                        "timestamp": timestamp,
                     ]
                     if let policyUuid = config.consentPolicy.uuid {
                         payload["policy_uuid"] = policyUuid
