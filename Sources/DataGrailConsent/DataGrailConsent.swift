@@ -266,6 +266,41 @@ public class DataGrailConsent {
         manager.trackBannerOpen(completion: completion)
     }
 
+    /// Track that the banner was not shown (e.g., user already consented)
+    /// - Parameter completion: Completion handler with result
+    public func trackBannerNotShown(completion: @escaping (Result<Void, ConsentError>) -> Void) {
+        guard let manager else {
+            completion(.failure(.notInitialized))
+            return
+        }
+
+        manager.trackBannerNotShown(completion: completion)
+    }
+
+    /// Track that a consent layer was shown
+    /// - Parameters:
+    ///   - layerName: The name of the layer shown
+    ///   - completion: Completion handler with result
+    public func trackLayerShown(_ layerName: String, completion: @escaping (Result<Void, ConsentError>) -> Void) {
+        guard let manager else {
+            completion(.failure(.notInitialized))
+            return
+        }
+
+        manager.trackLayerShown(layerName, completion: completion)
+    }
+
+    /// Track that the banner was hidden
+    /// - Parameter completion: Completion handler with result
+    public func trackBannerHidden(completion: @escaping (Result<Void, ConsentError>) -> Void) {
+        guard let manager else {
+            completion(.failure(.notInitialized))
+            return
+        }
+
+        manager.trackBannerHidden(completion: completion)
+    }
+
     // MARK: - Callbacks
 
     /// Set callback to be notified when consent changes

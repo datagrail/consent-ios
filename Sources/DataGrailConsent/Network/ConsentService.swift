@@ -83,23 +83,41 @@ public class ConsentService {
     /// Save banner open event to backend
     /// - Parameters:
     ///   - config: The consent configuration
+    ///   - action: The open action type (defaults to .open)
+    ///   - layer: Optional layer name (used with .showLayer action)
     ///   - completion: Completion handler with result
     public func saveOpen(
         config: ConsentConfig,
+        action: OpenAction = .open,
+        layer: String? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         let consentId = storage.getOrCreateUniqueId()
+        let localeCode: String = {
+            if #available(iOS 16, macOS 13, *) {
+                return Locale.current.language.languageCode?.identifier ?? "en"
+            } else {
+                return Locale.current.languageCode ?? "en"
+            }
+        }()
 
         var components = URLComponents(string: "https://\(privacyDomain)/save_open")
         var queryItems = [
-            URLQueryItem(name: "dg_customer_id", value: config.dgCustomerId),
+            URLQueryItem(name: "customer", value: config.dgCustomerId),
+            URLQueryItem(name: "action", value: action.rawValue),
+            URLQueryItem(name: "policy_name", value: config.consentPolicy.name),
+            URLQueryItem(name: "revision", value: config.version),
+            URLQueryItem(name: "default_policy", value: String(config.consentPolicy.default)),
+            URLQueryItem(name: "locale_code", value: localeCode),
             URLQueryItem(name: "consent_id", value: consentId),
             URLQueryItem(name: "config_version", value: config.version),
-            URLQueryItem(name: "policy_name", value: config.consentPolicy.name),
             URLQueryItem(name: "timestamp", value: ISO8601DateFormatter().string(from: Date())),
         ]
         if let policyUuid = config.consentPolicy.uuid {
             queryItems.append(URLQueryItem(name: "policy_uuid", value: policyUuid))
+        }
+        if let layer {
+            queryItems.append(URLQueryItem(name: "layer", value: layer))
         }
         components?.queryItems = queryItems
 
@@ -130,13 +148,20 @@ public class ConsentService {
                 case let .failure(error):
                     // Queue for retry if network failed
                     var payload: [String: Any] = [
-                        "dg_customer_id": config.dgCustomerId,
+                        "customer": config.dgCustomerId,
+                        "action": action.rawValue,
+                        "policy_name": config.consentPolicy.name,
+                        "revision": config.version,
+                        "default_policy": String(config.consentPolicy.default),
+                        "locale_code": localeCode,
                         "consent_id": consentId,
                         "config_version": config.version,
-                        "policy_name": config.consentPolicy.name,
                     ]
                     if let policyUuid = config.consentPolicy.uuid {
                         payload["policy_uuid"] = policyUuid
+                    }
+                    if let layer {
+                        payload["layer"] = layer
                     }
                     self.queueFailedRequest(payload: payload, endpoint: "save_open")
                     completion(.failure(error))
