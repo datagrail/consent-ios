@@ -98,7 +98,7 @@ public class ConsentService {
         if let policyUuid = config.consentPolicy.uuid {
             queryItems.append(URLQueryItem(name: "policy_uuid", value: policyUuid))
         }
-        if let layer {
+        if action == .showLayer, let layer {
             queryItems.append(URLQueryItem(name: "layer", value: layer))
         }
         components?.queryItems = queryItems
@@ -121,7 +121,7 @@ public class ConsentService {
         if let policyUuid = config.consentPolicy.uuid {
             payload["policy_uuid"] = policyUuid
         }
-        if let layer {
+        if action == .showLayer, let layer {
             payload["layer"] = layer
         }
         return payload
@@ -215,7 +215,10 @@ public class ConsentService {
                 }
             } else if endpoint == "save_open" {
                 var components = URLComponents(string: "https://\(privacyDomain)/save_open")
-                components?.queryItems = payload.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
+                components?.queryItems = payload.map { key, value in
+                    let name = key == "dg_customer_id" ? "customer" : key
+                    return URLQueryItem(name: name, value: "\(value)")
+                }
 
                 guard let url = components?.url else {
                     failureCount += 1
