@@ -179,42 +179,7 @@ public class ConsentManager {
             return
         }
 
-        consentService.saveOpen(config: config, action: .open, completion: completion)
-    }
-
-    /// Track that the banner was not shown
-    /// - Parameter completion: Completion handler with result
-    public func trackBannerNotShown(completion: @escaping (Result<Void, ConsentError>) -> Void) {
-        guard let config = currentConfig else {
-            completion(.failure(.notInitialized))
-            return
-        }
-
-        consentService.saveOpen(config: config, action: .nonOpen, completion: completion)
-    }
-
-    /// Track that a consent layer was shown
-    /// - Parameters:
-    ///   - layerName: The name of the layer shown
-    ///   - completion: Completion handler with result
-    public func trackLayerShown(_ layerName: String, completion: @escaping (Result<Void, ConsentError>) -> Void) {
-        guard let config = currentConfig else {
-            completion(.failure(.notInitialized))
-            return
-        }
-
-        consentService.saveOpen(config: config, action: .showLayer, layer: layerName, completion: completion)
-    }
-
-    /// Track that the banner was hidden
-    /// - Parameter completion: Completion handler with result
-    public func trackBannerHidden(completion: @escaping (Result<Void, ConsentError>) -> Void) {
-        guard let config = currentConfig else {
-            completion(.failure(.notInitialized))
-            return
-        }
-
-        consentService.saveOpen(config: config, action: .setHidden, completion: completion)
+        consentService.saveOpen(config: config, completion: completion)
     }
 
     /// Check if a specific category is enabled

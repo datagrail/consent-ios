@@ -80,53 +80,6 @@ public class ConsentService {
         )
     }
 
-    private func buildSaveOpenURL(
-        config: ConsentConfig, action: OpenAction, layer: String?, consentId: String, localeCode: String
-    ) -> URL? {
-        var components = URLComponents(string: "https://\(privacyDomain)/save_open")
-        var queryItems = [
-            URLQueryItem(name: "customer", value: config.dgCustomerId),
-            URLQueryItem(name: "action", value: action.rawValue),
-            URLQueryItem(name: "policy_name", value: config.consentPolicy.name),
-            URLQueryItem(name: "revision", value: config.version),
-            URLQueryItem(name: "default_policy", value: String(config.consentPolicy.default)),
-            URLQueryItem(name: "locale_code", value: localeCode),
-            URLQueryItem(name: "consent_id", value: consentId),
-            URLQueryItem(name: "config_version", value: config.version),
-            URLQueryItem(name: "timestamp", value: ISO8601DateFormatter().string(from: Date())),
-        ]
-        if let policyUuid = config.consentPolicy.uuid {
-            queryItems.append(URLQueryItem(name: "policy_uuid", value: policyUuid))
-        }
-        if action == .showLayer, let layer {
-            queryItems.append(URLQueryItem(name: "layer", value: layer))
-        }
-        components?.queryItems = queryItems
-        return components?.url
-    }
-
-    private func buildSaveOpenPayload(
-        config: ConsentConfig, action: OpenAction, layer: String?, consentId: String, localeCode: String
-    ) -> [String: Any] {
-        var payload: [String: Any] = [
-            "customer": config.dgCustomerId,
-            "action": action.rawValue,
-            "policy_name": config.consentPolicy.name,
-            "revision": config.version,
-            "default_policy": String(config.consentPolicy.default),
-            "locale_code": localeCode,
-            "consent_id": consentId,
-            "config_version": config.version,
-        ]
-        if let policyUuid = config.consentPolicy.uuid {
-            payload["policy_uuid"] = policyUuid
-        }
-        if action == .showLayer, let layer {
-            payload["layer"] = layer
-        }
-        return payload
-    }
-
     private var currentLocaleCode: String {
         if #available(iOS 16, macOS 13, *) {
             return Locale.current.language.languageCode?.identifier ?? "en"
@@ -135,18 +88,36 @@ public class ConsentService {
         }
     }
 
+    /// Save banner open event to backend
+    /// - Parameters:
+    ///   - config: The consent configuration
+    ///   - completion: Completion handler with result
     public func saveOpen(
         config: ConsentConfig,
-        action: OpenAction = .open,
-        layer: String? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         let consentId = storage.getOrCreateUniqueId()
         let localeCode = currentLocaleCode
+        let timestamp = ISO8601DateFormatter().string(from: Date())
 
-        guard let url = buildSaveOpenURL(
-            config: config, action: action, layer: layer, consentId: consentId, localeCode: localeCode
-        ) else {
+        var components = URLComponents(string: "https://\(privacyDomain)/save_open")
+        var queryItems = [
+            URLQueryItem(name: "customer", value: config.dgCustomerId),
+            URLQueryItem(name: "action", value: "open"),
+            URLQueryItem(name: "policy_name", value: config.consentPolicy.name),
+            URLQueryItem(name: "revision", value: config.version),
+            URLQueryItem(name: "default_policy", value: String(config.consentPolicy.default)),
+            URLQueryItem(name: "locale_code", value: localeCode),
+            URLQueryItem(name: "consent_id", value: consentId),
+            URLQueryItem(name: "config_version", value: config.version),
+            URLQueryItem(name: "timestamp", value: timestamp),
+        ]
+        if let policyUuid = config.consentPolicy.uuid {
+            queryItems.append(URLQueryItem(name: "policy_uuid", value: policyUuid))
+        }
+        components?.queryItems = queryItems
+
+        guard let url = components?.url else {
             completion(.failure(.networkError("Invalid URL")))
             return
         }
@@ -165,9 +136,20 @@ public class ConsentService {
                 case .success:
                     completion(.success(()))
                 case let .failure(error):
-                    let payload = self.buildSaveOpenPayload(
-                        config: config, action: action, layer: layer, consentId: consentId, localeCode: localeCode
-                    )
+                    var payload: [String: Any] = [
+                        "customer": config.dgCustomerId,
+                        "action": "open",
+                        "policy_name": config.consentPolicy.name,
+                        "revision": config.version,
+                        "default_policy": String(config.consentPolicy.default),
+                        "locale_code": localeCode,
+                        "consent_id": consentId,
+                        "config_version": config.version,
+                        "timestamp": timestamp,
+                    ]
+                    if let policyUuid = config.consentPolicy.uuid {
+                        payload["policy_uuid"] = policyUuid
+                    }
                     self.queueFailedRequest(payload: payload, endpoint: "save_open")
                     completion(.failure(error))
                 }
