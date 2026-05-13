@@ -32,6 +32,7 @@ public class ConsentService {
             "dg_customer_id": config.dgCustomerId,
             "consent_id": storage.getOrCreateUniqueId(),
             "config_version": config.version,
+            "consent_container_version_id": config.consentContainerVersionId,
             "policyName": config.consentPolicy.name,
             "is_customised": preferences.isCustomised,
             "cookie_options": preferences.cookieOptions.map { option in
