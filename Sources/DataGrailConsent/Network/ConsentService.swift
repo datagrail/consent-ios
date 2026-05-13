@@ -80,6 +80,14 @@ public class ConsentService {
         )
     }
 
+    private var currentLocaleCode: String {
+        if #available(iOS 16, macOS 13, *) {
+            return Locale.current.language.languageCode?.identifier ?? "en"
+        } else {
+            return Locale.current.languageCode ?? "en"
+        }
+    }
+
     /// Save banner open event to backend
     /// - Parameters:
     ///   - config: The consent configuration
@@ -89,14 +97,20 @@ public class ConsentService {
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         let consentId = storage.getOrCreateUniqueId()
+        let localeCode = currentLocaleCode
+        let timestamp = ISO8601DateFormatter().string(from: Date())
 
         var components = URLComponents(string: "https://\(privacyDomain)/save_open")
         var queryItems = [
-            URLQueryItem(name: "dg_customer_id", value: config.dgCustomerId),
+            URLQueryItem(name: "customer", value: config.dgCustomerId),
+            URLQueryItem(name: "action", value: "open"),
+            URLQueryItem(name: "policy_name", value: config.consentPolicy.name),
+            URLQueryItem(name: "revision", value: config.version),
+            URLQueryItem(name: "default_policy", value: String(config.consentPolicy.default)),
+            URLQueryItem(name: "locale_code", value: localeCode),
             URLQueryItem(name: "consent_id", value: consentId),
             URLQueryItem(name: "config_version", value: config.version),
-            URLQueryItem(name: "policy_name", value: config.consentPolicy.name),
-            URLQueryItem(name: "timestamp", value: ISO8601DateFormatter().string(from: Date())),
+            URLQueryItem(name: "timestamp", value: timestamp),
         ]
         if let policyUuid = config.consentPolicy.uuid {
             queryItems.append(URLQueryItem(name: "policy_uuid", value: policyUuid))
@@ -110,30 +124,28 @@ public class ConsentService {
 
         networkClient.retryWithBackoff(
             operation: { operationCompletion in
-                self.networkClient.request(
-                    url: url,
-                    method: .get,
-                    completion: { result in
-                        switch result {
-                        case .success:
-                            operationCompletion(.success(()))
-                        case let .failure(error):
-                            operationCompletion(.failure(error))
-                        }
+                self.networkClient.request(url: url, method: .get) { result in
+                    switch result {
+                    case .success: operationCompletion(.success(()))
+                    case let .failure(error): operationCompletion(.failure(error))
                     }
-                )
+                }
             },
             completion: { result in
                 switch result {
                 case .success:
                     completion(.success(()))
                 case let .failure(error):
-                    // Queue for retry if network failed
                     var payload: [String: Any] = [
-                        "dg_customer_id": config.dgCustomerId,
+                        "customer": config.dgCustomerId,
+                        "action": "open",
+                        "policy_name": config.consentPolicy.name,
+                        "revision": config.version,
+                        "default_policy": String(config.consentPolicy.default),
+                        "locale_code": localeCode,
                         "consent_id": consentId,
                         "config_version": config.version,
-                        "policy_name": config.consentPolicy.name,
+                        "timestamp": timestamp,
                     ]
                     if let policyUuid = config.consentPolicy.uuid {
                         payload["policy_uuid"] = policyUuid
@@ -185,7 +197,10 @@ public class ConsentService {
                 }
             } else if endpoint == "save_open" {
                 var components = URLComponents(string: "https://\(privacyDomain)/save_open")
-                components?.queryItems = payload.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
+                components?.queryItems = payload.map { key, value in
+                    let name = key == "dg_customer_id" ? "customer" : key
+                    return URLQueryItem(name: name, value: "\(value)")
+                }
 
                 guard let url = components?.url else {
                     failureCount += 1
