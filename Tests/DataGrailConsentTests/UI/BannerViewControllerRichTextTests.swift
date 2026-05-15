@@ -156,15 +156,104 @@
             XCTAssertEqual(label?.text, text, "The literal < should be preserved in plain text")
         }
 
+        // MARK: - Style Parameter
+
+        func testStyle_DgTitle_UsesBoldFont() {
+            let config = createConfigWithText("Privacy Policy", style: "dg-title")
+            let vc = BannerViewController(
+                config: config,
+                initialPreferences: nil,
+                displayStyle: .modal,
+                completion: { _ in }
+            )
+            vc.loadViewIfNeeded()
+
+            let label = findLabel(in: vc.view, withPlainText: "Privacy Policy")
+            XCTAssertNotNil(label, "dg-title element should render a label")
+            XCTAssertEqual(label?.font.pointSize, 22, "dg-title should use 22pt font")
+            let traits = label?.font.fontDescriptor.symbolicTraits
+            XCTAssertTrue(traits?.contains(.traitBold) ?? false, "dg-title should use bold font")
+        }
+
+        func testStyle_DgHeader_UsesSemiboldFont() {
+            let config = createConfigWithText("Cookie Settings", style: "dg-header")
+            let vc = BannerViewController(
+                config: config,
+                initialPreferences: nil,
+                displayStyle: .modal,
+                completion: { _ in }
+            )
+            vc.loadViewIfNeeded()
+
+            let label = findLabel(in: vc.view, withPlainText: "Cookie Settings")
+            XCTAssertNotNil(label, "dg-header element should render a label")
+            XCTAssertEqual(label?.font.pointSize, 18, "dg-header should use 18pt font")
+        }
+
+        func testStyle_DgMainContentExplanation_UsesBodyFont() {
+            let config = createConfigWithText("We use cookies.", style: "dg-main-content-explanation")
+            let vc = BannerViewController(
+                config: config,
+                initialPreferences: nil,
+                displayStyle: .modal,
+                completion: { _ in }
+            )
+            vc.loadViewIfNeeded()
+
+            let label = findLabel(in: vc.view, withPlainText: "We use cookies.")
+            XCTAssertNotNil(label, "dg-main-content-explanation element should render a label")
+            XCTAssertEqual(label?.font.pointSize, 16, "dg-main-content-explanation should use 16pt font")
+        }
+
+        func testStyle_Nil_UsesBodyFont() {
+            let config = createConfigWithText("Default text", style: nil)
+            let vc = BannerViewController(
+                config: config,
+                initialPreferences: nil,
+                displayStyle: .modal,
+                completion: { _ in }
+            )
+            vc.loadViewIfNeeded()
+
+            let label = findLabel(in: vc.view, withPlainText: "Default text")
+            XCTAssertNotNil(label, "nil style element should render a label")
+            XCTAssertEqual(label?.font.pointSize, 16, "nil style should default to 16pt body font")
+        }
+
+        func testCustomTextStyleConfig_OverridesDefaultFonts() {
+            let customConfig = BannerViewController.BannerTextStyleConfig(
+                titleFont: .systemFont(ofSize: 30, weight: .heavy),
+                headerFont: .systemFont(ofSize: 24, weight: .bold),
+                bodyFont: .systemFont(ofSize: 14)
+            )
+            let config = createConfigWithText("Title text", style: "dg-title")
+            let vc = BannerViewController(
+                config: config,
+                initialPreferences: nil,
+                displayStyle: .modal,
+                textStyleConfig: customConfig,
+                completion: { _ in }
+            )
+            vc.loadViewIfNeeded()
+
+            let label = findLabel(in: vc.view, withPlainText: "Title text")
+            XCTAssertNotNil(label, "dg-title element should render a label")
+            XCTAssertEqual(label?.font.pointSize, 30, "Custom title font size should be used")
+        }
+
         // MARK: - Helpers
 
+        private func createConfigWithText(_ text: String, style: String? = nil) -> ConsentConfig {
+            return createConfigWithStyledText(text, style: style)
+        }
+
         // swiftlint:disable:next function_body_length
-        private func createConfigWithText(_ text: String) -> ConsentConfig {
+        private func createConfigWithStyledText(_ text: String, style: String?) -> ConsentConfig {
             let element = ConsentLayerElement(
                 id: "text1",
                 order: 1,
                 type: "text",
-                style: nil,
+                style: style,
                 buttonAction: nil,
                 targetConsentLayer: nil,
                 categories: nil,
