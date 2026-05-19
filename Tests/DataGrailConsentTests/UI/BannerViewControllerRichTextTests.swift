@@ -244,7 +244,7 @@
         // MARK: - Helpers
 
         private func createConfigWithText(_ text: String, style: String? = nil) -> ConsentConfig {
-            return createConfigWithStyledText(text, style: style)
+            createConfigWithStyledText(text, style: style)
         }
 
         // swiftlint:disable:next function_body_length

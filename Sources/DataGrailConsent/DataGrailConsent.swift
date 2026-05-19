@@ -310,7 +310,7 @@ public class DataGrailConsent {
         public func showBanner(
             from presentingViewController: UIViewController,
             style: BannerDisplayStyle,
-            textStyleConfig: BannerViewController.BannerTextStyleConfig = BannerViewController.BannerTextStyleConfig(),
+            textStyleConfig: BannerTextStyleConfig = BannerTextStyleConfig(),
             completion: @escaping (ConsentPreferences?) -> Void
         ) {
             guard let manager, let config = manager.config else {
