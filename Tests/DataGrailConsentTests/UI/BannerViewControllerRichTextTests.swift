@@ -221,7 +221,7 @@
         }
 
         func testCustomTextStyleConfig_OverridesDefaultFonts() {
-            let customConfig = BannerViewController.BannerTextStyleConfig(
+            let customConfig = BannerTextStyleConfig(
                 titleFont: .systemFont(ofSize: 30, weight: .heavy),
                 headerFont: .systemFont(ofSize: 24, weight: .bold),
                 bodyFont: .systemFont(ofSize: 14)
