@@ -109,6 +109,7 @@ final class ConsentServiceTests: XCTestCase {
                 let urlString = self.mockNetworkClient.lastURL?.absoluteString ?? ""
                 XCTAssertTrue(urlString.contains("/save_open"))
                 XCTAssertTrue(urlString.contains("dg_customer_id="))
+                XCTAssertTrue(urlString.contains("consent_container_version_id=container1"))
                 XCTAssertTrue(urlString.contains("policy_name=GDPR"))
                 XCTAssertTrue(urlString.contains("policy_uuid=a1b2c3d4-e5f6-7890-abcd-ef1234567890"))
             case let .failure(error):
@@ -199,6 +200,10 @@ final class ConsentServiceTests: XCTestCase {
                     return
                 }
                 XCTAssertEqual(payload["policy_name"] as? String, "GDPR")
+                XCTAssertEqual(
+                    payload["consent_container_version_id"] as? String,
+                    "container1"
+                )
                 XCTAssertEqual(
                     payload["policy_uuid"] as? String,
                     "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
