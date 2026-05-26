@@ -32,6 +32,7 @@ public class ConsentService {
             "dg_customer_id": config.dgCustomerId,
             "consent_id": storage.getOrCreateUniqueId(),
             "config_version": config.version,
+            "consent_container_version_id": config.consentContainerVersionId,
             "policyName": config.consentPolicy.name,
             "is_customised": preferences.isCustomised,
             "cookie_options": preferences.cookieOptions.map { option in
@@ -110,6 +111,10 @@ public class ConsentService {
             URLQueryItem(name: "locale_code", value: localeCode),
             URLQueryItem(name: "consent_id", value: consentId),
             URLQueryItem(name: "config_version", value: config.version),
+            URLQueryItem(
+                name: "consent_container_version_id",
+                value: config.consentContainerVersionId
+            ),
             URLQueryItem(name: "timestamp", value: timestamp),
         ]
         if let policyUuid = config.consentPolicy.uuid {
@@ -145,6 +150,7 @@ public class ConsentService {
                         "locale_code": localeCode,
                         "consent_id": consentId,
                         "config_version": config.version,
+                        "consent_container_version_id": config.consentContainerVersionId,
                         "timestamp": timestamp,
                     ]
                     if let policyUuid = config.consentPolicy.uuid {

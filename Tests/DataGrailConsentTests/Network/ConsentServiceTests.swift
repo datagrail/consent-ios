@@ -111,6 +111,7 @@ final class ConsentServiceTests: XCTestCase {
                 XCTAssertTrue(urlString.contains("customer=customer123"))
                 XCTAssertFalse(urlString.contains("dg_customer_id="))
                 XCTAssertTrue(urlString.contains("action=open"))
+                XCTAssertTrue(urlString.contains("consent_container_version_id=container1"))
                 XCTAssertTrue(urlString.contains("policy_name=GDPR"))
                 XCTAssertTrue(urlString.contains("policy_uuid=a1b2c3d4-e5f6-7890-abcd-ef1234567890"))
                 XCTAssertTrue(urlString.contains("revision=1.0.0"))
@@ -208,6 +209,10 @@ final class ConsentServiceTests: XCTestCase {
                 XCTAssertEqual(payload["customer"] as? String, "customer123")
                 XCTAssertEqual(payload["action"] as? String, "open")
                 XCTAssertEqual(payload["policy_name"] as? String, "GDPR")
+                XCTAssertEqual(
+                    payload["consent_container_version_id"] as? String,
+                    "container1"
+                )
                 XCTAssertEqual(
                     payload["policy_uuid"] as? String,
                     "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
