@@ -111,10 +111,7 @@ public class ConsentService {
             URLQueryItem(name: "locale_code", value: localeCode),
             URLQueryItem(name: "consent_id", value: consentId),
             URLQueryItem(name: "config_version", value: config.version),
-            URLQueryItem(
-                name: "consent_container_version_id",
-                value: config.consentContainerVersionId
-            ),
+            URLQueryItem(name: "consent_container_version_id", value: config.consentContainerVersionId),
             URLQueryItem(name: "timestamp", value: timestamp),
         ]
         if let policyUuid = config.consentPolicy.uuid {
