@@ -181,7 +181,7 @@ public class ConsentManager {
                 storage.saveConfigVersion(version)
             }
         } catch {
-            Logger.log("Failed to adopt remote preferences: \(error)", level: .error)
+            Logger.error("Failed to adopt remote preferences: \(error)")
         }
     }
 

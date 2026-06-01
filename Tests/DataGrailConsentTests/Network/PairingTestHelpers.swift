@@ -8,11 +8,18 @@ class MockNetworkClientForPairing: NetworkClient {
     var lastRequest: URLRequest?
     var onRequest: (() -> Void)?
 
-    override func performRequest(
-        _ request: URLRequest,
+    override func request(
+        url: URL,
+        method: HTTPMethod = .get,
+        body: Data? = nil,
+        headers: [String: String]? = nil,
         completion: @escaping (Result<Data, ConsentError>) -> Void
     ) {
-        lastRequest = request
+        var captured = URLRequest(url: url)
+        captured.httpMethod = method.rawValue
+        captured.httpBody = body
+        headers?.forEach { captured.setValue($1, forHTTPHeaderField: $0) }
+        lastRequest = captured
         onRequest?()
 
         if let error = mockError {

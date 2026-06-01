@@ -72,10 +72,8 @@
             {
               "status": "found",
               "consent_preferences": {
-                "is_customised": true,
-                "cookie_options": [
-                  { "gtm_key": "dg-category-marketing", "is_enabled": false }
-                ]
+                "isCustomised": true,
+                "cookieOptions": { "dg-category-marketing": false }
               }
             }
             """.data(using: .utf8)!
@@ -110,8 +108,8 @@
             {
               "status": "found",
               "consent_preferences": {
-                "is_customised": true,
-                "cookie_options": []
+                "isCustomised": true,
+                "cookieOptions": {}
               }
             }
             """.data(using: .utf8)!

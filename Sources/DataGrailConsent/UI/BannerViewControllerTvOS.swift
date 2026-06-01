@@ -85,7 +85,6 @@
             scrollView.translatesAutoresizingMaskIntoConstraints = false
             scrollView.showsVerticalScrollIndicator = true
             scrollView.alwaysBounceVertical = true
-            scrollView.remembersLastFocusedIndexPath = true
             view.addSubview(scrollView)
 
             // Content stack view
@@ -181,7 +180,9 @@
 
         private func createQRView(qrImage: UIImage) -> UIView {
             let container = UIView()
-            container.backgroundColor = UIColor.secondarySystemBackground
+            // tvOS exposes neither `secondarySystemBackground` nor the numbered `systemGrayN` variants
+            // (those are iOS-only); `.systemGray` is the one adaptive gray available on tvOS.
+            container.backgroundColor = UIColor.systemGray
             container.layer.cornerRadius = 16
 
             let imageView = UIImageView(image: qrImage)
@@ -406,7 +407,7 @@
                 containerView.spacing = 16
 
                 for linkItem in links {
-                    guard let translation: LinkTranslation = getTranslation(
+                    guard let translation: ElementTranslation = getTranslation(
                         from: linkItem.translations
                     ),
                         let text = translation.value ?? translation.text,
@@ -499,7 +500,7 @@
                 let trackingDetailsTranslation: TrackingDetailsLinkTranslation = getTranslation(
                     from: element.trackingDetailsLinkTranslations
                 ),
-                let linkText = trackingDetailsTranslation.value ?? trackingDetailsTranslation.text,
+                let linkText = trackingDetailsTranslation.value,
                 let url = config.trackingDetailsUrl.isEmpty ? nil : config.trackingDetailsUrl
             {
                 let linkButton = UIButton(type: .system)
@@ -668,7 +669,7 @@
             self.isEssential = isEssential
             super.init(frame: .zero)
 
-            backgroundColor = UIColor.secondarySystemBackground
+            backgroundColor = UIColor.systemGray
             layer.cornerRadius = 12
 
             nameLabel.text = name

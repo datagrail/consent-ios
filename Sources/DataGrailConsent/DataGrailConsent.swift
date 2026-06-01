@@ -468,7 +468,7 @@ public class DataGrailConsent {
 
             coordinator.onTimeout = { [weak coordinator, weak presentingViewController] in
                 // Timeout: remove QR, fall back to D-pad banner (already rendered)
-                Logger.log("QR pairing timeout, falling back to D-pad banner", level: .warning)
+                Logger.warn("QR pairing timeout, falling back to D-pad banner")
                 coordinator?.stopPolling()
 
                 // Remove QR from banner if still presented

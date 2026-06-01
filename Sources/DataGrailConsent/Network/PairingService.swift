@@ -63,17 +63,15 @@ public final class PairingService {
             return
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
-        // Add API key if available
+        var headers: [String: String] = [
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
+        ]
         if let apiKey = apiKey {
-            request.setValue(apiKey, forHTTPHeaderField: "X-DG-Api-Key")
+            headers["X-DG-Api-Key"] = apiKey
         }
 
-        networkClient.performRequest(request) { result in
+        networkClient.request(url: url, method: .get, body: nil, headers: headers) { result in
             switch result {
             case let .success(data):
                 do {
@@ -94,13 +92,38 @@ public final class PairingService {
     }
 }
 
-/// Response from GET /universal_consent
-private struct PairingReadResponse: Codable {
+/// Response from GET /universal_consent.
+///
+/// The Universal Consent API returns `cookieOptions` in canonical **map** form
+/// (`{ "dg-category-x": bool }`) with a camelCase `isCustomised`, whereas the SDK's
+/// `ConsentPreferences` models `cookieOptions` as an array of `CategoryConsent`.
+/// This boundary type decodes the server shape and adapts it to the SDK model.
+private struct PairingReadResponse: Decodable {
     let status: String  // "found" | "not_found"
     let consentPreferences: ConsentPreferences?
 
     enum CodingKeys: String, CodingKey {
         case status
         case consentPreferences = "consent_preferences"
+    }
+
+    private struct ServerPreferences: Decodable {
+        let isCustomised: Bool?
+        let cookieOptions: [String: Bool]?
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decode(String.self, forKey: .status)
+
+        if let server = try container.decodeIfPresent(ServerPreferences.self, forKey: .consentPreferences) {
+            let options = (server.cookieOptions ?? [:]).map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
+            consentPreferences = ConsentPreferences(
+                isCustomised: server.isCustomised ?? false,
+                cookieOptions: options
+            )
+        } else {
+            consentPreferences = nil
+        }
     }
 }

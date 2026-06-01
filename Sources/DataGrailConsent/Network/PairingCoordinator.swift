@@ -47,7 +47,7 @@
         public func startPolling() {
             startTime = Date()
 
-            Logger.log("PairingCoordinator: Starting polling for user_hash=\(userHash)", level: .debug)
+            Logger.debug("PairingCoordinator: Starting polling for user_hash=\(userHash)")
 
             // Schedule polling timer
             pollTimer = Timer.scheduledTimer(
@@ -71,7 +71,7 @@
 
         /// Stop polling (cleanup)
         public func stopPolling() {
-            Logger.log("PairingCoordinator: Stopping polling", level: .debug)
+            Logger.debug("PairingCoordinator: Stopping polling")
             pollTimer?.invalidate()
             pollTimer = nil
             timeoutTimer?.invalidate()
@@ -89,10 +89,10 @@
                     switch pairingRead {
                     case .notFound:
                         // Still waiting, continue polling
-                        Logger.log("PairingCoordinator: Poll returned not_found, continuing", level: .debug)
+                        Logger.debug("PairingCoordinator: Poll returned not_found, continuing")
                     case let .found(preferences):
                         // Phone wrote consent, stop polling and notify
-                        Logger.log("PairingCoordinator: Poll returned found, consent received", level: .debug)
+                        Logger.debug("PairingCoordinator: Poll returned found, consent received")
                         self.stopPolling()
                         DispatchQueue.main.async {
                             self.onConsentFound?(preferences)
@@ -100,13 +100,13 @@
                     }
                 case let .failure(error):
                     // Log error but continue polling (transient network errors)
-                    Logger.log("PairingCoordinator: Poll error: \(error), continuing", level: .warning)
+                    Logger.warn("PairingCoordinator: Poll error: \(error), continuing")
                 }
             }
         }
 
         private func handleTimeout() {
-            Logger.log("PairingCoordinator: Client-side timeout reached (\(timeout)s)", level: .warning)
+            Logger.warn("PairingCoordinator: Client-side timeout reached (\(timeout)s)")
             stopPolling()
             DispatchQueue.main.async {
                 self.onTimeout?()

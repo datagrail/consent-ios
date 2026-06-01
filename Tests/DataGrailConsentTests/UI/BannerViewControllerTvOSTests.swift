@@ -8,9 +8,8 @@
 
         override func setUp() {
             super.setUp()
-            // Load test config
-            let bundle = Bundle(for: type(of: self))
-            guard let url = bundle.url(forResource: "test-config", withExtension: "json") else {
+            // Load test config (SwiftPM bundles test resources in Bundle.module)
+            guard let url = Bundle.module.url(forResource: "test-config", withExtension: "json") else {
                 XCTFail("test-config.json not found")
                 return
             }

@@ -53,7 +53,7 @@ public final class UserHashGenerator {
 
             // Last resort: generate a random UUID and warn
             let fallbackId = UUID().uuidString
-            Logger.log("Warning: No stable device identifier available, using random UUID: \(fallbackId)", level: .warning)
+            Logger.warn("No stable device identifier available, using random UUID: \(fallbackId)")
             return fallbackId
 
         #elseif os(iOS)
@@ -66,7 +66,7 @@ public final class UserHashGenerator {
 
             // Fallback: random UUID
             let fallbackId = UUID().uuidString
-            Logger.log("Warning: No IDFV available, using random UUID: \(fallbackId)", level: .warning)
+            Logger.warn("No IDFV available, using random UUID: \(fallbackId)")
             return fallbackId
 
         #else

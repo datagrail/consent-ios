@@ -121,14 +121,14 @@ final class PairingServiceTests: XCTestCase {
     func testFetchConsentReturnsFound() {
         let expectation = self.expectation(description: "Fetch consent found")
 
+        // Mirrors the real Universal Consent GET response: camelCase isCustomised,
+        // cookieOptions in canonical map form.
         let foundResponse = """
         {
           "status": "found",
           "consent_preferences": {
-            "is_customised": true,
-            "cookie_options": [
-              { "gtm_key": "dg-category-marketing", "is_enabled": false }
-            ]
+            "isCustomised": true,
+            "cookieOptions": { "dg-category-marketing": false }
           }
         }
         """.data(using: .utf8)!
