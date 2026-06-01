@@ -48,7 +48,9 @@ targets:
   DemoTvOS:
     type: application
     platform: tvOS
-    deploymentTarget: "13.0"
+    # SwiftUI @main App/Scene require tvOS 14+. The SDK library stays at 13.0;
+    # only this demo app needs the higher floor.
+    deploymentTarget: "14.0"
     sources:
       - path: DemoTvOS
         name: DemoTvOS

@@ -57,25 +57,25 @@ struct ContentView: View {
                 Button("Initialize") {
                     initializeSDK()
                 }
-                .buttonStyle(.card)
+                .buttonStyle(CardButtonStyle())
                 .disabled(isInitialized)
 
                 Button("Show Banner (D-pad only)") {
                     showBannerDPad()
                 }
-                .buttonStyle(.card)
+                .buttonStyle(CardButtonStyle())
                 .disabled(!isInitialized)
 
                 Button("Show Banner + QR Pairing") {
                     showBannerWithQR()
                 }
-                .buttonStyle(.card)
+                .buttonStyle(CardButtonStyle())
                 .disabled(!isInitialized)
 
                 Button("Reset") {
                     reset()
                 }
-                .buttonStyle(.card)
+                .buttonStyle(CardButtonStyle())
             }
 
             Spacer()
