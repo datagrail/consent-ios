@@ -76,7 +76,7 @@ if (try? DataGrailConsent.shared.isCategoryEnabled("dg-category-marketing")) == 
 
 **Runtime:**
 
-- iOS 13.0+
+- iOS 13.0+ or tvOS 13.0+
 - Swift 5.7+
 
 **Development:**
@@ -239,12 +239,127 @@ if (try? DataGrailConsent.shared.isCategoryEnabled("dg-category-marketing")) == 
 }
 ```
 
-## Demo Project
+## tvOS Support
 
-A full-featured demo app is included under `DemoProject/`. To run it:
+The SDK includes full tvOS support with a D-pad-optimized banner and QR code pairing for phone-based consent management.
+
+### Platform Support
+
+- **iOS 13.0+** — Touch-based consent banner (modal/fullscreen)
+- **tvOS 13.0+** — Focus-engine banner + optional QR pairing
+
+### tvOS Quick Start
+
+```swift
+import DataGrailConsent
+
+// Initialize with API key (required for QR pairing consent reads)
+let configUrl = URL(string: "https://consent.datagrail.io/config/YOUR_CONFIG.json")!
+
+DataGrailConsent.shared.initialize(
+    configUrl: configUrl,
+    apiKey: "your-api-key"  // Required for QR pairing
+) { result in
+    // Check initialization result
+}
+
+// Option 1: D-pad only banner (no QR pairing)
+DataGrailConsent.shared.showBanner(from: viewController) { preferences in
+    // User managed consent via D-pad navigation
+}
+
+// Option 2: Banner with QR pairing (phone can manage consent)
+DataGrailConsent.shared.showBannerWithQRPairing(
+    from: viewController,
+    publicBaseUrl: "https://your-server.com",  // Reachable by phone
+    configUrl: "https://your-server.com/config.json",
+    customerId: "your-customer-id"
+) { preferences in
+    // User completed via QR scan + phone OR manual D-pad
+}
+```
+
+### QR Pairing Flow
+
+1. **TV displays banner** with QR code (generated from device `user_hash` + config URL)
+2. **User scans QR** with phone camera
+3. **Phone opens static page** showing category toggles (mobile-optimized)
+4. **User manages preferences** on phone and saves
+5. **TV polls** `GET /universal_consent` every 2 seconds
+6. **TV detects phone's write** and auto-dismisses banner
+7. **D-pad banner** remains available as fallback (10-minute client-side timeout)
+
+#### Setup for Local Development
+
+To test QR pairing locally with the [Universal Consent test server](https://github.com/datagrail/consent-test-server):
+
+1. **Start the test server** on your Mac:
+   ```bash
+   cd /path/to/consent-test-server
+   uv run uvicorn server:app --host 0.0.0.0 --port 8080
+   ```
+
+2. **Find your Mac's LAN IP**:
+   ```bash
+   ipconfig getifaddr en0  # e.g., 192.168.1.5
+   ```
+
+3. **Set `PUBLIC_BASE_URL` for the server**:
+   ```bash
+   PUBLIC_BASE_URL=http://192.168.1.5:8080 uv run uvicorn server:app --host 0.0.0.0 --port 8080
+   ```
+
+4. **In your tvOS app**, initialize with the LAN URLs:
+   ```swift
+   DataGrailConsent.shared.showBannerWithQRPairing(
+       from: viewController,
+       publicBaseUrl: "http://192.168.1.5:8080",
+       configUrl: "http://192.168.1.5:8080/tv/sample-config.json",
+       customerId: "cust-1"
+   )
+   ```
+
+5. **For HTTPS** (required by some QR scanner apps):
+   ```bash
+   # Use cloudflared or ngrok for an HTTPS tunnel
+   cloudflared tunnel --url http://localhost:8080
+   # Then use the returned https://... URL as publicBaseUrl
+   ```
+
+#### tvOS Design Notes
+
+- **Fonts**: Body ≥29pt, headings ≥38pt, buttons ≥66pt (10-foot viewing)
+- **Focus engine**: All interactive elements focusable with scale+glow on focus
+- **Menu button**: Navigates back or dismisses (no close button)
+- **Category toggles**: Custom focusable rows (Select/left/right to toggle)
+- **Essential categories**: Always-on categories render disabled (not focusable)
+
+### tvOS Demo
+
+A tvOS demo app is included under `DemoProject/DemoTvOS/`. Build it via:
 
 ```bash
-./launch_demo.sh          # Build and run
+xcodebuild build -scheme DemoTvOS -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation)'
+```
+
+Or open in Xcode:
+1. Generate Xcode project: `xcodegen` (in `DemoProject/`)
+2. Select `DemoTvOS` scheme
+3. Run on Apple TV simulator
+
+The tvOS demo shows:
+- Initialize with test server config
+- Show D-pad banner (no QR)
+- Show banner + QR pairing (scan with phone)
+- Live category status panel
+- Reset button
+
+## Demo Project
+
+A full-featured demo app is included under `DemoProject/`. To run the iOS demo:
+
+```bash
+./launch_demo.sh          # Build and run iOS demo
 ./launch_demo.sh --clean  # Clean build first
 ```
 
@@ -258,16 +373,23 @@ swift test
 
 ## Architecture
 
-The SDK uses a callback-based API for iOS 13+ compatibility with zero external dependencies.
+The SDK uses a callback-based API for iOS 13+ / tvOS 13+ compatibility with zero external dependencies.
 
 - **Public API**: `DataGrailConsent` — singleton entry point
 - **Manager**: `ConsentManager` — orchestrates config, storage, and network layers
 - **Services**: `ConfigService`, `ConsentService` — config fetching and backend sync
 - **Network**: `NetworkClient` — HTTP client with exponential backoff retry
+  - `PairingService` — QR URL generation + consent read polling (tvOS)
+  - `PairingCoordinator` — polling loop, timeout, callbacks (tvOS)
 - **Storage**: `ConsentStorage` — UserDefaults-based persistence with offline request queuing
-- **UI**: `BannerViewController` — multi-layer consent banner with locale-aware translations
+- **UI**: 
+  - `BannerViewController` — iOS multi-layer consent banner with locale-aware translations
+  - `BannerViewControllerTvOS` — tvOS focus-engine banner with optional QR pairing
 - **Models**: `ConsentConfig`, `ConsentPreferences`, `CategoryConsent`, `ConsentError`
-- **Utils**: `ConfigValidator` — configuration validation
+- **Utils**: 
+  - `ConfigValidator` — configuration validation
+  - `UserHashGenerator` — SHA-256 device identity hash (tvOS)
+  - `QRCodeGenerator` — Core Image QR code generation (tvOS)
 
 ## License
 
