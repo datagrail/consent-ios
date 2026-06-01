@@ -289,7 +289,7 @@ public class DataGrailConsent {
 
     // MARK: - UI
 
-    #if canImport(UIKit)
+    #if os(iOS)
         /// Show the consent banner UI in modal style
         /// - Parameters:
         ///   - presentingViewController: The view controller to present from
@@ -341,6 +341,19 @@ public class DataGrailConsent {
             )
 
             presentingViewController.present(bannerVC, animated: true)
+        }
+    #elseif os(tvOS)
+        /// Show the consent banner UI on tvOS (full-screen only)
+        /// - Parameters:
+        ///   - presentingViewController: The view controller to present from
+        ///   - completion: Called when user saves preferences or dismisses (nil if dismissed)
+        public func showBanner(
+            from presentingViewController: UIViewController,
+            completion: @escaping (ConsentPreferences?) -> Void
+        ) {
+            // TODO: feat-006 — implement full tvOS banner UI
+            // For now, stub that calls completion(nil)
+            completion(nil)
         }
     #endif
 }

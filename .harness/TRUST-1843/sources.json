@@ -1,0 +1,18 @@
+{
+  "knowledgebase_root": "~/knowledgebase/projects/consent",
+  "primary_plan": "output/universal/tvos-qr-consent-local-buildout-plan.md",
+  "specs": [
+    "output/universal/tvos-qr-consent-local-buildout-plan.md",
+    "output/universal/test-server/README.md",
+    "wiki/concepts/universal/sdk-integration-patterns.md",
+    "wiki/decisions/universal/tcf-gpp-and-dense-format.md",
+    "wiki/decisions/universal/ctv-qr-code-consent-proposal.md",
+    "wiki/decisions/universal/ctv-implementation-plan.md",
+    "wiki/concepts/universal/cross-platform-consent-architecture.md"
+  ],
+  "code_locations": {
+    "consent-test-server": "~/knowledgebase/projects/consent/output/universal/test-server",
+    "consent-ios": "~/proj/consent-ios"
+  },
+  "notes": "TRUST-1843 builds the tvOS QR-pairing consent loop locally. Two surfaces: (A) consent-test-server (FastAPI, uv) lives INSIDE this knowledgebase repo at output/universal/test-server/ — feat-001..004, Linux-native, self-verifiable in-VM; (B) consent-ios (Swift/tvOS) at ~/proj/consent-ios — feat-005..009, Swift cannot compile in a Linux shuru VM, so the agent makes edits+commits only and the human verifies via xcodebuild on the host. The static phone page reads user_hash/customer_id/config_url from the querystring; NO pairing-session subsystem; SDK polls (server also exposes SSE keyed on user_hash). GPC reconciliation is CLIENT-SIDE only — server never reconciles."
+}

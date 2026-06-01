@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "DataGrailConsent",
-    platforms: [.iOS(.v13)],
+    platforms: [.iOS(.v13), .tvOS(.v13)],
     products: [
         .library(
             name: "DataGrailConsent",

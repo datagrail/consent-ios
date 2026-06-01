@@ -1,0 +1,74 @@
+[
+  {
+    "id": "feat-001",
+    "repo": "consent-test-server",
+    "description": "PUBLIC_BASE_URL setting + static phone-page mount. Add public_base_url to config.py Settings (env PUBLIC_BASE_URL, default http://localhost:8080). Mount StaticFiles(directory='static/tv', html=True) at /tv in server.py. No Store changes.",
+    "verification": "uv run uvicorn server:app --port 8080 & ; curl -s -o /dev/null -w '%{http_code}' 'http://localhost:8080/tv/' returns 200 once index.html exists (feat-002); python -c \"import config; assert hasattr(config.Settings(), 'public_base_url')\"",
+    "dependencies": [],
+    "passes": false
+  },
+  {
+    "id": "feat-002",
+    "repo": "consent-test-server",
+    "description": "Fully static phone consent page: static/tv/index.html + consent.js (vanilla, zero deps) + static/tv/sample-config.json. Page reads user_hash/customer_id/config_url from querystring (URLSearchParams), validates 64-hex user_hash, fetches config_url, renders {gtm_key:bool} category toggles (always_on disabled+checked), on Save calls POST /_test/sign then POST /universal_consent with platform:'ctv_qr' and HMAC headers. NO completion call. Comment clearly that _test/sign is the local stand-in for first-party server signing.",
+    "verification": "curl -s 'http://localhost:8080/tv/?customer_id=cust-1&user_hash='$(python3 -c \"print('a'*64)\")'&config_url=http://localhost:8080/tv/sample-config.json' | grep -qi '<html'; curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/tv/sample-config.json returns 200",
+    "dependencies": ["feat-001"],
+    "passes": false
+  },
+  {
+    "id": "feat-003",
+    "repo": "consent-test-server",
+    "description": "SSE push endpoint GET /universal_consent/events?customer_id=&user_hash= -> text/event-stream. Register asyncio.Queue in module-level _subscribers dict keyed by (customer_id, user_hash). Keepalive comment every ~15s. Hook existing save_consent: after STORE.put + webhook fan-out, push 'event: updated\\ndata: <get_response>' to subscribers for (customer_id, user_hash), behind an 'if subscribers' check. Cleanup queue in finally / on request.is_disconnected(). SDK v1 does NOT consume this.",
+    "verification": "Open curl -N 'http://localhost:8080/universal_consent/events?customer_id=cust-1&user_hash='$UH in one shell; in another POST a consent write for that user_hash via _test/sign; assert an 'event: updated' line arrives on the stream within 2s.",
+    "dependencies": [],
+    "passes": false
+  },
+  {
+    "id": "feat-004",
+    "repo": "consent-test-server",
+    "description": "Direct-read pairing loop tests + README run book. Add test_pairing.py (or curl snippets) covering: static page + sample-config serve (200, no auth); not_found -> sign -> POST(platform=ctv_qr) -> found with saved cookieOptions map (this IS what the TV polls); webhook still fires on the phone write; SSE updated event arrives. Document LAN (PUBLIC_BASE_URL=http://$(ipconfig getifaddr en0):8080, --host 0.0.0.0) and HTTPS-tunnel (cloudflared/ngrok) paths in README.",
+    "verification": "uv run pytest test_pairing.py passes (or the documented curl sequence all returns expected statuses); README contains the LAN + tunnel run book and the explicit no-session-subsystem note.",
+    "dependencies": ["feat-002", "feat-003"],
+    "passes": false
+  },
+  {
+    "id": "feat-005",
+    "repo": "consent-ios",
+    "description": "tvOS platform target compiles. Package.swift: add .tvOS(.v13) to platforms. DataGrailConsent.podspec: add s.tvos.deployment_target = '13.0'. Change UI/BannerViewController.swift guard from #if canImport(UIKit) to #if os(iOS) (tvOS also imports UIKit but the iOS banner uses iOS-only idioms). In DataGrailConsent.swift split showBanner: existing impls become #if os(iOS); add tvOS showBanner stub under #if os(tvOS).",
+    "verification": "HOST: swift build succeeds; xcodebuild -scheme DataGrailConsent -destination 'generic/platform=tvOS' build succeeds; existing iOS tests unchanged. (VM does edits+commit only; Swift cannot compile in Linux VM.)",
+    "dependencies": [],
+    "passes": false
+  },
+  {
+    "id": "feat-006",
+    "repo": "consent-ios",
+    "description": "Full tvOS D-pad banner: new Sources/DataGrailConsent/UI/BannerViewControllerTvOS.swift (#if os(tvOS)). Same config-driven multi-layer model as iOS, built for the focus engine: full-screen, body >=29pt / headings >=38pt / buttons >=66pt focusable with scale+glow; focusable custom toggle rows (Select/left-right flips); Menu button = back-a-layer/dismiss; preferredFocusEnvironments + setNeedsFocusUpdate on transitions. Mirror the iOS element switch (text/button/link/category/tracking-details). Reuse ConsentManager.getCategories/getEssentialCategories/getDefaultPreferences and button actions. No model/manager changes. Wire the tvOS showBanner entry from feat-005.",
+    "verification": "HOST: xcodebuild test -scheme DataGrailConsent -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation)' builds; banner renders on tvOS simulator; D-pad navigates; categories toggle; Accept/Reject/Save and Menu-dismiss work; isCategoryEnabled correct after.",
+    "dependencies": ["feat-005"],
+    "passes": false
+  },
+  {
+    "id": "feat-007",
+    "repo": "consent-ios",
+    "description": "QR pairing layer (no session API). Network/PairingService.swift (no platform guard, pure Foundation): qrURL(publicBaseUrl,customerId,userHash,configUrl)->URL (pure string assembly), fetchConsent(...) GETs /universal_consent?customer_id=&user_hash= with X-DG-Api-Key + Cache-Control:no-cache, returns enum PairingRead {notFound; found(ConsentPreferences)}. QRCodeGenerator.swift (#if canImport(CoreImage)) wrapping CIFilter.qrCodeGenerator() -> UIImage. PairingCoordinator.swift (#if os(tvOS)) owns 2s poll loop + client-side 10-min timeout + fallback to D-pad banner; PairingTransport/PollingTransport seam for future SSE (do NOT build SSE in SDK). ConsentManager.adoptRemotePreferences(_:) (stores + fires onConsentChanged, no re-POST). DataGrailConsent.showBannerWithQRPairing(from:publicBaseUrl:configUrl:userIdentifier:completion:) (tvOS-only). Add optional apiKey init param for reads.",
+    "verification": "HOST E2E: tvOS sim shows banner+QR -> scan with phone on LAN -> static page loads -> toggle marketing off + Save -> within ~2s sim banner auto-dismisses and isCategoryEnabled('dg-category-marketing')==false; local webhook receiver shows consent.preferences.updated.",
+    "dependencies": ["feat-005", "feat-002"],
+    "passes": false
+  },
+  {
+    "id": "feat-008",
+    "repo": "consent-ios",
+    "description": "tvOS + pairing tests + CI. BannerViewControllerTvOSTests (focus chain, layer nav, Menu dismiss, Select toggle, font-size minimums, every element type focusable). PairingServiceTests/PairingCoordinatorTests (mock NetworkClient: qrURL querystring correctness incl url-encoded config_url; poll notFound*N->found->adopt->callback; client-side timeout stops polling + falls back). Hash-parity test: tvOS user_hash for the shared vector equals web/iOS value. All existing iOS tests stay green. Add tvos-build + tvos-test jobs to .github/workflows/pr-checks.yml.",
+    "verification": "HOST: xcodebuild test for tvOS scheme passes new + existing tests; pr-checks.yml contains tvos-build and tvos-test jobs.",
+    "dependencies": ["feat-006", "feat-007"],
+    "passes": false
+  },
+  {
+    "id": "feat-009",
+    "repo": "consent-ios",
+    "description": "tvOS demo target + docs. Add SwiftUI tvOS app to DemoProject: init against the test server's sample-config URL, call showBannerWithQRPairing, show live consent-status panel + Reset. README tvOS section: install, init, QR pairing, the LAN/tunnel setup, explicit 'this talks to the local test server' note.",
+    "verification": "HOST: tvOS demo target builds and runs on the Apple TV simulator; README has a tvOS section covering pairing + LAN/tunnel.",
+    "dependencies": ["feat-006", "feat-007"],
+    "passes": false
+  }
+]

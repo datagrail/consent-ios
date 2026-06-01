@@ -1,4 +1,4 @@
-#if canImport(UIKit)
+#if os(iOS)
     import UIKit
 
     /// Display style for the consent banner
