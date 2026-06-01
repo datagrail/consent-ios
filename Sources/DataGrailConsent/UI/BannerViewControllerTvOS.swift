@@ -15,13 +15,22 @@
         private let scrollView = UIScrollView()
         private let contentStackView = UIStackView()
 
+        // QR pairing support
+        private let qrImage: UIImage?
+        private let pairingCoordinator: PairingCoordinator?
+        private var qrContainerView: UIView?
+
         // MARK: - Initialization
 
         public init(
             config: ConsentConfig,
             initialPreferences: ConsentPreferences?,
+            qrImage: UIImage? = nil,
+            pairingCoordinator: PairingCoordinator? = nil,
             completion: @escaping (ConsentPreferences?) -> Void
         ) {
+            self.qrImage = qrImage
+            self.pairingCoordinator = pairingCoordinator
             self.config = config
             self.currentLayerKey = config.layout.firstLayerId
 
@@ -148,6 +157,16 @@
                 return
             }
 
+            // If on first layer and QR is available, show QR code at the top
+            let isFirstLayer = layerKey == config.layout.firstLayerId
+            if isFirstLayer, let qrImage = qrImage, pairingCoordinator != nil {
+                let qrView = createQRView(qrImage: qrImage)
+                qrContainerView = qrView
+                contentStackView.addArrangedSubview(qrView)
+            } else {
+                qrContainerView = nil
+            }
+
             // Render each element
             for element in layer.elements {
                 if let view = createElementView(element) {
@@ -158,6 +177,50 @@
             // Update focus after layer transition
             setNeedsFocusUpdate()
             updateFocusIfNeeded()
+        }
+
+        private func createQRView(qrImage: UIImage) -> UIView {
+            let container = UIView()
+            container.backgroundColor = UIColor.secondarySystemBackground
+            container.layer.cornerRadius = 16
+
+            let imageView = UIImageView(image: qrImage)
+            imageView.contentMode = .scaleAspectFit
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(imageView)
+
+            let label = UILabel()
+            label.text = "Scan with your phone to manage privacy settings"
+            label.font = .systemFont(ofSize: 29)
+            label.textColor = .secondaryLabel
+            label.textAlignment = .center
+            label.numberOfLines = 0
+            label.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(label)
+
+            NSLayoutConstraint.activate([
+                imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 40),
+                imageView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+                imageView.widthAnchor.constraint(equalToConstant: 300),
+                imageView.heightAnchor.constraint(equalToConstant: 300),
+
+                label.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 20),
+                label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
+                label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -40),
+                label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -40),
+            ])
+
+            return container
+        }
+
+        /// Remove QR code view (called on timeout)
+        public func removeQRCode() {
+            if let qrView = qrContainerView {
+                qrView.removeFromSuperview()
+                qrContainerView = nil
+                setNeedsFocusUpdate()
+                updateFocusIfNeeded()
+            }
         }
 
         // MARK: - Locale Helper

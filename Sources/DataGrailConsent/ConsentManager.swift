@@ -171,6 +171,20 @@ public class ConsentManager {
         }
     }
 
+    /// Adopt preferences fetched from the server (QR pairing flow)
+    /// Stores locally but does NOT re-POST to the backend (phone already wrote)
+    /// - Parameter preferences: The preferences to adopt
+    public func adoptRemotePreferences(_ preferences: ConsentPreferences) {
+        do {
+            try storage.savePreferences(preferences)
+            if let version = currentConfig?.version {
+                storage.saveConfigVersion(version)
+            }
+        } catch {
+            Logger.log("Failed to adopt remote preferences: \(error)", level: .error)
+        }
+    }
+
     /// Track banner open event
     /// - Parameter completion: Completion handler with result
     public func trackBannerOpen(completion: @escaping (Result<Void, ConsentError>) -> Void) {

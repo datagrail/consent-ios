@@ -18,6 +18,7 @@ public class DataGrailConsent {
 
     private var manager: ConsentManager?
     private var configUrl: URL?
+    private var apiKey: String?
     private var _onConsentChangedCallback: ((ConsentPreferences) -> Void)?
     private let callbackLock = NSLock()
 
@@ -41,11 +42,14 @@ public class DataGrailConsent {
     /// Initialize the DataGrail Consent SDK
     /// - Parameters:
     ///   - configUrl: URL to fetch consent configuration from
+    ///   - apiKey: Optional API key for reading consent (required for QR pairing on tvOS)
     ///   - completion: Completion handler with result
     public func initialize(
         configUrl: URL,
+        apiKey: String? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
+        self.apiKey = apiKey
         // Validate URL scheme
         guard let scheme = configUrl.scheme, scheme == "https" || scheme == "http" else {
             DispatchQueue.main.async {
@@ -380,6 +384,130 @@ public class DataGrailConsent {
             )
 
             presentingViewController.present(bannerVC, animated: true)
+        }
+
+        /// Show the consent banner with QR pairing on tvOS
+        /// - Parameters:
+        ///   - presentingViewController: The view controller to present from
+        ///   - publicBaseUrl: The base URL reachable by the phone (e.g., http://192.168.1.5:8080 or https://tunnel.example.com)
+        ///   - configUrl: URL to the consent config JSON (encoded in QR for phone to fetch)
+        ///   - customerId: DataGrail customer ID
+        ///   - userIdentifier: Optional user identifier override (if nil, auto-detect from device)
+        ///   - completion: Called when user saves preferences or pairing completes (nil if dismissed/timeout)
+        public func showBannerWithQRPairing(
+            from presentingViewController: UIViewController,
+            publicBaseUrl: String,
+            configUrl: String,
+            customerId: String,
+            userIdentifier: String? = nil,
+            completion: @escaping (ConsentPreferences?) -> Void
+        ) {
+            guard let manager, let config = manager.config else {
+                completion(nil)
+                return
+            }
+
+            // Generate user_hash
+            let userHash = UserHashGenerator.generateUserHash(
+                customerId: customerId,
+                consentProjectId: config.consentContainerVersionId,
+                deviceIdentifier: userIdentifier
+            )
+
+            // Create pairing service
+            let networkClient = NetworkClient()
+            let pairingService = PairingService(
+                networkClient: networkClient,
+                apiBaseUrl: config.privacyDomain,
+                apiKey: apiKey
+            )
+
+            // Build QR URL
+            guard let qrUrl = pairingService.qrURL(
+                publicBaseUrl: publicBaseUrl,
+                customerId: customerId,
+                userHash: userHash,
+                configUrl: configUrl
+            ) else {
+                completion(nil)
+                return
+            }
+
+            // Generate QR image
+            guard let qrImage = QRCodeGenerator.generateQRCode(from: qrUrl.absoluteString, size: 300) else {
+                completion(nil)
+                return
+            }
+
+            // Create pairing coordinator
+            let coordinator = PairingCoordinator(
+                pairingService: pairingService,
+                customerId: customerId,
+                userHash: userHash
+            )
+
+            // Setup coordinator callbacks
+            coordinator.onConsentFound = { [weak self, weak coordinator] preferences in
+                guard let self = self else { return }
+
+                // Adopt remote preferences (phone already wrote to backend)
+                manager.adoptRemotePreferences(preferences)
+
+                // Notify callback
+                DispatchQueue.main.async {
+                    self.onConsentChangedCallback?(preferences)
+                }
+
+                // Dismiss banner and complete
+                presentingViewController.dismiss(animated: true) {
+                    completion(preferences)
+                }
+
+                coordinator?.stopPolling()
+            }
+
+            coordinator.onTimeout = { [weak coordinator, weak presentingViewController] in
+                // Timeout: remove QR, fall back to D-pad banner (already rendered)
+                Logger.log("QR pairing timeout, falling back to D-pad banner", level: .warning)
+                coordinator?.stopPolling()
+
+                // Remove QR from banner if still presented
+                if let presented = presentingViewController?.presentedViewController as? BannerViewControllerTvOS {
+                    presented.removeQRCode()
+                }
+            }
+
+            // Show banner with QR
+            let currentPreferences = manager.getCategories()
+            let bannerVC = BannerViewControllerTvOS(
+                config: config,
+                initialPreferences: currentPreferences,
+                qrImage: qrImage,
+                pairingCoordinator: coordinator,
+                completion: { [weak self] preferences in
+                    guard let self, let preferences else {
+                        coordinator.stopPolling()
+                        completion(nil)
+                        return
+                    }
+
+                    // User manually saved via D-pad (QR timed out or user chose manual path)
+                    coordinator.stopPolling()
+                    self.savePreferences(preferences) { result in
+                        switch result {
+                        case .success:
+                            completion(preferences)
+                        case .failure:
+                            completion(nil)
+                        }
+                    }
+                }
+            )
+
+            presentingViewController.present(bannerVC, animated: true)
+
+            // Start polling
+            coordinator.startPolling()
         }
     #endif
 }
