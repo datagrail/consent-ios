@@ -392,6 +392,9 @@ public class DataGrailConsent {
         ///   - publicBaseUrl: The base URL reachable by the phone (e.g., http://192.168.1.5:8080 or https://tunnel.example.com)
         ///   - configUrl: URL to the consent config JSON (encoded in QR for phone to fetch)
         ///   - customerId: DataGrail customer ID
+        ///   - apiBaseUrl: Optional full base URL (scheme + host + port) the TV polls for consent reads.
+        ///     Defaults to `https://<config.privacyDomain>`. Override for local/test servers reached
+        ///     over a non-standard scheme or port (e.g. http://192.168.1.5:8080).
         ///   - userIdentifier: Optional user identifier override (if nil, auto-detect from device)
         ///   - completion: Called when user saves preferences or pairing completes (nil if dismissed/timeout)
         public func showBannerWithQRPairing(
@@ -399,6 +402,7 @@ public class DataGrailConsent {
             publicBaseUrl: String,
             configUrl: String,
             customerId: String,
+            apiBaseUrl: String? = nil,
             userIdentifier: String? = nil,
             completion: @escaping (ConsentPreferences?) -> Void
         ) {
@@ -414,11 +418,14 @@ public class DataGrailConsent {
                 deviceIdentifier: userIdentifier
             )
 
-            // Create pairing service
+            // Create pairing service.
+            // The TV polls `apiBaseUrl` (full scheme+host+port). When not overridden,
+            // default to https://<privacyDomain> — the privacyDomain is a bare host.
             let networkClient = NetworkClient()
+            let resolvedApiBaseUrl = apiBaseUrl ?? "https://\(config.privacyDomain)"
             let pairingService = PairingService(
                 networkClient: networkClient,
-                apiBaseUrl: config.privacyDomain,
+                apiBaseUrl: resolvedApiBaseUrl,
                 apiKey: apiKey
             )
 

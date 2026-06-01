@@ -7,10 +7,20 @@ struct ContentView: View {
     @State private var categories: [String: Bool] = [:]
     @State private var showingBanner = false
 
-    // Test server settings (adjust for your LAN or tunnel)
-    private let publicBaseUrl = "http://192.168.1.5:8080"  // Change to your Mac's LAN IP
-    private let configUrl = "http://192.168.1.5:8080/tv/sample-config.json"
+    // ───────────────────────────────────────────────────────────────────────
+    // HTTPS host that proxies to the local test server (root → localhost:8080).
+    // HTTPS lets the stock iOS Camera app open the QR link and avoids ATS issues.
+    private let serverBase = "https://bradleyy.dg-dev.com"
+    // ───────────────────────────────────────────────────────────────────────
+
+    // SDK initializes from a FULL ConsentConfig (with layout) so the banner renders.
+    private var configUrl: String { "\(serverBase)/tv/demo-config.json" }
+    // The phone's QR page only needs category toggles (sample-config is fine).
+    private var phoneConfigUrl: String { "\(serverBase)/tv/sample-config.json" }
+    // The TV polls this base for consent reads (full scheme+host+port).
+    private var apiBaseUrl: String { serverBase }
     private let customerId = "cust-1"
+    private let apiKey = "dg_test_readkey"  // matches the test server's default API_KEYS
 
     var body: some View {
         VStack(spacing: 40) {
@@ -25,8 +35,8 @@ struct ContentView: View {
 
             VStack(spacing: 24) {
                 InfoRow(label: "Status", value: consentStatus)
-                InfoRow(label: "Config URL", value: configUrl)
-                InfoRow(label: "Public Base URL", value: publicBaseUrl)
+                InfoRow(label: "Server", value: serverBase)
+                InfoRow(label: "SDK config", value: configUrl)
             }
             .padding()
             .background(Color.secondary.opacity(0.2))
@@ -82,11 +92,11 @@ struct ContentView: View {
 
             Text("Instructions:")
                 .font(.system(size: 28, weight: .semibold))
-            Text("1. Start the test server on your Mac (see README)")
+            Text("1. Start the test server on your Mac, exposed at \(serverBase)")
                 .font(.system(size: 22))
-            Text("2. Update publicBaseUrl above to your Mac's LAN IP")
+            Text("2. Initialize → Show Banner + QR")
                 .font(.system(size: 22))
-            Text("3. Initialize → Show Banner + QR → Scan with phone")
+            Text("3. Scan the QR with your phone → toggle + Save → watch this update")
                 .font(.system(size: 22))
         }
         .padding(60)
@@ -103,7 +113,7 @@ struct ContentView: View {
 
         DataGrailConsent.shared.initialize(
             configUrl: url,
-            apiKey: "test-api-key"  // For local dev with test server
+            apiKey: apiKey
         ) { result in
             switch result {
             case .success:
@@ -140,9 +150,10 @@ struct ContentView: View {
 
         DataGrailConsent.shared.showBannerWithQRPairing(
             from: rootVC,
-            publicBaseUrl: publicBaseUrl,
-            configUrl: configUrl,
-            customerId: customerId
+            publicBaseUrl: serverBase,
+            configUrl: phoneConfigUrl,
+            customerId: customerId,
+            apiBaseUrl: apiBaseUrl
         ) { preferences in
             if preferences != nil {
                 consentStatus = "Consent saved (QR pairing or manual)"
