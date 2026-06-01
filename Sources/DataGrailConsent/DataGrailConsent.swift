@@ -351,9 +351,35 @@ public class DataGrailConsent {
             from presentingViewController: UIViewController,
             completion: @escaping (ConsentPreferences?) -> Void
         ) {
-            // TODO: feat-006 — implement full tvOS banner UI
-            // For now, stub that calls completion(nil)
-            completion(nil)
+            guard let manager, let config = manager.config else {
+                completion(nil)
+                return
+            }
+
+            // Use getCategories() to get effective preferences
+            let currentPreferences = manager.getCategories()
+            let bannerVC = BannerViewControllerTvOS(
+                config: config,
+                initialPreferences: currentPreferences,
+                completion: { [weak self] preferences in
+                    guard let self, let preferences else {
+                        completion(nil)
+                        return
+                    }
+
+                    // Save preferences
+                    self.savePreferences(preferences) { result in
+                        switch result {
+                        case .success:
+                            completion(preferences)
+                        case .failure:
+                            completion(nil)
+                        }
+                    }
+                }
+            )
+
+            presentingViewController.present(bannerVC, animated: true)
         }
     #endif
 }
