@@ -104,6 +104,66 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  tvos-build:
+    name: tvOS Build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: 'latest-stable'
+
+      - name: Build for tvOS
+        run: |
+          xcodebuild build \
+            -scheme DataGrailConsent \
+            -destination 'generic/platform=tvOS' \
+            -configuration Release
+
+  tvos-test:
+    name: tvOS Tests (Simulator)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: 'latest-stable'
+
+      - name: Run tvOS Tests on Simulator
+        run: |
+          # List available Apple TV simulators
+          echo "Available Apple TV simulators:"
+          xcrun simctl list devices available "Apple TV" | head -10 || true
+
+          # Get first available Apple TV simulator UUID
+          SIMULATOR_ID=$(xcrun simctl list devices available "Apple TV" | \
+            grep -m 1 "Apple TV" | \
+            sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')
+
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "Error: No Apple TV simulator found"
+            exit 1
+          fi
+
+          echo "Using simulator ID: $SIMULATOR_ID"
+
+          # Run tests on tvOS simulator
+          xcodebuild test \
+            -scheme DataGrailConsent \
+            -sdk appletvsimulator \
+            -destination "platform=tvOS Simulator,id=$SIMULATOR_ID" \
+            -enableCodeCoverage YES
+
+      - name: Upload tvOS coverage to Codecov
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          flags: tvos-tests
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   pod-lint:
     name: Podspec Validation
     runs-on: macos-latest
