@@ -144,7 +144,7 @@ final class PairingServiceTests: XCTestCase {
                 switch pairingRead {
                 case .notFound:
                     XCTFail("Expected found, got not_found")
-                case let .found(preferences):
+                case let .found(preferences, _):
                     XCTAssertTrue(preferences.isCustomised)
                     XCTAssertEqual(preferences.cookieOptions.count, 1)
                     XCTAssertEqual(preferences.cookieOptions[0].gtmKey, "dg-category-marketing")

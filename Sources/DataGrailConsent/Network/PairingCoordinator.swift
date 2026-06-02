@@ -15,6 +15,12 @@
         private var timeoutTimer: Timer?
         private var startTime: Date?
 
+        // Baseline captured on the first poll so a PRE-EXISTING record (e.g. the
+        // device paired before) doesn't instantly complete the flow. Completion
+        // requires a NEW write that arrives after the banner opens.
+        private var baselineCaptured = false
+        private var baselineUpdatedAt: String?  // nil = no record at baseline
+
         public var onConsentFound: ((ConsentPreferences) -> Void)?
         public var onTimeout: (() -> Void)?
 
@@ -86,13 +92,33 @@
 
                 switch result {
                 case let .success(pairingRead):
+                    // First poll establishes the baseline (record present? which
+                    // updated_at?) without completing — otherwise a pre-existing
+                    // record would dismiss the banner instantly.
+                    if !self.baselineCaptured {
+                        self.baselineCaptured = true
+                        switch pairingRead {
+                        case .notFound:
+                            self.baselineUpdatedAt = nil
+                        case let .found(_, updatedAt):
+                            self.baselineUpdatedAt = updatedAt
+                        }
+                        Logger.debug("PairingCoordinator: baseline updated_at=\(self.baselineUpdatedAt ?? "none")")
+                        return
+                    }
+
                     switch pairingRead {
                     case .notFound:
                         // Still waiting, continue polling
                         Logger.debug("PairingCoordinator: Poll returned not_found, continuing")
-                    case let .found(preferences):
-                        // Phone wrote consent, stop polling and notify
-                        Logger.debug("PairingCoordinator: Poll returned found, consent received")
+                    case let .found(preferences, updatedAt):
+                        // Only complete on a NEW write (updated_at changed since
+                        // baseline, or a record appeared where there was none).
+                        if updatedAt == self.baselineUpdatedAt {
+                            Logger.debug("PairingCoordinator: found, but unchanged since baseline — continuing")
+                            return
+                        }
+                        Logger.debug("PairingCoordinator: new write detected, consent received")
                         self.stopPolling()
                         DispatchQueue.main.async {
                             self.onConsentFound?(preferences)

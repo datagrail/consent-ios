@@ -67,17 +67,20 @@
 
             let expectation = self.expectation(description: "Consent found")
 
-            // Mock found response
+            // Baseline poll = not_found, then a NEW write appears. The coordinator
+            // must ignore the baseline and only complete on the new write.
+            let notFoundResponse = #"{"status":"not_found"}"#.data(using: .utf8)!
             let foundResponse = """
             {
               "status": "found",
+              "updated_at": "2026-06-01T18:30:00.000Z",
               "consent_preferences": {
                 "isCustomised": true,
                 "cookieOptions": { "dg-category-marketing": false }
               }
             }
             """.data(using: .utf8)!
-            mockNetworkClient.mockResponse = foundResponse
+            mockNetworkClient.mockResponseQueue = [notFoundResponse, foundResponse]
 
             coordinator.onConsentFound = { preferences in
                 XCTAssertTrue(preferences.isCustomised)
@@ -103,17 +106,19 @@
 
             let expectation = self.expectation(description: "Consent found")
 
-            // Mock found response
+            // Baseline = not_found, then a NEW write appears.
+            let notFoundResponse = #"{"status":"not_found"}"#.data(using: .utf8)!
             let foundResponse = """
             {
               "status": "found",
+              "updated_at": "2026-06-01T18:30:00.000Z",
               "consent_preferences": {
                 "isCustomised": true,
                 "cookieOptions": {}
               }
             }
             """.data(using: .utf8)!
-            mockNetworkClient.mockResponse = foundResponse
+            mockNetworkClient.mockResponseQueue = [notFoundResponse, foundResponse]
 
             coordinator.onConsentFound = { _ in
                 expectation.fulfill()

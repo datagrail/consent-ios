@@ -3,7 +3,7 @@ import Foundation
 /// Result of polling the pairing endpoint
 public enum PairingRead {
     case notFound  // Phone hasn't written yet
-    case found(ConsentPreferences)  // Phone wrote consent
+    case found(ConsentPreferences, updatedAt: String?)  // A record exists (updatedAt distinguishes new writes)
 }
 
 /// Service for QR pairing operations (no session subsystem, reads directly)
@@ -77,7 +77,7 @@ public final class PairingService {
                 do {
                     let response = try JSONDecoder().decode(PairingReadResponse.self, from: data)
                     if response.status == "found", let prefs = response.consentPreferences {
-                        completion(.success(.found(prefs)))
+                        completion(.success(.found(prefs, updatedAt: response.updatedAt)))
                     } else {
                         // status: "not_found"
                         completion(.success(.notFound))
@@ -101,10 +101,12 @@ public final class PairingService {
 private struct PairingReadResponse: Decodable {
     let status: String  // "found" | "not_found"
     let consentPreferences: ConsentPreferences?
+    let updatedAt: String?  // server-set timestamp; used to detect a NEW write
 
     enum CodingKeys: String, CodingKey {
         case status
         case consentPreferences = "consent_preferences"
+        case updatedAt = "updated_at"
     }
 
     private struct ServerPreferences: Decodable {
@@ -115,6 +117,7 @@ private struct PairingReadResponse: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         status = try container.decode(String.self, forKey: .status)
+        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
 
         if let server = try container.decodeIfPresent(ServerPreferences.self, forKey: .consentPreferences) {
             let options = (server.cookieOptions ?? [:]).map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
