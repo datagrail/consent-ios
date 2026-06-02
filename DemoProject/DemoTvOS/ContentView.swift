@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var consentStatus: String = "Not initialized"
     @State private var categories: [String: Bool] = [:]
     @State private var showingBanner = false
+    @Namespace private var buttonsNamespace
 
     // ───────────────────────────────────────────────────────────────────────
     // HTTPS host that proxies to the local test server (root → localhost:8080).
@@ -64,29 +65,32 @@ struct ContentView: View {
             }
 
             HStack(spacing: 40) {
+                // NOTE: no .disabled() on these buttons. On tvOS, disabling the
+                // currently-focused button (e.g. Initialize after it runs) orphans
+                // focus and the remote stops responding. Buttons stay enabled and
+                // guard their own preconditions internally instead.
+                // Use the system default tvOS button style — it is fully
+                // focus-engine aware (visible highlight/lift, reliable Select).
+                // The previous custom ButtonStyle only reacted to isPressed, not
+                // focus, so nothing highlighted and the screen felt unresponsive.
                 Button("Initialize") {
                     initializeSDK()
                 }
-                .buttonStyle(CardButtonStyle())
-                .disabled(isInitialized)
+                .prefersDefaultFocus(in: buttonsNamespace)
 
                 Button("Show Banner (D-pad only)") {
                     showBannerDPad()
                 }
-                .buttonStyle(CardButtonStyle())
-                .disabled(!isInitialized)
 
                 Button("Show Banner + QR Pairing") {
                     showBannerWithQR()
                 }
-                .buttonStyle(CardButtonStyle())
-                .disabled(!isInitialized)
 
                 Button("Reset") {
                     reset()
                 }
-                .buttonStyle(CardButtonStyle())
             }
+            .focusScope(buttonsNamespace)
 
             Spacer()
 
@@ -127,6 +131,7 @@ struct ContentView: View {
     }
 
     private func showBannerDPad() {
+        guard isInitialized else { consentStatus = "Tap Initialize first"; return }
         // D-pad only banner (no QR pairing)
         guard let rootVC = UIApplication.shared.windows.first?.rootViewController else {
             return
@@ -143,6 +148,7 @@ struct ContentView: View {
     }
 
     private func showBannerWithQR() {
+        guard isInitialized else { consentStatus = "Tap Initialize first"; return }
         // Banner with QR pairing
         guard let rootVC = UIApplication.shared.windows.first?.rootViewController else {
             return
@@ -201,30 +207,6 @@ struct InfoRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-    }
-}
-
-struct CardButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 28, weight: .semibold))
-            .padding(.horizontal, 40)
-            .padding(.vertical, 20)
-            .background(
-                configuration.isPressed
-                    ? Color.blue.opacity(0.8)
-                    : Color.blue
-            )
-            .foregroundColor(.white)
-            .cornerRadius(12)
-            .scaleEffect(configuration.isPressed ? 1.05 : 1.0)
-            .animation(.easeInOut(duration: 0.2), value: configuration.isPressed)
-    }
-}
-
-extension ButtonStyle where Self == CardButtonStyle {
-    static var card: CardButtonStyle {
-        CardButtonStyle()
     }
 }
 

@@ -20,6 +20,13 @@
         private let pairingCoordinator: PairingCoordinator?
         private var qrContainerView: UIView?
 
+        // QR is pinned in a fixed left column OUTSIDE the scroll view so it can
+        // never be scrolled off-screen when focus moves to a button. The scroll
+        // view's leading edge shifts right when the QR column is shown.
+        private var scrollLeadingDefault: NSLayoutConstraint?
+        private var scrollLeadingWithQR: NSLayoutConstraint?
+        private let qrColumnWidth: CGFloat = 460
+
         // MARK: - Initialization
 
         public init(
@@ -93,13 +100,19 @@
             contentStackView.translatesAutoresizingMaskIntoConstraints = false
             scrollView.addSubview(contentStackView)
 
+            // Two possible leading edges for the scroll view: flush-left (no QR),
+            // or shifted right to make room for the fixed QR column (QR shown).
+            scrollLeadingDefault = scrollView.leadingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 90
+            )
+            scrollLeadingWithQR = scrollView.leadingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 90 + qrColumnWidth + 60
+            )
+
             // Layout
             NSLayoutConstraint.activate([
                 scrollView.topAnchor.constraint(
                     equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60
-                ),
-                scrollView.leadingAnchor.constraint(
-                    equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 90
                 ),
                 scrollView.trailingAnchor.constraint(
                     equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -90
@@ -114,6 +127,7 @@
                 contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
                 contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
             ])
+            scrollLeadingDefault?.isActive = true
         }
 
         // MARK: - Menu Button (Back/Dismiss)
@@ -156,14 +170,33 @@
                 return
             }
 
-            // If on first layer and QR is available, show QR code at the top
+            // Tear down any previous QR column.
+            qrContainerView?.removeFromSuperview()
+            qrContainerView = nil
+
+            // If on first layer and QR is available, pin it in a FIXED left column
+            // outside the scroll view so it stays visible no matter where focus
+            // scrolls. The scroll view shifts right to make room.
             let isFirstLayer = layerKey == config.layout.firstLayerId
             if isFirstLayer, let qrImage = qrImage, pairingCoordinator != nil {
                 let qrView = createQRView(qrImage: qrImage)
+                qrView.translatesAutoresizingMaskIntoConstraints = false
+                view.addSubview(qrView)
                 qrContainerView = qrView
-                contentStackView.addArrangedSubview(qrView)
+                NSLayoutConstraint.activate([
+                    qrView.leadingAnchor.constraint(
+                        equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 90
+                    ),
+                    qrView.topAnchor.constraint(
+                        equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60
+                    ),
+                    qrView.widthAnchor.constraint(equalToConstant: qrColumnWidth),
+                ])
+                scrollLeadingDefault?.isActive = false
+                scrollLeadingWithQR?.isActive = true
             } else {
-                qrContainerView = nil
+                scrollLeadingWithQR?.isActive = false
+                scrollLeadingDefault?.isActive = true
             }
 
             // Render each element
@@ -219,6 +252,9 @@
             if let qrView = qrContainerView {
                 qrView.removeFromSuperview()
                 qrContainerView = nil
+                // Reclaim the QR column: shift the scroll view back to flush-left.
+                scrollLeadingWithQR?.isActive = false
+                scrollLeadingDefault?.isActive = true
                 setNeedsFocusUpdate()
                 updateFocusIfNeeded()
             }
@@ -351,13 +387,20 @@
                 return nil
             }
 
-            let button = UIButton(type: .system)
+            // .custom (not .system): on tvOS a .system button draws its OWN
+            // focused-background layer with pill rounding, which clashed with our
+            // cornerRadius:12 (the double-corner artifact). .custom lets us own the
+            // entire appearance.
+            let button = FocusAwareButton(type: .custom)
             button.setTitle(text, for: .normal)
             button.titleLabel?.font = .systemFont(ofSize: 31, weight: .semibold)
-            button.backgroundColor = .systemBlue
-            button.setTitleColor(.white, for: .normal)
             button.layer.cornerRadius = 12
+            button.clipsToBounds = true
             button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 40, bottom: 20, right: 40)
+            // Focus-aware colors: blue bg / white text unfocused; white bg / blue
+            // text when focused (the tvOS focus highlight lightens the bg, so the
+            // title must darken or it becomes invisible — as seen on Accept All).
+            button.applyAppearance()
 
             // Map config button_action values
             let internalAction: String
@@ -784,6 +827,44 @@
             updateStateLabel()
             updateAccessibilityValue()
             onToggle?(isEnabled)
+        }
+    }
+
+    /// Action button whose colors invert on focus so the title stays legible.
+    /// Unfocused: blue background, white title. Focused: the tvOS focus engine
+    /// lightens the background toward white, so we switch the title to blue and
+    /// give it a solid white background for maximum contrast.
+    final class FocusAwareButton: UIButton {
+        func applyAppearance() {
+            updateColors(focused: false)
+        }
+
+        private func updateColors(focused: Bool) {
+            if focused {
+                backgroundColor = .white
+                setTitleColor(.systemBlue, for: .normal)
+                setTitleColor(.systemBlue, for: .focused)
+            } else {
+                backgroundColor = .systemBlue
+                setTitleColor(.white, for: .normal)
+                setTitleColor(.white, for: .focused)
+            }
+        }
+
+        override func didUpdateFocus(
+            in context: UIFocusUpdateContext,
+            with coordinator: UIFocusAnimationCoordinator
+        ) {
+            super.didUpdateFocus(in: context, with: coordinator)
+            let nowFocused = (context.nextFocusedView == self)
+            coordinator.addCoordinatedAnimations({ [weak self] in
+                guard let self else { return }
+                self.updateColors(focused: nowFocused)
+                // .custom buttons don't get the system focus lift; add a subtle one.
+                self.transform = nowFocused
+                    ? CGAffineTransform(scaleX: 1.04, y: 1.04)
+                    : .identity
+            })
         }
     }
 
