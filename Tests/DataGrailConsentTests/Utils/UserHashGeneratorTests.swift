@@ -51,22 +51,15 @@ final class UserHashGeneratorTests: XCTestCase {
     }
 
     func testHashMatchesExpectedValueForKnownInput() {
-        // Test vector from cross-platform spec
-        // Input: customer_id="cust-1", consent_project_id="default", device_id="test-device-123"
-        // Expected: SHA-256("cust-1:default:test-device-123")
-
         let hash = UserHashGenerator.generateUserHash(
             customerId: "cust-1",
             consentProjectId: "default",
             deviceIdentifier: "test-device-123"
         )
 
-        // Pre-computed SHA-256 hash of "cust-1:default:test-device-123"
-        let expectedHash = "7f2e4e8c5d6a1b3f8a9c4d7e2f5b8c3a6d9e1f4a7b2c5d8e1f4a7b2c5d8e1f4a"
-
-        // Note: This is a placeholder; replace with actual cross-platform test vector
-        // if available in the SDK integration patterns doc
-        XCTAssertEqual(hash.count, 64, "Should be 64-character hash")
+        // SHA-256("cust-1:default:test-device-123")
+        let expectedHash = "66301a6aab1f3c76adb3256743ce3a6b049ae2ff08e4afeb12f94c8761748a69"
+        XCTAssertEqual(hash, expectedHash, "Should match known SHA-256 test vector")
     }
 
     func testAutoDetectsDeviceIdentifier() {

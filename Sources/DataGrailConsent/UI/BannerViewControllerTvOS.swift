@@ -297,7 +297,7 @@
         }
 
         private func rejectAll() {
-            let essentialKeys = config.initialCategories.initial
+            let essentialKeys = Self.getEssentialCategoryKeys(config)
             preferences = ConsentPreferences(
                 isCustomised: true,
                 cookieOptions: preferences.cookieOptions.map {
@@ -352,6 +352,7 @@
 
         private static func getAllCategoryKeys(_ config: ConsentConfig) -> [String] {
             var keys: Set<String> = []
+            keys.formUnion(config.initialCategories.initial)
             for layer in config.layout.consentLayers.values {
                 for element in layer.elements where element.type.lowercased().contains("category") {
                     if let categories = element.consentLayerCategories {
@@ -362,6 +363,25 @@
                 }
             }
             return Array(keys).sorted()
+        }
+
+        static func getEssentialCategoryKeys(_ config: ConsentConfig) -> Set<String> {
+            var essentialKeys = Set<String>()
+            for layer in config.layout.consentLayers.values {
+                for element in layer.elements where element.type.lowercased().contains("category") {
+                    if let categories = element.consentLayerCategories {
+                        for category in categories where category.alwaysOn {
+                            essentialKeys.insert(category.gtmKey)
+                        }
+                    }
+                }
+            }
+            for gtmKey in config.initialCategories.initial
+                where gtmKey.lowercased().contains("essential")
+            {
+                essentialKeys.insert(gtmKey)
+            }
+            return essentialKeys
         }
     }
 
@@ -603,7 +623,7 @@
             containerView.axis = .vertical
             containerView.spacing = 20
 
-            let essentialKeys = config.initialCategories.initial
+            let essentialKeys = BannerViewControllerTvOS.getEssentialCategoryKeys(config)
 
             for category in categories {
                 let gtmKey = category.gtmKey

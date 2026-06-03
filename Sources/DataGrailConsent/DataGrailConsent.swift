@@ -400,7 +400,7 @@ public class DataGrailConsent {
         ///   - configUrl: URL to the consent config JSON (encoded in QR for phone to fetch)
         ///   - customerId: DataGrail customer ID
         ///   - apiBaseUrl: Optional full base URL the TV polls for consent reads.
-        ///   - userIdentifier: Optional user identifier override (if nil, auto-detect from device)
+        ///   - deviceIdentifier: Optional device identifier override (if nil, auto-detect)
         ///   - completion: Called when user saves preferences or pairing completes
         public func showBannerWithQRPairing(
             from presentingViewController: UIViewController,
@@ -408,7 +408,7 @@ public class DataGrailConsent {
             configUrl: String,
             customerId: String,
             apiBaseUrl: String? = nil,
-            userIdentifier: String? = nil,
+            deviceIdentifier: String? = nil,
             completion: @escaping (ConsentPreferences?) -> Void
         ) {
             guard let manager, let config = manager.config else {
@@ -419,7 +419,7 @@ public class DataGrailConsent {
             let userHash = UserHashGenerator.generateUserHash(
                 customerId: customerId,
                 consentProjectId: config.consentContainerVersionId,
-                deviceIdentifier: userIdentifier
+                deviceIdentifier: deviceIdentifier
             )
 
             let networkClient = NetworkClient()

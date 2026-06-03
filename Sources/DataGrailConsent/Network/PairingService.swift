@@ -122,7 +122,9 @@ private struct PairingReadResponse: Decodable {
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
 
         if let server = try container.decodeIfPresent(ServerPreferences.self, forKey: .consentPreferences) {
-            let options = (server.cookieOptions ?? [:]).map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
+            let options = (server.cookieOptions ?? [:])
+                .map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
+                .sorted { $0.gtmKey < $1.gtmKey }
             consentPreferences = ConsentPreferences(
                 isCustomised: server.isCustomised ?? false,
                 cookieOptions: options

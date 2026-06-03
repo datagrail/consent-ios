@@ -18,7 +18,7 @@ repos:
         language: system
         types: [swift]
 
-  ### Github Action Hooks
+  ### GitHub Action Hooks
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 8b56df2563bc61670b7bf8bace6f9488bbb67eac  # 0.33.3
     hooks:

@@ -11,15 +11,15 @@
         private let pollInterval: TimeInterval
         private let timeout: TimeInterval
 
-        private var pollTimer: Timer?
-        private var timeoutTimer: Timer?
-        private var startTime: Date?
+        private var pollTimer: DispatchSourceTimer?
+        private var timeoutTimer: DispatchSourceTimer?
 
         // Baseline captured on the first poll so a PRE-EXISTING record (e.g. the
         // device paired before) doesn't instantly complete the flow. Completion
         // requires a NEW write that arrives after the banner opens.
         private var baselineCaptured = false
-        private var baselineUpdatedAt: String?  // nil = no record at baseline
+        private var baselineWasNotFound = true
+        private var baselineUpdatedAt: String?
 
         public var onConsentFound: ((ConsentPreferences) -> Void)?
         public var onTimeout: (() -> Void)?
@@ -51,36 +51,34 @@
 
         /// Start polling for consent
         public func startPolling() {
-            startTime = Date()
-
             Logger.debug("PairingCoordinator: Starting polling for user_hash=\(userHash)")
 
-            // Schedule polling timer
-            pollTimer = Timer.scheduledTimer(
-                withTimeInterval: pollInterval,
-                repeats: true
-            ) { [weak self] _ in
+            let pollSource = DispatchSource.makeTimerSource(queue: .main)
+            pollSource.schedule(
+                deadline: .now(),
+                repeating: pollInterval
+            )
+            pollSource.setEventHandler { [weak self] in
                 self?.poll()
             }
+            pollSource.resume()
+            pollTimer = pollSource
 
-            // Schedule timeout timer
-            timeoutTimer = Timer.scheduledTimer(
-                withTimeInterval: timeout,
-                repeats: false
-            ) { [weak self] _ in
+            let timeoutSource = DispatchSource.makeTimerSource(queue: .main)
+            timeoutSource.schedule(deadline: .now() + timeout)
+            timeoutSource.setEventHandler { [weak self] in
                 self?.handleTimeout()
             }
-
-            // Perform first poll immediately
-            poll()
+            timeoutSource.resume()
+            timeoutTimer = timeoutSource
         }
 
         /// Stop polling (cleanup)
         public func stopPolling() {
             Logger.debug("PairingCoordinator: Stopping polling")
-            pollTimer?.invalidate()
+            pollTimer?.cancel()
             pollTimer = nil
-            timeoutTimer?.invalidate()
+            timeoutTimer?.cancel()
             timeoutTimer = nil
         }
 
@@ -99,23 +97,36 @@
                         self.baselineCaptured = true
                         switch pairingRead {
                         case .notFound:
+                            self.baselineWasNotFound = true
                             self.baselineUpdatedAt = nil
                         case let .found(_, updatedAt):
+                            self.baselineWasNotFound = false
                             self.baselineUpdatedAt = updatedAt
                         }
-                        Logger.debug("PairingCoordinator: baseline updated_at=\(self.baselineUpdatedAt ?? "none")")
+                        Logger.debug(
+                            "PairingCoordinator: baseline=\(self.baselineWasNotFound ? "notFound" : "found") " +
+                            "updated_at=\(self.baselineUpdatedAt ?? "none")"
+                        )
                         return
                     }
 
                     switch pairingRead {
                     case .notFound:
-                        // Still waiting, continue polling
                         Logger.debug("PairingCoordinator: Poll returned not_found, continuing")
                     case let .found(preferences, updatedAt):
-                        // Only complete on a NEW write (updated_at changed since
-                        // baseline, or a record appeared where there was none).
-                        if updatedAt == self.baselineUpdatedAt {
-                            Logger.debug("PairingCoordinator: found, but unchanged since baseline — continuing")
+                        // A new write if: baseline was notFound (record appeared),
+                        // or updated_at differs from the baseline snapshot.
+                        let isNewWrite: Bool
+                        if self.baselineWasNotFound {
+                            isNewWrite = true
+                        } else {
+                            isNewWrite = (updatedAt != self.baselineUpdatedAt)
+                        }
+
+                        guard isNewWrite else {
+                            Logger.debug(
+                                "PairingCoordinator: found, but unchanged since baseline — continuing"
+                            )
                             return
                         }
                         Logger.debug("PairingCoordinator: new write detected, consent received")
