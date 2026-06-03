@@ -12,7 +12,10 @@ import CryptoKit
 /// Generates user_hash for consent identity following the cross-platform SHA-256 recipe:
 /// user_hash = SHA256(customer_id + ":" + consent_project_id + ":" + device_id)
 /// On tvOS: device_id is IDFA (if available) or IDFV as fallback
+@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
 public final class UserHashGenerator {
+    private static let fallbackDeviceId = UUID().uuidString
+
     /// Generate user_hash for the given customer_id, consent_project_id, and device identifier
     /// - Parameters:
     ///   - customerId: DataGrail customer ID (e.g., "cust-1")
@@ -51,10 +54,8 @@ public final class UserHashGenerator {
                 }
             #endif
 
-            // Last resort: generate a random UUID and warn
-            let fallbackId = UUID().uuidString
-            Logger.warn("No stable device identifier available, using random UUID: \(fallbackId)")
-            return fallbackId
+            Logger.warn("No stable device identifier available, using fallback UUID")
+            return fallbackDeviceId
 
         #elseif os(iOS)
             // iOS: use IDFV (stable per-vendor, no ATT prompt needed)
@@ -64,14 +65,11 @@ public final class UserHashGenerator {
                 }
             #endif
 
-            // Fallback: random UUID
-            let fallbackId = UUID().uuidString
-            Logger.warn("No IDFV available, using random UUID: \(fallbackId)")
-            return fallbackId
+            Logger.warn("No IDFV available, using fallback UUID")
+            return fallbackDeviceId
 
         #else
-            // Other platforms: generate random UUID
-            return UUID().uuidString
+            return fallbackDeviceId
         #endif
     }
 }

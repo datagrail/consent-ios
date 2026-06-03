@@ -28,7 +28,9 @@ final class PairingServiceTests: XCTestCase {
 
         XCTAssertNotNil(url, "Should generate valid URL")
 
-        guard let components = URLComponents(url: url!, resolvingAgainstBaseURL: false) else {
+        guard let urlValue = url,
+              let components = URLComponents(url: urlValue, resolvingAgainstBaseURL: false)
+        else {
             XCTFail("Failed to parse URL components")
             return
         }
@@ -90,11 +92,11 @@ final class PairingServiceTests: XCTestCase {
     func testFetchConsentReturnsNotFound() {
         let expectation = self.expectation(description: "Fetch consent not found")
 
-        let notFoundResponse = """
+        let notFoundResponse = Data("""
         {
           "status": "not_found"
         }
-        """.data(using: .utf8)!
+        """.utf8)
 
         mockNetworkClient.mockResponse = notFoundResponse
 
@@ -123,7 +125,7 @@ final class PairingServiceTests: XCTestCase {
 
         // Mirrors the real Universal Consent GET response: camelCase isCustomised,
         // cookieOptions in canonical map form.
-        let foundResponse = """
+        let foundResponse = Data("""
         {
           "status": "found",
           "consent_preferences": {
@@ -131,7 +133,7 @@ final class PairingServiceTests: XCTestCase {
             "cookieOptions": { "dg-category-marketing": false }
           }
         }
-        """.data(using: .utf8)!
+        """.utf8)
 
         mockNetworkClient.mockResponse = foundResponse
 
@@ -162,11 +164,11 @@ final class PairingServiceTests: XCTestCase {
     func testFetchConsentAddsAPIKey() {
         let expectation = self.expectation(description: "Fetch adds API key")
 
-        let notFoundResponse = """
+        let notFoundResponse = Data("""
         {
           "status": "not_found"
         }
-        """.data(using: .utf8)!
+        """.utf8)
 
         mockNetworkClient.mockResponse = notFoundResponse
 
@@ -194,11 +196,11 @@ final class PairingServiceTests: XCTestCase {
     func testFetchConsentAddsCacheControlNoCache() {
         let expectation = self.expectation(description: "Fetch adds no-cache")
 
-        let notFoundResponse = """
+        let notFoundResponse = Data("""
         {
           "status": "not_found"
         }
-        """.data(using: .utf8)!
+        """.utf8)
 
         mockNetworkClient.mockResponse = notFoundResponse
 
@@ -226,11 +228,11 @@ final class PairingServiceTests: XCTestCase {
     func testFetchConsentBuildsCorrectURL() {
         let expectation = self.expectation(description: "Fetch builds correct URL")
 
-        let notFoundResponse = """
+        let notFoundResponse = Data("""
         {
           "status": "not_found"
         }
-        """.data(using: .utf8)!
+        """.utf8)
 
         mockNetworkClient.mockResponse = notFoundResponse
 

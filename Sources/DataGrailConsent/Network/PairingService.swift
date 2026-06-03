@@ -83,7 +83,9 @@ public final class PairingService {
                         completion(.success(.notFound))
                     }
                 } catch {
-                    completion(.failure(.networkError("Failed to decode pairing read response: \(error.localizedDescription)")))
+                    let msg = "Failed to decode pairing read response: " +
+                        error.localizedDescription
+                    completion(.failure(.networkError(msg)))
                 }
             case let .failure(error):
                 completion(.failure(error))

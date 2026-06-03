@@ -76,6 +76,14 @@ public class ConsentService {
         )
     }
 
+    private var currentLocaleCode: String {
+        if #available(iOS 16, macOS 13, tvOS 16, *) {
+            return Locale.current.language.languageCode?.identifier ?? "en"
+        } else {
+            return Locale.current.languageCode ?? "en"
+        }
+    }
+
     /// Save banner open event to backend
     /// - Parameters:
     ///   - config: The consent configuration

@@ -17,11 +17,6 @@
             )
         }
 
-        override func tearDown() {
-            // Ensure no lingering timers
-            super.tearDown()
-        }
-
         // MARK: - Polling Tests
 
         func testCoordinatorStartsPolling() {
@@ -34,11 +29,11 @@
             )
 
             // Mock not_found response
-            let notFoundResponse = """
+            let notFoundResponse = Data("""
             {
               "status": "not_found"
             }
-            """.data(using: .utf8)!
+            """.utf8)
             mockNetworkClient.mockResponse = notFoundResponse
 
             coordinator.startPolling()
@@ -69,8 +64,8 @@
 
             // Baseline poll = not_found, then a NEW write appears. The coordinator
             // must ignore the baseline and only complete on the new write.
-            let notFoundResponse = #"{"status":"not_found"}"#.data(using: .utf8)!
-            let foundResponse = """
+            let notFoundResponse = Data(#"{"status":"not_found"}"#.utf8)
+            let foundResponse = Data("""
             {
               "status": "found",
               "updated_at": "2026-06-01T18:30:00.000Z",
@@ -79,7 +74,7 @@
                 "cookieOptions": { "dg-category-marketing": false }
               }
             }
-            """.data(using: .utf8)!
+            """.utf8)
             mockNetworkClient.mockResponseQueue = [notFoundResponse, foundResponse]
 
             coordinator.onConsentFound = { preferences in
@@ -107,8 +102,8 @@
             let expectation = self.expectation(description: "Consent found")
 
             // Baseline = not_found, then a NEW write appears.
-            let notFoundResponse = #"{"status":"not_found"}"#.data(using: .utf8)!
-            let foundResponse = """
+            let notFoundResponse = Data(#"{"status":"not_found"}"#.utf8)
+            let foundResponse = Data("""
             {
               "status": "found",
               "updated_at": "2026-06-01T18:30:00.000Z",
@@ -117,7 +112,7 @@
                 "cookieOptions": {}
               }
             }
-            """.data(using: .utf8)!
+            """.utf8)
             mockNetworkClient.mockResponseQueue = [notFoundResponse, foundResponse]
 
             coordinator.onConsentFound = { _ in
@@ -157,11 +152,11 @@
             let expectation = self.expectation(description: "Timeout")
 
             // Mock not_found response (never finds)
-            let notFoundResponse = """
+            let notFoundResponse = Data("""
             {
               "status": "not_found"
             }
-            """.data(using: .utf8)!
+            """.utf8)
             mockNetworkClient.mockResponse = notFoundResponse
 
             coordinator.onTimeout = {
@@ -185,11 +180,11 @@
             )
 
             // Mock not_found response
-            let notFoundResponse = """
+            let notFoundResponse = Data("""
             {
               "status": "not_found"
             }
-            """.data(using: .utf8)!
+            """.utf8)
             mockNetworkClient.mockResponse = notFoundResponse
 
             var pollCount = 0
@@ -249,11 +244,11 @@
             )
 
             // Mock not_found response
-            let notFoundResponse = """
+            let notFoundResponse = Data("""
             {
               "status": "not_found"
             }
-            """.data(using: .utf8)!
+            """.utf8)
             mockNetworkClient.mockResponse = notFoundResponse
 
             coordinator.startPolling()

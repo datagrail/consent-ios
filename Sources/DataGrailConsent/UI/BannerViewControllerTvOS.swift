@@ -157,7 +157,7 @@
 
         // MARK: - Layer Rendering
 
-        private func renderLayer(_ layerKey: String) {
+        func renderLayer(_ layerKey: String) {
             // Clear current content
             contentStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
@@ -201,8 +201,8 @@
 
             // Render each element
             for element in layer.elements {
-                if let view = createElementView(element) {
-                    contentStackView.addArrangedSubview(view)
+                if let elementView = createElementView(element) {
+                    contentStackView.addArrangedSubview(elementView)
                 }
             }
 
@@ -213,8 +213,6 @@
 
         private func createQRView(qrImage: UIImage) -> UIView {
             let container = UIView()
-            // tvOS exposes neither `secondarySystemBackground` nor the numbered `systemGrayN` variants
-            // (those are iOS-only); `.systemGray` is the one adaptive gray available on tvOS.
             container.backgroundColor = UIColor.systemGray
             container.layer.cornerRadius = 16
 
@@ -252,7 +250,6 @@
             if let qrView = qrContainerView {
                 qrView.removeFromSuperview()
                 qrContainerView = nil
-                // Reclaim the QR column: shift the scroll view back to flush-left.
                 scrollLeadingWithQR?.isActive = false
                 scrollLeadingDefault?.isActive = true
                 setNeedsFocusUpdate()
@@ -260,18 +257,125 @@
             }
         }
 
-        // MARK: - Locale Helper
+        // MARK: - Actions
 
-        private func getTranslation<T>(from translations: [String: T]?) -> T? {
+        @objc private func buttonTapped(_ sender: UIButton) {
+            guard let action = sender.accessibilityIdentifier else { return }
+
+            switch action {
+            case "accept_all":
+                acceptAll()
+            case "reject_all":
+                rejectAll()
+            case "save":
+                savePreferences()
+            case "dismiss":
+                completion(nil)
+                dismiss(animated: true)
+            case "navigate":
+                if let targetLayerId = sender.accessibilityValue {
+                    navigateToLayer(targetLayerId)
+                }
+            case "openUrl":
+                if let urlString = sender.accessibilityValue, let url = URL(string: urlString) {
+                    openURL(url)
+                }
+            default:
+                break
+            }
+        }
+
+        private func acceptAll() {
+            preferences = ConsentPreferences(
+                isCustomised: true,
+                cookieOptions: preferences.cookieOptions.map {
+                    CategoryConsent(gtmKey: $0.gtmKey, isEnabled: true)
+                }
+            )
+            completion(preferences)
+            dismiss(animated: true)
+        }
+
+        private func rejectAll() {
+            let essentialKeys = config.initialCategories.initial
+            preferences = ConsentPreferences(
+                isCustomised: true,
+                cookieOptions: preferences.cookieOptions.map {
+                    CategoryConsent(gtmKey: $0.gtmKey, isEnabled: essentialKeys.contains($0.gtmKey))
+                }
+            )
+            completion(preferences)
+            dismiss(animated: true)
+        }
+
+        private func savePreferences() {
+            preferences.isCustomised = true
+            completion(preferences)
+            dismiss(animated: true)
+        }
+
+        private func navigateToLayer(_ layerKey: String) {
+            layerHistory.append(currentLayerKey)
+            currentLayerKey = layerKey
+            renderLayer(layerKey)
+        }
+
+        private func openURL(_ url: URL) {
+            UIApplication.shared.open(url)
+        }
+
+        func updateCategoryConsent(gtmKey: String, isEnabled: Bool) {
+            if let index = preferences.cookieOptions.firstIndex(where: { $0.gtmKey == gtmKey }) {
+                preferences.cookieOptions[index] = CategoryConsent(
+                    gtmKey: gtmKey, isEnabled: isEnabled
+                )
+            }
+        }
+
+        // MARK: - Focus
+
+        public override var preferredFocusEnvironments: [UIFocusEnvironment] {
+            for subview in contentStackView.arrangedSubviews {
+                if subview.canBecomeFocused {
+                    return [subview]
+                }
+                if let stackView = subview as? UIStackView {
+                    for child in stackView.arrangedSubviews where child.canBecomeFocused {
+                        return [child]
+                    }
+                }
+            }
+            return [scrollView]
+        }
+
+        // MARK: - Helper
+
+        private static func getAllCategoryKeys(_ config: ConsentConfig) -> [String] {
+            var keys: Set<String> = []
+            for layer in config.layout.consentLayers.values {
+                for element in layer.elements where element.type.lowercased().contains("category") {
+                    if let categories = element.consentLayerCategories {
+                        for category in categories {
+                            keys.insert(category.gtmKey)
+                        }
+                    }
+                }
+            }
+            return Array(keys).sorted()
+        }
+    }
+
+    // MARK: - Element Creation
+
+    extension BannerViewControllerTvOS {
+        fileprivate func getTranslation<T>(from translations: [String: T]?) -> T? {
             guard let translations else { return nil }
             let deviceLocale =
                 Locale.preferredLanguages.first?.components(separatedBy: "-").first ?? "en"
             return translations[deviceLocale] ?? translations["en"] ?? translations.values.first
         }
 
-        // MARK: - Element Creation
-
-        private func createElementView(_ element: ConsentLayerElement) -> UIView? {
+        fileprivate func createElementView(_ element: ConsentLayerElement) -> UIView? {
             let normalizedType = element.type
                 .replacingOccurrences(of: "ConsentLayer", with: "")
                 .replacingOccurrences(of: "Element", with: "")
@@ -290,14 +394,13 @@
                 return createTrackingDetailsView(element)
             case "browsersignalnotice", "browser_signal_notice",
                 "languagepicker", "language_picker":
-                // Not applicable to tvOS
                 return nil
             default:
                 return nil
             }
         }
 
-        private func createTextView(_ element: ConsentLayerElement) -> UIView? {
+        fileprivate func createTextView(_ element: ConsentLayerElement) -> UIView? {
             guard let translation: ElementTranslation = getTranslation(from: element.translations),
                 let text = translation.value ?? translation.text
             else {
@@ -307,15 +410,14 @@
             let label = UILabel()
             label.numberOfLines = 0
 
-            // Determine font size based on style
             let fontSize: CGFloat
             let fontWeight: UIFont.Weight
             if let style = element.style?.lowercased() {
                 if style.contains("heading") || style.contains("title") {
-                    fontSize = 38  // tvOS heading minimum
+                    fontSize = 38
                     fontWeight = .bold
                 } else {
-                    fontSize = 29  // tvOS body minimum
+                    fontSize = 29
                     fontWeight = .regular
                 }
             } else {
@@ -338,7 +440,9 @@
             return label
         }
 
-        private func renderRichText(_ text: String, in label: UILabel, font: UIFont, color: UIColor) {
+        fileprivate func renderRichText(
+            _ text: String, in label: UILabel, font: UIFont, color: UIColor
+        ) {
             let containsHtml = text.range(of: "<[a-zA-Z][^>]*>", options: .regularExpression) != nil
             guard containsHtml,
                 let data = text.data(using: .utf8),
@@ -368,7 +472,8 @@
                         descriptor = traitDescriptor
                     }
                     attr.addAttribute(
-                        .font, value: UIFont(descriptor: descriptor, size: font.pointSize), range: range
+                        .font, value: UIFont(descriptor: descriptor, size: font.pointSize),
+                        range: range
                     )
                 } else {
                     attr.addAttribute(.font, value: font, range: range)
@@ -378,8 +483,7 @@
             label.attributedText = attr
         }
 
-        // swiftlint:disable:next cyclomatic_complexity function_body_length
-        private func createButtonView(_ element: ConsentLayerElement) -> UIView? {
+        fileprivate func createButtonView(_ element: ConsentLayerElement) -> UIView? {
             guard let action = element.buttonAction,
                 let translation: ElementTranslation = getTranslation(from: element.translations),
                 let text = translation.value ?? translation.text
@@ -387,22 +491,14 @@
                 return nil
             }
 
-            // .custom (not .system): on tvOS a .system button draws its OWN
-            // focused-background layer with pill rounding, which clashed with our
-            // cornerRadius:12 (the double-corner artifact). .custom lets us own the
-            // entire appearance.
             let button = FocusAwareButton(type: .custom)
             button.setTitle(text, for: .normal)
             button.titleLabel?.font = .systemFont(ofSize: 31, weight: .semibold)
             button.layer.cornerRadius = 12
             button.clipsToBounds = true
             button.contentEdgeInsets = UIEdgeInsets(top: 20, left: 40, bottom: 20, right: 40)
-            // Focus-aware colors: blue bg / white text unfocused; white bg / blue
-            // text when focused (the tvOS focus highlight lightens the bg, so the
-            // title must darken or it becomes invisible — as seen on Accept All).
             button.applyAppearance()
 
-            // Map config button_action values
             let internalAction: String
             switch action {
             case "accept_all":
@@ -424,26 +520,26 @@
             button.accessibilityIdentifier = internalAction
             button.accessibilityTraits = .button
 
-            // Store target layer or URL
             if internalAction == "navigate", let targetLayerId = element.targetConsentLayer {
                 button.accessibilityValue = targetLayerId
             } else if internalAction == "openUrl",
-                let translation: ElementTranslation = getTranslation(from: element.translations),
-                let url = translation.url
+                let linkTranslation: ElementTranslation = getTranslation(
+                    from: element.translations
+                ),
+                let url = linkTranslation.url
             {
                 button.accessibilityValue = url
             }
 
             button.addTarget(self, action: #selector(buttonTapped(_:)), for: .primaryActionTriggered)
 
-            // Height constraint — tvOS buttons minimum 66pt
             let heightConstraint = button.heightAnchor.constraint(greaterThanOrEqualToConstant: 66)
             heightConstraint.isActive = true
 
             return button
         }
 
-        private func createLinkView(_ element: ConsentLayerElement) -> UIView? {
+        fileprivate func createLinkView(_ element: ConsentLayerElement) -> UIView? {
             if let links = element.links, !links.isEmpty {
                 let containerView = UIStackView()
                 containerView.axis = .vertical
@@ -476,7 +572,6 @@
                 return containerView.arrangedSubviews.isEmpty ? nil : containerView
             }
 
-            // Old format: single link
             guard let translation: ElementTranslation = getTranslation(from: element.translations),
                 let text = translation.value ?? translation.text,
                 let urlString = translation.url
@@ -492,12 +587,14 @@
             button.accessibilityIdentifier = "openUrl"
             button.accessibilityValue = urlString
             button.accessibilityTraits = [.button, .link]
-            button.addTarget(self, action: #selector(buttonTapped(_:)), for: .primaryActionTriggered)
+            button.addTarget(
+                self, action: #selector(buttonTapped(_:)), for: .primaryActionTriggered
+            )
 
             return button
         }
 
-        private func createCategoryView(_ element: ConsentLayerElement) -> UIView? {
+        fileprivate func createCategoryView(_ element: ConsentLayerElement) -> UIView? {
             guard let categories = element.consentLayerCategories, !categories.isEmpty else {
                 return nil
             }
@@ -506,7 +603,6 @@
             containerView.axis = .vertical
             containerView.spacing = 20
 
-            // Get essential categories (always on)
             let essentialKeys = config.initialCategories.initial
 
             for category in categories {
@@ -515,7 +611,6 @@
                 let isEnabled = preferences.cookieOptions.first(where: { $0.gtmKey == gtmKey })?
                     .isEnabled ?? true
 
-                // Get category name
                 guard let translation: CategoryTranslation = getTranslation(
                     from: category.translations
                 ),
@@ -524,7 +619,6 @@
                     continue
                 }
 
-                // Create focusable toggle row
                 let toggleRow = CategoryToggleRow(
                     gtmKey: gtmKey,
                     name: categoryName,
@@ -538,7 +632,6 @@
                 containerView.addArrangedSubview(toggleRow)
             }
 
-            // Optional tracking details link
             if element.showTrackingDetailsLink == true,
                 let trackingDetailsTranslation: TrackingDetailsLinkTranslation = getTranslation(
                     from: element.trackingDetailsLinkTranslations
@@ -564,9 +657,7 @@
             return containerView
         }
 
-        private func createTrackingDetailsView(_ element: ConsentLayerElement) -> UIView? {
-            // Tracking details is a complex web-only component showing vendor/cookie lists
-            // For tvOS we show a simplified "View details online" message
+        fileprivate func createTrackingDetailsView(_ element: ConsentLayerElement) -> UIView? {
             guard let translation: ElementTranslation = getTranslation(from: element.translations),
                 let text = translation.value ?? translation.text
             else {
@@ -580,124 +671,12 @@
             label.textColor = .secondaryLabel
             return label
         }
-
-        // MARK: - Actions
-
-        @objc private func buttonTapped(_ sender: UIButton) {
-            guard let action = sender.accessibilityIdentifier else { return }
-
-            switch action {
-            case "accept_all":
-                acceptAll()
-            case "reject_all":
-                rejectAll()
-            case "save":
-                savePreferences()
-            case "dismiss":
-                completion(nil)
-                dismiss(animated: true)
-            case "navigate":
-                if let targetLayerId = sender.accessibilityValue {
-                    navigateToLayer(targetLayerId)
-                }
-            case "openUrl":
-                if let urlString = sender.accessibilityValue, let url = URL(string: urlString) {
-                    openURL(url)
-                }
-            default:
-                break
-            }
-        }
-
-        private func acceptAll() {
-            // Enable all categories
-            preferences = ConsentPreferences(
-                isCustomised: true,
-                cookieOptions: preferences.cookieOptions.map {
-                    CategoryConsent(gtmKey: $0.gtmKey, isEnabled: true)
-                }
-            )
-            completion(preferences)
-            dismiss(animated: true)
-        }
-
-        private func rejectAll() {
-            // Only enable essential categories
-            let essentialKeys = config.initialCategories.initial
-            preferences = ConsentPreferences(
-                isCustomised: true,
-                cookieOptions: preferences.cookieOptions.map {
-                    CategoryConsent(gtmKey: $0.gtmKey, isEnabled: essentialKeys.contains($0.gtmKey))
-                }
-            )
-            completion(preferences)
-            dismiss(animated: true)
-        }
-
-        private func savePreferences() {
-            preferences.isCustomised = true
-            completion(preferences)
-            dismiss(animated: true)
-        }
-
-        private func navigateToLayer(_ layerKey: String) {
-            // Save current layer to history
-            layerHistory.append(currentLayerKey)
-            currentLayerKey = layerKey
-            renderLayer(layerKey)
-        }
-
-        private func openURL(_ url: URL) {
-            UIApplication.shared.open(url)
-        }
-
-        private func updateCategoryConsent(gtmKey: String, isEnabled: Bool) {
-            if let index = preferences.cookieOptions.firstIndex(where: { $0.gtmKey == gtmKey }) {
-                preferences.cookieOptions[index] = CategoryConsent(
-                    gtmKey: gtmKey, isEnabled: isEnabled
-                )
-            }
-        }
-
-        // MARK: - Focus
-
-        public override var preferredFocusEnvironments: [UIFocusEnvironment] {
-            // Focus the first focusable element in the content
-            for subview in contentStackView.arrangedSubviews {
-                if subview.canBecomeFocused {
-                    return [subview]
-                }
-                // Check children (e.g., buttons in stack views)
-                if let stackView = subview as? UIStackView {
-                    for child in stackView.arrangedSubviews where child.canBecomeFocused {
-                        return [child]
-                    }
-                }
-            }
-            return [scrollView]
-        }
-
-        // MARK: - Helper
-
-        private static func getAllCategoryKeys(_ config: ConsentConfig) -> [String] {
-            var keys: Set<String> = []
-            for layer in config.layout.consentLayers.values {
-                for element in layer.elements where element.type.lowercased().contains("category") {
-                    if let categories = element.consentLayerCategories {
-                        for category in categories {
-                            keys.insert(category.gtmKey)
-                        }
-                    }
-                }
-            }
-            return Array(keys).sorted()
-        }
     }
 
     // MARK: - Custom Toggle Row for tvOS
 
     /// Focusable category toggle row for tvOS (custom control for D-pad interaction)
-    private class CategoryToggleRow: UIView {
+    class CategoryToggleRow: UIView {
         private let gtmKey: String
         private let nameLabel = UILabel()
         private let stateLabel = UILabel()
@@ -741,7 +720,6 @@
                 heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
             ])
 
-            // Accessibility
             isAccessibilityElement = true
             accessibilityLabel = name
             accessibilityTraits = isEssential ? [.staticText] : [.button]
@@ -769,7 +747,7 @@
         // MARK: - Focus
 
         public override var canBecomeFocused: Bool {
-            !isEssential  // Essential categories cannot be toggled
+            !isEssential
         }
 
         public override func didUpdateFocus(
@@ -798,17 +776,14 @@
 
             for press in presses {
                 if press.type == .select || press.type == .playPause {
-                    // Select flips the toggle
                     handled = true
                     toggle()
                 } else if press.type == .leftArrow {
-                    // Left arrow = disable
                     handled = true
                     if isEnabled {
                         toggle()
                     }
                 } else if press.type == .rightArrow {
-                    // Right arrow = enable
                     handled = true
                     if !isEnabled {
                         toggle()
@@ -831,9 +806,6 @@
     }
 
     /// Action button whose colors invert on focus so the title stays legible.
-    /// Unfocused: blue background, white title. Focused: the tvOS focus engine
-    /// lightens the background toward white, so we switch the title to blue and
-    /// give it a solid white background for maximum contrast.
     final class FocusAwareButton: UIButton {
         func applyAppearance() {
             updateColors(focused: false)
@@ -860,7 +832,6 @@
             coordinator.addCoordinatedAnimations({ [weak self] in
                 guard let self else { return }
                 self.updateColors(focused: nowFocused)
-                // .custom buttons don't get the system focus lift; add a subtle one.
                 self.transform = nowFocused
                     ? CGAffineTransform(scaleX: 1.04, y: 1.04)
                     : .identity

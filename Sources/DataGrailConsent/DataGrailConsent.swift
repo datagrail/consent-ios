@@ -386,17 +386,22 @@ public class DataGrailConsent {
             presentingViewController.present(bannerVC, animated: true)
         }
 
+    #endif
+}
+
+// MARK: - tvOS QR Pairing
+
+#if os(tvOS)
+    extension DataGrailConsent {
         /// Show the consent banner with QR pairing on tvOS
         /// - Parameters:
         ///   - presentingViewController: The view controller to present from
-        ///   - publicBaseUrl: The base URL reachable by the phone (e.g., http://192.168.1.5:8080 or https://tunnel.example.com)
+        ///   - publicBaseUrl: The base URL reachable by the phone
         ///   - configUrl: URL to the consent config JSON (encoded in QR for phone to fetch)
         ///   - customerId: DataGrail customer ID
-        ///   - apiBaseUrl: Optional full base URL (scheme + host + port) the TV polls for consent reads.
-        ///     Defaults to `https://<config.privacyDomain>`. Override for local/test servers reached
-        ///     over a non-standard scheme or port (e.g. http://192.168.1.5:8080).
+        ///   - apiBaseUrl: Optional full base URL the TV polls for consent reads.
         ///   - userIdentifier: Optional user identifier override (if nil, auto-detect from device)
-        ///   - completion: Called when user saves preferences or pairing completes (nil if dismissed/timeout)
+        ///   - completion: Called when user saves preferences or pairing completes
         public func showBannerWithQRPairing(
             from presentingViewController: UIViewController,
             publicBaseUrl: String,
@@ -411,16 +416,12 @@ public class DataGrailConsent {
                 return
             }
 
-            // Generate user_hash
             let userHash = UserHashGenerator.generateUserHash(
                 customerId: customerId,
                 consentProjectId: config.consentContainerVersionId,
                 deviceIdentifier: userIdentifier
             )
 
-            // Create pairing service.
-            // The TV polls `apiBaseUrl` (full scheme+host+port). When not overridden,
-            // default to https://<privacyDomain> — the privacyDomain is a bare host.
             let networkClient = NetworkClient()
             let resolvedApiBaseUrl = apiBaseUrl ?? "https://\(config.privacyDomain)"
             let pairingService = PairingService(
@@ -429,7 +430,6 @@ public class DataGrailConsent {
                 apiKey: apiKey
             )
 
-            // Build QR URL
             guard let qrUrl = pairingService.qrURL(
                 publicBaseUrl: publicBaseUrl,
                 customerId: customerId,
@@ -440,51 +440,41 @@ public class DataGrailConsent {
                 return
             }
 
-            // Generate QR image
-            guard let qrImage = QRCodeGenerator.generateQRCode(from: qrUrl.absoluteString, size: 300) else {
+            guard let qrImage = QRCodeGenerator.generateQRCode(
+                from: qrUrl.absoluteString, size: 300
+            ) else {
                 completion(nil)
                 return
             }
 
-            // Create pairing coordinator
             let coordinator = PairingCoordinator(
                 pairingService: pairingService,
                 customerId: customerId,
                 userHash: userHash
             )
 
-            // Setup coordinator callbacks
-            coordinator.onConsentFound = { [weak self, weak coordinator] preferences in
-                guard let self = self else { return }
+            configureCoordinator(
+                coordinator,
+                manager: manager,
+                presentingViewController: presentingViewController,
+                completion: completion
+            )
 
-                // Adopt remote preferences (phone already wrote to backend)
-                manager.adoptRemotePreferences(preferences)
+            presentBannerWithCoordinator(
+                coordinator, config: config, manager: manager,
+                presentingViewController: presentingViewController, qrImage: qrImage,
+                completion: completion
+            )
+        }
 
-                // Notify callback
-                DispatchQueue.main.async {
-                    self.onConsentChangedCallback?(preferences)
-                }
-
-                // Dismiss banner and complete
-                presentingViewController.dismiss(animated: true) {
-                    completion(preferences)
-                }
-
-                coordinator?.stopPolling()
-            }
-
-            coordinator.onTimeout = { [weak coordinator, weak presentingViewController] in
-                // Timeout: remove QR, fall back to D-pad banner (already rendered)
-                Logger.warn("QR pairing timeout, falling back to D-pad banner")
-                coordinator?.stopPolling()
-
-                // Remove QR from banner if still presented
-                if let presented = presentingViewController?.presentedViewController as? BannerViewControllerTvOS {
-                    presented.removeQRCode()
-                }
-            }
-
-            // Show banner with QR
+        private func presentBannerWithCoordinator(
+            _ coordinator: PairingCoordinator,
+            config: ConsentConfig,
+            manager: ConsentManager,
+            presentingViewController: UIViewController,
+            qrImage: UIImage,
+            completion: @escaping (ConsentPreferences?) -> Void
+        ) {
             let currentPreferences = manager.getCategories()
             let bannerVC = BannerViewControllerTvOS(
                 config: config,
@@ -498,7 +488,6 @@ public class DataGrailConsent {
                         return
                     }
 
-                    // User manually saved via D-pad (QR timed out or user chose manual path)
                     coordinator.stopPolling()
                     self.savePreferences(preferences) { result in
                         switch result {
@@ -512,9 +501,41 @@ public class DataGrailConsent {
             )
 
             presentingViewController.present(bannerVC, animated: true)
-
-            // Start polling
             coordinator.startPolling()
         }
-    #endif
-}
+
+        private func configureCoordinator(
+            _ coordinator: PairingCoordinator,
+            manager: ConsentManager,
+            presentingViewController: UIViewController,
+            completion: @escaping (ConsentPreferences?) -> Void
+        ) {
+            coordinator.onConsentFound = { [weak self, weak coordinator] preferences in
+                guard let self else { return }
+
+                manager.adoptRemotePreferences(preferences)
+
+                DispatchQueue.main.async {
+                    self.onConsentChangedCallback?(preferences)
+                }
+
+                presentingViewController.dismiss(animated: true) {
+                    completion(preferences)
+                }
+
+                coordinator?.stopPolling()
+            }
+
+            coordinator.onTimeout = { [weak coordinator, weak presentingViewController] in
+                Logger.warn("QR pairing timeout, falling back to D-pad banner")
+                coordinator?.stopPolling()
+
+                if let presented = presentingViewController?
+                    .presentedViewController as? BannerViewControllerTvOS
+                {
+                    presented.removeQRCode()
+                }
+            }
+        }
+    }
+#endif

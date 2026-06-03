@@ -130,6 +130,6 @@ final class UserHashGeneratorTests: XCTestCase {
 
 extension Character {
     var isHexDigit: Bool {
-        return ("0"..."9").contains(self) || ("a"..."f").contains(self) || ("A"..."F").contains(self)
+        ("0"..."9").contains(self) || ("a"..."f").contains(self) || ("A"..."F").contains(self)
     }
 }
