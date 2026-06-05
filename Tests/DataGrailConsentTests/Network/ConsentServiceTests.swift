@@ -108,9 +108,15 @@ final class ConsentServiceTests: XCTestCase {
                 XCTAssertEqual(self.mockNetworkClient.lastMethod, .get)
                 let urlString = self.mockNetworkClient.lastURL?.absoluteString ?? ""
                 XCTAssertTrue(urlString.contains("/save_open"))
-                XCTAssertTrue(urlString.contains("dg_customer_id="))
+                XCTAssertTrue(urlString.contains("customer=customer123"))
+                XCTAssertFalse(urlString.contains("dg_customer_id="))
+                XCTAssertTrue(urlString.contains("action=open"))
+                XCTAssertTrue(urlString.contains("consent_container_version_id=container1"))
                 XCTAssertTrue(urlString.contains("policy_name=GDPR"))
                 XCTAssertTrue(urlString.contains("policy_uuid=a1b2c3d4-e5f6-7890-abcd-ef1234567890"))
+                XCTAssertTrue(urlString.contains("revision=1.0.0"))
+                XCTAssertTrue(urlString.contains("default_policy=true"))
+                XCTAssertTrue(urlString.contains("locale_code="))
             case let .failure(error):
                 XCTFail("Expected success but got error: \(error)")
             }
@@ -166,8 +172,10 @@ final class ConsentServiceTests: XCTestCase {
             switch result {
             case .success:
                 let urlString = self.mockNetworkClient.lastURL?.absoluteString ?? ""
+                XCTAssertTrue(urlString.contains("customer=customer123"))
                 XCTAssertTrue(urlString.contains("policy_name=GDPR"))
                 XCTAssertFalse(urlString.contains("policy_uuid"))
+                XCTAssertTrue(urlString.contains("default_policy=true"))
             case let .failure(error):
                 XCTFail("Expected success but got error: \(error)")
             }
@@ -198,11 +206,20 @@ final class ConsentServiceTests: XCTestCase {
                     expectation.fulfill()
                     return
                 }
+                XCTAssertEqual(payload["customer"] as? String, "customer123")
+                XCTAssertEqual(payload["action"] as? String, "open")
                 XCTAssertEqual(payload["policy_name"] as? String, "GDPR")
+                XCTAssertEqual(
+                    payload["consent_container_version_id"] as? String,
+                    "container1"
+                )
                 XCTAssertEqual(
                     payload["policy_uuid"] as? String,
                     "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                 )
+                XCTAssertEqual(payload["revision"] as? String, "1.0.0")
+                XCTAssertEqual(payload["default_policy"] as? String, "true")
+                XCTAssertNotNil(payload["locale_code"])
             }
             expectation.fulfill()
         }
