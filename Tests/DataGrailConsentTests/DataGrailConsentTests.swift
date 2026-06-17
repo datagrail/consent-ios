@@ -2,7 +2,7 @@ import XCTest
 
 @testable import DataGrailConsent
 
-// swiftlint:disable force_unwrapping identifier_name
+// swiftlint:disable identifier_name
 /// Tests for DataGrailConsent public API including thread safety, URL validation, and category detection
 final class DataGrailConsentTests: XCTestCase {
     var sut: DataGrailConsent!
