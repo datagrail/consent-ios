@@ -144,7 +144,7 @@ public struct ConsentLayerElement: Codable {
     // Button element fields
     public let buttonAction: String?
     public let targetConsentLayer: String?
-    public let categories: [String]?
+    public let categories: [ConsentLayerCategory]?
 
     // Link element fields
     public let links: [LinkItem]?
@@ -196,7 +196,7 @@ public struct ConsentLayerElement: Codable {
         style = try container.decodeIfPresent(String.self, forKey: .style)
         buttonAction = try container.decodeIfPresent(String.self, forKey: .buttonAction)
         targetConsentLayer = try container.decodeIfPresent(String.self, forKey: .targetConsentLayer)
-        categories = try container.decodeIfPresent([String].self, forKey: .categories)
+        categories = try container.decodeIfPresent([ConsentLayerCategory].self, forKey: .categories)
         links = try container.decodeIfPresent([LinkItem].self, forKey: .links)
         consentLayerCategories = try container.decodeIfPresent(
             [ConsentLayerCategory].self, forKey: .consentLayerCategories
@@ -249,7 +249,7 @@ public struct ConsentLayerElement: Codable {
         style: String?,
         buttonAction: String?,
         targetConsentLayer: String?,
-        categories: [String]?,
+        categories: [ConsentLayerCategory]?,
         links: [LinkItem]?,
         consentLayerCategories: [ConsentLayerCategory]?,
         showTrackingDetailsLink: Bool?,

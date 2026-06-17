@@ -497,6 +497,64 @@
                             }
                         },
                         "categories": []
+                    },
+                    {
+                        "id": "d1e2f3a4-b5c6-7890-abcd-ef1234567890",
+                        "order": 6,
+                        "button_action": "accept_some",
+                        "type": "ConsentLayerButtonElement",
+                        "target_consent_layer": null,
+                        "translations": {
+                            "en": {
+                                "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                                "locale": "en",
+                                "value": "Do Not Sell or Share My Info"
+                            }
+                        },
+                        "categories": [
+                            {
+                                "id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890",
+                                "order": 1,
+                                "hidden": true,
+                                "consent_category_id": "a3918a98-8162-49a3-b807-d9326de82527",
+                                "primitive": "dg-category-functional",
+                                "always_on": false,
+                                "gtm_key": "dg-category-functional",
+                                "uuids": ["341ZsIFxXJJ3B5xUHG4CNe"],
+                                "cookie_patterns": ["_hjSessionUser_", "drift"],
+                                "translations": {
+                                    "en": {
+                                        "id": "7886476a-9556-40d1-9799-3995b269d9de",
+                                        "locale": "en",
+                                        "name": "Functional Cookies",
+                                        "description": "These cookies allow the website to remember choices you make.",
+                                        "essential_label": null
+                                    }
+                                },
+                                "show_tracking_details_link": false
+                            },
+                            {
+                                "id": "c4d5e6f7-a8b9-0123-cdef-456789abcdef",
+                                "order": 2,
+                                "hidden": true,
+                                "consent_category_id": "8eb431f5-a814-424f-92a8-02d04e62dd36",
+                                "primitive": "dg-category-performance",
+                                "always_on": false,
+                                "gtm_key": "dg-category-performance",
+                                "uuids": ["7T4xqXJKtl7rNgiPRgCuv"],
+                                "cookie_patterns": ["_ga$", "_gat"],
+                                "translations": {
+                                    "en": {
+                                        "id": "9cce632c-1bc7-4270-bbb0-be93ba944901",
+                                        "locale": "en",
+                                        "name": "Performance & Analytics Cookies",
+                                        "description": "These cookies collect information about how you use our website.",
+                                        "essential_label": null
+                                    }
+                                },
+                                "show_tracking_details_link": false
+                            }
+                        ]
                     }
                 ]
             }
