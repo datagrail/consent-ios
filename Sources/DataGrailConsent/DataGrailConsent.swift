@@ -305,10 +305,12 @@ public class DataGrailConsent {
         /// - Parameters:
         ///   - presentingViewController: The view controller to present from
         ///   - style: Display style (.modal or .fullScreen)
+        ///   - textStyleConfig: Optional font overrides for banner text elements
         ///   - completion: Called when user saves preferences or dismisses (nil if dismissed)
         public func showBanner(
             from presentingViewController: UIViewController,
             style: BannerDisplayStyle,
+            textStyleConfig: BannerTextStyleConfig = BannerTextStyleConfig(),
             completion: @escaping (ConsentPreferences?) -> Void
         ) {
             guard let manager, let config = manager.config else {
@@ -322,6 +324,7 @@ public class DataGrailConsent {
                 config: config,
                 initialPreferences: currentPreferences,
                 displayStyle: style,
+                textStyleConfig: textStyleConfig,
                 completion: { [weak self] preferences in
                     guard let self, let preferences else {
                         completion(nil)
