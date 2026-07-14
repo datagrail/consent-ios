@@ -334,6 +334,9 @@ public extension ConsentService {
     ///   - identifier: The user identifier (email, account id, …). Used verbatim.
     ///   - preferences: The consent preferences to sync.
     ///   - config: The consent configuration (must carry `consentProjectId`).
+    ///   - apiKey: Customer API key. Sent as `X-DG-Api-Key` on EVERY request (reads
+    ///     and writes) so the CloudFront Function can resolve customer/tier/secret
+    ///     from KVS — the edge needs it on writes to locate the HMAC secret to verify.
     ///   - gpc: Live GPC signal; when true, non-essential categories are suppressed.
     ///   - essentialCategoryKeys: GTM keys that must never be suppressed by GPC.
     ///   - getSignature: Customer-provided signature provider, invoked per attempt.
@@ -343,6 +346,7 @@ public extension ConsentService {
         _ identifier: String,
         preferences: ConsentPreferences,
         config: ConsentConfig,
+        apiKey: String,
         gpc: Bool = false,
         essentialCategoryKeys: Set<String> = [],
         getSignature: @escaping UniversalConsentSignatureProvider,
@@ -388,6 +392,7 @@ public extension ConsentService {
                 self.performSignedWrite(
                     url: url,
                     body: body,
+                    apiKey: apiKey,
                     getSignature: getSignature,
                     completion: operationCompletion
                 )
@@ -424,6 +429,7 @@ public extension ConsentService {
     private func performSignedWrite(
         url: URL,
         body: Data,
+        apiKey: String,
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
@@ -432,7 +438,11 @@ public extension ConsentService {
             case let .failure(error):
                 completion(.failure(error))
             case let .success(sig):
+                // X-DG-Api-Key goes on every request (reads AND writes): the CloudFront
+                // Function resolves customer/tier/secret from KVS by API key, and needs
+                // it on writes to locate the HMAC secret to verify the signature.
                 let headers: [String: String] = [
+                    "X-DG-Api-Key": apiKey,
                     "X-DG-Signature": sig.signature,
                     "X-DG-Timestamp": String(sig.timestamp),
                     "X-DG-Key-Id": sig.keyId,

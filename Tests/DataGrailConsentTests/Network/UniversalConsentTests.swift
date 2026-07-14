@@ -7,6 +7,7 @@ final class UniversalConsentTests: XCTestCase {
     var mockStorage: UCMockConsentStorage!
     var service: ConsentService!
     let testPrivacyDomain = "consent.test.com"
+    let testApiKey = "dg_live_test_key_123"
 
     override func setUp() {
         super.setUp()
@@ -117,6 +118,7 @@ final class UniversalConsentTests: XCTestCase {
             "user@example.com",
             preferences: marketingOnPreferences(),
             config: makeConfig(),
+            apiKey: testApiKey,
             gpc: false,
             essentialCategoryKeys: ["dg-category-essential"],
             getSignature: provider
@@ -133,6 +135,8 @@ final class UniversalConsentTests: XCTestCase {
                 self.mockNetworkClient.lastURL?.absoluteString.contains("/api/v1") ?? true
             )
             let headers = self.mockNetworkClient.lastHeaders ?? [:]
+            // X-DG-Api-Key must be present on writes so the edge can locate the HMAC secret.
+            XCTAssertEqual(headers["X-DG-Api-Key"], self.testApiKey)
             XCTAssertEqual(headers["X-DG-Signature"], "abc123sig")
             XCTAssertEqual(headers["X-DG-Key-Id"], "key-1")
             XCTAssertEqual(headers["X-DG-Timestamp"], "1720000000")
@@ -155,6 +159,7 @@ final class UniversalConsentTests: XCTestCase {
             "user@example.com",
             preferences: marketingOnPreferences(),
             config: makeConfig(),
+            apiKey: testApiKey,
             gpc: false,
             essentialCategoryKeys: ["dg-category-essential"],
             getSignature: provider
@@ -215,6 +220,7 @@ final class UniversalConsentTests: XCTestCase {
             "user@example.com",
             preferences: preferences,
             config: makeConfig(),
+            apiKey: testApiKey,
             gpc: true,
             essentialCategoryKeys: ["dg-category-essential"],
             getSignature: provider
@@ -254,6 +260,7 @@ final class UniversalConsentTests: XCTestCase {
             "user@example.com",
             preferences: ConsentPreferences(isCustomised: false, cookieOptions: []),
             config: config,
+            apiKey: testApiKey,
             getSignature: provider
         ) { result in
             switch result {
@@ -279,6 +286,7 @@ final class UniversalConsentTests: XCTestCase {
             "user@example.com",
             preferences: ConsentPreferences(isCustomised: false, cookieOptions: []),
             config: makeConfig(),
+            apiKey: testApiKey,
             getSignature: provider
         ) { result in
             switch result {

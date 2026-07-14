@@ -240,6 +240,7 @@ public class ConsentManager {
     /// never computes the HMAC and never holds the secret.
     /// - Parameters:
     ///   - identifier: The user identifier (used verbatim).
+    ///   - apiKey: Customer API key, sent as `X-DG-Api-Key` on the write.
     ///   - gpc: Live GPC signal; when true, non-essential categories are suppressed.
     ///   - preferences: Preferences to sync; defaults to current effective preferences.
     ///   - getSignature: Customer-provided signature provider.
@@ -247,6 +248,7 @@ public class ConsentManager {
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     public func setUserIdentifier(
         _ identifier: String,
+        apiKey: String,
         gpc: Bool = false,
         preferences: ConsentPreferences? = nil,
         getSignature: @escaping UniversalConsentSignatureProvider,
@@ -266,6 +268,7 @@ public class ConsentManager {
             identifier,
             preferences: prefs,
             config: config,
+            apiKey: apiKey,
             gpc: gpc,
             essentialCategoryKeys: Set(getEssentialCategories()),
             getSignature: getSignature,

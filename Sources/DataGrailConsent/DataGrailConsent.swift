@@ -265,12 +265,16 @@ public class DataGrailConsent {
     /// The shared secret never touches the device.
     /// - Parameters:
     ///   - identifier: The user identifier (email, account id, …). Used verbatim.
+    ///   - apiKey: Customer API key, sent as `X-DG-Api-Key` on every request so the
+    ///     edge can resolve customer/tier/secret from KVS (required on writes to
+    ///     locate the HMAC secret to verify).
     ///   - gpc: Live GPC signal; when true, non-essential categories are suppressed.
     ///   - getSignature: Customer-provided signature provider (calls their backend).
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     public func setUserIdentifier(
         _ identifier: String,
+        apiKey: String,
         gpc: Bool = false,
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
@@ -282,6 +286,7 @@ public class DataGrailConsent {
 
         manager.setUserIdentifier(
             identifier,
+            apiKey: apiKey,
             gpc: gpc,
             getSignature: getSignature
         ) { result in
