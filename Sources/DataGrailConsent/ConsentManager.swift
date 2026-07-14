@@ -230,6 +230,49 @@ public class ConsentManager {
         return essentialKeys
     }
 
+    // MARK: - Universal Consent
+
+    /// Register a user identifier and sync consent to the Universal Consent API.
+    ///
+    /// Uses the currently-loaded config (for `consentProjectId`, customer id, etc.),
+    /// the current effective preferences, and the config's essential categories for
+    /// GPC reconciliation. The `getSignature` closure is customer-provided; the SDK
+    /// never computes the HMAC and never holds the secret.
+    /// - Parameters:
+    ///   - identifier: The user identifier (used verbatim).
+    ///   - gpc: Live GPC signal; when true, non-essential categories are suppressed.
+    ///   - preferences: Preferences to sync; defaults to current effective preferences.
+    ///   - getSignature: Customer-provided signature provider.
+    ///   - completion: Completion handler with result.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    public func setUserIdentifier(
+        _ identifier: String,
+        gpc: Bool = false,
+        preferences: ConsentPreferences? = nil,
+        getSignature: @escaping UniversalConsentSignatureProvider,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
+        guard let config = currentConfig else {
+            completion(.failure(.notInitialized))
+            return
+        }
+
+        guard let prefs = preferences ?? getCategories() else {
+            completion(.failure(.invalidConfiguration("No consent preferences available to sync")))
+            return
+        }
+
+        consentService.setUserIdentifier(
+            identifier,
+            preferences: prefs,
+            config: config,
+            gpc: gpc,
+            essentialCategoryKeys: Set(getEssentialCategories()),
+            getSignature: getSignature,
+            completion: completion
+        )
+    }
+
     // MARK: - Retry
 
     /// Retry any pending API requests

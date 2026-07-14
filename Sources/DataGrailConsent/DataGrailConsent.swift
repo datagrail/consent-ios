@@ -253,6 +253,44 @@ public class DataGrailConsent {
         manager?.reset()
     }
 
+    // MARK: - Universal Consent
+
+    /// Register a user identifier and sync their consent across devices via the
+    /// Universal Consent API.
+    ///
+    /// The SDK computes the user hash (`SHA-256(customerId:projectId:identifier)`) and
+    /// reconciles GPC on-device, but does NOT compute the HMAC. It invokes the
+    /// customer-provided `getSignature` closure — which calls the customer's own backend —
+    /// to obtain `{ signature, keyId, timestamp }`, then attaches them as request headers.
+    /// The shared secret never touches the device.
+    /// - Parameters:
+    ///   - identifier: The user identifier (email, account id, …). Used verbatim.
+    ///   - gpc: Live GPC signal; when true, non-essential categories are suppressed.
+    ///   - getSignature: Customer-provided signature provider (calls their backend).
+    ///   - completion: Completion handler with result.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    public func setUserIdentifier(
+        _ identifier: String,
+        gpc: Bool = false,
+        getSignature: @escaping UniversalConsentSignatureProvider,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
+        guard let manager else {
+            completion(.failure(.notInitialized))
+            return
+        }
+
+        manager.setUserIdentifier(
+            identifier,
+            gpc: gpc,
+            getSignature: getSignature
+        ) { result in
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+    }
+
     // MARK: - Banner Display
 
     /// Track that the banner was shown
