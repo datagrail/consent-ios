@@ -352,6 +352,26 @@ public extension ConsentService {
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
+        // Reject an empty identifier: SHA-256("{customerId}:{projectId}:") is a
+        // deterministic value shared by every empty-identifier caller in the tenant,
+        // so it would collide distinct users onto one consent record.
+        guard !identifier.isEmpty else {
+            completion(.failure(.invalidConfiguration(
+                "identifier must not be empty for Universal Consent"
+            )))
+            return
+        }
+
+        // Honor the server-published feature gate: `universalConsent.enabled` is the
+        // remote kill switch (mirrors the `showBanner` guard). When it is absent or
+        // false, do not write — the backend can disable the feature without an app release.
+        guard config.universalConsent?.enabled == true else {
+            completion(.failure(.invalidConfiguration(
+                "Universal Consent is not enabled in the current configuration"
+            )))
+            return
+        }
+
         guard let projectId = config.consentProjectId else {
             completion(.failure(.invalidConfiguration(
                 "consentProjectId is required for Universal Consent"
