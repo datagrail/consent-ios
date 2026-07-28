@@ -117,6 +117,8 @@ final class ConsentServiceTests: XCTestCase {
                 XCTAssertTrue(urlString.contains("revision=1.0.0"))
                 XCTAssertTrue(urlString.contains("default_policy=true"))
                 XCTAssertTrue(urlString.contains("locale_code="))
+                XCTAssertTrue(urlString.contains("library_version="))
+                XCTAssertTrue(urlString.contains("os_version="))
             case let .failure(error):
                 XCTFail("Expected success but got error: \(error)")
             }
