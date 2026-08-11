@@ -220,6 +220,7 @@ final class UniversalConsentTests: XCTestCase {
     // Hashing an empty normalized identifier yields SHA-256 of the bare tenant prefix —
     // a valid-looking hash shared by every such caller, which would collapse unrelated
     // users onto one consent record. "   " must be rejected too: it trims to nothing.
+
     func testSetUserIdentifierRejectsIdentifiersEmptyAfterNormalization() {
         for identifier in ["", "   ", "\t\n"] {
             let expectation = expectation(description: "empty identifier <\(identifier)> fails")
@@ -251,33 +252,40 @@ final class UniversalConsentTests: XCTestCase {
         }
     }
 
-    func testSetUserIdentifierFailsWithoutProjectId() {
-        let expectation = expectation(description: "missing projectId fails")
+    /// An EMPTY projectId is as missing as a nil one — it would hash
+    /// "{customerId}::{identifier}" and drop the project scope, merging one person's records
+    /// across every project in the tenant. A published config with `"consentProjectId": ""`
+    /// decodes to an empty string, not nil, so both cases have to be rejected.
+    func testSetUserIdentifierFailsWithoutUsableProjectId() {
+        for projectId: String? in [nil, "", "   "] {
+            let expectation = expectation(description: "unusable projectId \(projectId ?? "nil") fails")
 
-        var config = makeConfig()
-        config.consentProjectId = nil
+            var config = makeConfig()
+            config.consentProjectId = projectId
+            mockNetworkClient.requestCalled = false
 
-        let provider: UniversalConsentSignatureProvider = { done in
-            done(.success(UniversalConsentSignature(signature: "s", keyId: "k", timestamp: 1)))
-        }
-
-        service.setUserIdentifier(
-            "user@example.com",
-            preferences: ConsentPreferences(isCustomised: false, cookieOptions: []),
-            config: config,
-            apiKey: testApiKey,
-            getSignature: provider
-        ) { result in
-            switch result {
-            case .success:
-                XCTFail("Expected failure when consentProjectId is nil")
-            case .failure:
-                XCTAssertFalse(self.mockNetworkClient.requestCalled, "Must not hit network without projectId")
+            let provider: UniversalConsentSignatureProvider = { done in
+                done(.success(UniversalConsentSignature(signature: "s", keyId: "k", timestamp: 1)))
             }
-            expectation.fulfill()
-        }
 
-        waitForExpectations(timeout: 1.0)
+            service.setUserIdentifier(
+                "user@example.com",
+                preferences: ConsentPreferences(isCustomised: false, cookieOptions: []),
+                config: config,
+                apiKey: testApiKey,
+                getSignature: provider
+            ) { result in
+                switch result {
+                case .success:
+                    XCTFail("Expected failure for consentProjectId \(projectId ?? "nil")")
+                case .failure:
+                    XCTAssertFalse(self.mockNetworkClient.requestCalled, "Must not hit network without projectId")
+                }
+                expectation.fulfill()
+            }
+
+            waitForExpectations(timeout: 1.0)
+        }
     }
 
     func testSetUserIdentifierPropagatesSignatureFailure() {
@@ -309,50 +317,7 @@ final class UniversalConsentTests: XCTestCase {
     // MARK: - Helpers
 
     private func makeConfig() -> ConsentConfig {
-        ConsentConfig(
-            version: "1.0.0",
-            consentContainerVersionId: "container1",
-            dgCustomerId: "ac46d8ad-a67a-431f-a5d5-9e3eb922dae7",
-            publishDate: 0,
-            dch: "categorize",
-            dc: "dg-category-essential",
-            privacyDomain: testPrivacyDomain,
-            plugins: Plugins(
-                scriptControl: false,
-                allCookieSubdomains: false,
-                cookieBlocking: false,
-                localStorageBlocking: false,
-                syncOTConsent: false
-            ),
-            testMode: false,
-            ignoreDoNotTrack: false,
-            trackingDetailsUrl: "https://example.com/tracking",
-            consentMode: "optin",
-            showBanner: true,
-            consentPolicy: ConsentPolicy(name: "GDPR", uuid: nil, default: true),
-            gppUsNat: false,
-            initialCategories: InitialCategories(
-                respectGpc: true,
-                respectDnt: false,
-                respectOptout: false,
-                initial: ["dg-category-essential"],
-                gpc: [],
-                optout: []
-            ),
-            layout: Layout(
-                id: "layout1",
-                name: "Test Layout",
-                description: nil,
-                status: "published",
-                defaultLayout: true,
-                collapsedOnMobile: false,
-                firstLayerId: "layer1",
-                gpcDntLayerId: nil,
-                consentLayers: [:]
-            ),
-            consentProjectId: "proj_abc123",
-            universalConsent: UniversalConsentConfig(enabled: true, syncOptout: false)
-        )
+        UCFixtures.makeConfig(privacyDomain: testPrivacyDomain)
     }
 }
 

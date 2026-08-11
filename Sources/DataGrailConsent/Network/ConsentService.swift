@@ -293,9 +293,8 @@ public extension ConsentService {
     /// customer's own backend helper. Skipping this silently splits one user into
     /// multiple records and their consent stops following them across devices.
     ///
-    /// See decisions/universal/hash-algorithm-selection.md and
-    /// concepts/universal/lambda-edge-handler.md ("SHA-256 over the normalized user
-    /// identifier").
+    /// The edge handler that validates these hashes computes "SHA-256 over the normalized
+    /// user identifier" the same way; see the TRUST-1843 design for the full derivation.
     ///
     /// `precomposedStringWithCanonicalMapping` is NFC. `lowercased()` is deliberately
     /// used over `lowercased(with:)`: the Unicode default mapping is locale-independent,
@@ -398,7 +397,12 @@ public extension ConsentService {
             return
         }
 
-        guard let projectId = config.consentProjectId else {
+        // A BLANK projectId is as missing as a nil one: it would hash
+        // "{customerId}::{identifier}", dropping the project scope entirely, so the same
+        // person would land on one shared record across every project in the tenant. A
+        // published config with `"consentProjectId": ""` decodes to an empty string, not nil.
+        guard let projectId = config.consentProjectId,
+              !projectId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             completion(.failure(.invalidConfiguration(
                 "consentProjectId is required for Universal Consent"
             )))
