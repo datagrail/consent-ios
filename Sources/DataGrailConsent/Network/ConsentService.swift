@@ -323,18 +323,23 @@ public extension ConsentService {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Reconcile stored preferences against a GPC signal on-device.
+    /// Reconcile stored preferences against the device's live tracking signal.
     ///
     /// The Universal Consent API returns raw, unreconciled data. Clients MUST reconcile
-    /// GPC locally before acting: when `gpc == true`, every non-essential category is
-    /// forced off regardless of what the stored map says (effective = stored ∘ GPC).
-    /// Essential/always-on categories are always preserved.
-    static func reconcileGPC(
+    /// the live signal locally before acting: when the signal suppresses (ATT `denied`
+    /// or `restricted`), every non-essential category is forced off regardless of what
+    /// the stored map says. Essential/always-on categories are always preserved.
+    ///
+    /// Suppression is one-directional by design. A live signal may only turn categories
+    /// OFF — it never turns one on. ATT `authorized` is permission to track, not consent
+    /// to marketing categories, and `notDetermined` is the absence of an answer rather
+    /// than a refusal, so neither changes the stored map in either direction.
+    static func reconcile(
         preferences: ConsentPreferences,
-        gpc: Bool,
+        trackingSignal: TrackingSignal,
         essentialCategoryKeys: Set<String>
     ) -> ConsentPreferences {
-        guard gpc else { return preferences }
+        guard trackingSignal.suppressesNonEssential else { return preferences }
 
         let reconciled = preferences.cookieOptions.map { option -> CategoryConsent in
             guard essentialCategoryKeys.contains(option.gtmKey) else {
@@ -350,7 +355,8 @@ public extension ConsentService {
     /// The SDK does NOT compute the HMAC. It invokes the customer-provided `getSignature`
     /// closure (which calls the customer's own backend) to obtain
     /// `{ signature, keyId, timestamp }` and attaches them as headers. The shared secret
-    /// never touches the device. GPC is reconciled on-device before the write.
+    /// never touches the device. The live tracking signal is reconciled on-device before
+    /// the write.
     ///
     /// - Parameters:
     ///   - identifier: The user identifier (email, account id, …). Normalized (NFC →
@@ -361,8 +367,11 @@ public extension ConsentService {
     ///   - apiKey: Customer API key. Sent as `X-DG-Api-Key` on EVERY request (reads
     ///     and writes) so the CloudFront Function can resolve customer/tier/secret
     ///     from KVS — the edge needs it on writes to locate the HMAC secret to verify.
-    ///   - gpc: Live GPC signal; when true, non-essential categories are suppressed.
-    ///   - essentialCategoryKeys: GTM keys that must never be suppressed by GPC.
+    ///   - trackingSignal: The device's live tracking signal. Defaults to the current
+    ///     ATT status, read from the OS — pass an explicit value only when the host app
+    ///     manages ATT itself. `denied`/`restricted` suppress non-essential categories;
+    ///     no signal state ever enables one.
+    ///   - essentialCategoryKeys: GTM keys that must never be suppressed.
     ///   - getSignature: Customer-provided signature provider, invoked per attempt.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
@@ -371,7 +380,7 @@ public extension ConsentService {
         preferences: ConsentPreferences,
         config: ConsentConfig,
         apiKey: String,
-        gpc: Bool = false,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         essentialCategoryKeys: Set<String> = [],
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
@@ -415,10 +424,11 @@ public extension ConsentService {
             identifier: identifier
         )
 
-        // MANDATORY: reconcile GPC on-device before writing — the server stores raw data.
-        let effective = Self.reconcileGPC(
+        // MANDATORY: reconcile the live signal on-device before writing — the server
+        // stores raw data.
+        let effective = Self.reconcile(
             preferences: preferences,
-            gpc: gpc,
+            trackingSignal: trackingSignal,
             essentialCategoryKeys: essentialCategoryKeys
         )
 

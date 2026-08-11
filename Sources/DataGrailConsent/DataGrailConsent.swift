@@ -259,10 +259,10 @@ public class DataGrailConsent {
     /// Universal Consent API.
     ///
     /// The SDK computes the user hash (`SHA-256(customerId:projectId:identifier)`) and
-    /// reconciles GPC on-device, but does NOT compute the HMAC. It invokes the
-    /// customer-provided `getSignature` closure — which calls the customer's own backend —
-    /// to obtain `{ signature, keyId, timestamp }`, then attaches them as request headers.
-    /// The shared secret never touches the device.
+    /// reconciles the device's live tracking signal on-device, but does NOT compute the
+    /// HMAC. It invokes the customer-provided `getSignature` closure — which calls the
+    /// customer's own backend — to obtain `{ signature, keyId, timestamp }`, then attaches
+    /// them as request headers. The shared secret never touches the device.
     /// - Parameters:
     ///   - identifier: The user identifier (email, account id, …). Normalized (NFC →
     ///     trim → lowercase) before hashing, so casing and stray whitespace cannot
@@ -270,14 +270,19 @@ public class DataGrailConsent {
     ///   - apiKey: Customer API key, sent as `X-DG-Api-Key` on every request so the
     ///     edge can resolve customer/tier/secret from KVS (required on writes to
     ///     locate the HMAC secret to verify).
-    ///   - gpc: Live GPC signal; when true, non-essential categories are suppressed.
+    ///   - trackingSignal: The device's live tracking signal. Defaults to the current
+    ///     App Tracking Transparency status, which the SDK reads from the OS — you do
+    ///     not need to pass this. Override it only if your app manages ATT itself and
+    ///     already holds the status. `denied` and `restricted` suppress non-essential
+    ///     categories for this write; `authorized` and `notDetermined` leave the stored
+    ///     preferences untouched. A signal never enables a category.
     ///   - getSignature: Customer-provided signature provider (calls their backend).
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     public func setUserIdentifier(
         _ identifier: String,
         apiKey: String,
-        gpc: Bool = false,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
@@ -289,7 +294,7 @@ public class DataGrailConsent {
         manager.setUserIdentifier(
             identifier,
             apiKey: apiKey,
-            gpc: gpc,
+            trackingSignal: trackingSignal,
             getSignature: getSignature
         ) { result in
             DispatchQueue.main.async {

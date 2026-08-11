@@ -29,11 +29,11 @@ final class UniversalConsentTests: XCTestCase {
 
     // Hashing and identifier-normalization coverage lives in UniversalConsentHashTests.
 
-    // MARK: - GPC Reconciliation (mandatory, on-device)
+    // MARK: - Signal Reconciliation (mandatory, on-device)
 
-    func testGPCOverrideSuppressesNonEssential() {
+    func testDeniedSignalSuppressesNonEssential() {
         // Stored map shows marketing:true — a client that trusts it naively would fire
-        // marketing tags for a GPC opt-out user. Effective must suppress it.
+        // marketing tags for a user who declined tracking. Effective must suppress it.
         let stored = ConsentPreferences(
             isCustomised: true,
             cookieOptions: [
@@ -43,9 +43,9 @@ final class UniversalConsentTests: XCTestCase {
             ]
         )
 
-        let effective = ConsentService.reconcileGPC(
+        let effective = ConsentService.reconcile(
             preferences: stored,
-            gpc: true,
+            trackingSignal: .denied,
             essentialCategoryKeys: ["dg-category-essential"]
         )
 
@@ -54,7 +54,7 @@ final class UniversalConsentTests: XCTestCase {
         XCTAssertTrue(effective.isCategoryEnabled("dg-category-essential"))
     }
 
-    func testGPCFalseLeavesPreferencesUntouched() {
+    func testAuthorizedSignalLeavesPreferencesUntouched() {
         let stored = ConsentPreferences(
             isCustomised: true,
             cookieOptions: [
@@ -62,9 +62,9 @@ final class UniversalConsentTests: XCTestCase {
             ]
         )
 
-        let effective = ConsentService.reconcileGPC(
+        let effective = ConsentService.reconcile(
             preferences: stored,
-            gpc: false,
+            trackingSignal: .authorized,
             essentialCategoryKeys: ["dg-category-essential"]
         )
 
@@ -90,7 +90,7 @@ final class UniversalConsentTests: XCTestCase {
             preferences: marketingOnPreferences(),
             config: makeConfig(),
             apiKey: testApiKey,
-            gpc: false,
+            trackingSignal: .authorized,
             essentialCategoryKeys: ["dg-category-essential"],
             getSignature: provider
         ) { result in
@@ -131,7 +131,7 @@ final class UniversalConsentTests: XCTestCase {
             preferences: marketingOnPreferences(),
             config: makeConfig(),
             apiKey: testApiKey,
-            gpc: false,
+            trackingSignal: .authorized,
             essentialCategoryKeys: ["dg-category-essential"],
             getSignature: provider
         ) { result in
@@ -171,8 +171,8 @@ final class UniversalConsentTests: XCTestCase {
         )
     }
 
-    func testSetUserIdentifierAppliesGPCBeforeWrite() {
-        let expectation = expectation(description: "GPC reconciled before write")
+    func testSetUserIdentifierAppliesSignalBeforeWrite() {
+        let expectation = expectation(description: "signal reconciled before write")
         mockNetworkClient.requestResult = .success(Data())
 
         let preferences = ConsentPreferences(
@@ -192,7 +192,7 @@ final class UniversalConsentTests: XCTestCase {
             preferences: preferences,
             config: makeConfig(),
             apiKey: testApiKey,
-            gpc: true,
+            trackingSignal: .denied,
             essentialCategoryKeys: ["dg-category-essential"],
             getSignature: provider
         ) { result in
@@ -208,7 +208,7 @@ final class UniversalConsentTests: XCTestCase {
                 expectation.fulfill()
                 return
             }
-            // Marketing was true in store; GPC must suppress it in the written payload.
+            // Marketing was true in store; the signal must suppress it in the payload.
             XCTAssertEqual(cookieOptions["dg-category-marketing"], false)
             XCTAssertEqual(cookieOptions["dg-category-essential"], true)
             expectation.fulfill()

@@ -236,14 +236,15 @@ public class ConsentManager {
     ///
     /// Uses the currently-loaded config (for `consentProjectId`, customer id, etc.),
     /// the current effective preferences, and the config's essential categories for
-    /// GPC reconciliation. The `getSignature` closure is customer-provided; the SDK
+    /// signal reconciliation. The `getSignature` closure is customer-provided; the SDK
     /// never computes the HMAC and never holds the secret.
     /// - Parameters:
     ///   - identifier: The user identifier. Normalized (NFC → trim → lowercase) before
     ///     hashing, so casing and stray whitespace cannot split one user into
     ///     multiple records.
     ///   - apiKey: Customer API key, sent as `X-DG-Api-Key` on the write.
-    ///   - gpc: Live GPC signal; when true, non-essential categories are suppressed.
+    ///   - trackingSignal: The device's live tracking signal. Defaults to the current
+    ///     ATT status, read from the OS.
     ///   - preferences: Preferences to sync; defaults to current effective preferences.
     ///   - getSignature: Customer-provided signature provider.
     ///   - completion: Completion handler with result.
@@ -251,7 +252,7 @@ public class ConsentManager {
     public func setUserIdentifier(
         _ identifier: String,
         apiKey: String,
-        gpc: Bool = false,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         preferences: ConsentPreferences? = nil,
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
@@ -271,7 +272,7 @@ public class ConsentManager {
             preferences: prefs,
             config: config,
             apiKey: apiKey,
-            gpc: gpc,
+            trackingSignal: trackingSignal,
             essentialCategoryKeys: Set(getEssentialCategories()),
             getSignature: getSignature,
             completion: completion

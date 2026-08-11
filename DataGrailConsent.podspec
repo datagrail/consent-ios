@@ -24,4 +24,9 @@ Pod::Spec.new do |s|
   s.source_files = 'Sources/DataGrailConsent/**/*.swift'
 
   s.frameworks = 'Foundation', 'UIKit'
+
+  # Weak-linked: AppTrackingTransparency only exists on iOS 14+, and the deployment
+  # target above is 13.0. Every use site is `#available`-gated, so a linked-but-absent
+  # framework must resolve to nil rather than fail to launch.
+  s.weak_frameworks = 'AppTrackingTransparency'
 end
