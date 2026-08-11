@@ -285,18 +285,41 @@ public class ConsentService {
 // MARK: - Universal Consent
 
 public extension ConsentService {
+    /// Normalize a user identifier before hashing: Unicode NFC → trim → lowercase.
+    ///
+    /// CANONICAL CONTRACT (TRUST-1843 — identical across all repos, do not deviate):
+    /// every site that computes a user hash MUST apply these three steps in this order,
+    /// so the same person yields the same hash from web, iOS, Android, and the
+    /// customer's own backend helper. Skipping this silently splits one user into
+    /// multiple records and their consent stops following them across devices.
+    ///
+    /// See decisions/universal/hash-algorithm-selection.md and
+    /// concepts/universal/lambda-edge-handler.md ("SHA-256 over the normalized user
+    /// identifier").
+    ///
+    /// `precomposedStringWithCanonicalMapping` is NFC. `lowercased()` is deliberately
+    /// used over `lowercased(with:)`: the Unicode default mapping is locale-independent,
+    /// so a Turkish-locale device cannot map "I" to the dotless "ı" and hash the same
+    /// identifier differently than the customer's backend does.
+    static func normalizeUserIdentifier(_ identifier: String) -> String {
+        identifier
+            .precomposedStringWithCanonicalMapping
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
     /// Compute the Universal Consent user hash.
     ///
-    /// `SHA-256("{dgCustomerId}:{consentProjectId}:{identifier}")` rendered as lowercase
-    /// hex (64 chars) via CryptoKit — no third-party dependency. The identifier is used
-    /// verbatim (never trimmed/lower-cased); the hash depends on the exact bytes.
+    /// `SHA-256("{dgCustomerId}:{consentProjectId}:{normalizedIdentifier}")` rendered as
+    /// lowercase hex (64 chars) via CryptoKit — no third-party dependency. The identifier
+    /// is normalized first via ``normalizeUserIdentifier(_:)`` — see the contract note there.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     static func userHash(
         dgCustomerId: String,
         consentProjectId: String,
         identifier: String
     ) -> String {
-        let input = "\(dgCustomerId):\(consentProjectId):\(identifier)"
+        let input = "\(dgCustomerId):\(consentProjectId):\(normalizeUserIdentifier(identifier))"
         let digest = SHA256.hash(data: Data(input.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
@@ -331,7 +354,9 @@ public extension ConsentService {
     /// never touches the device. GPC is reconciled on-device before the write.
     ///
     /// - Parameters:
-    ///   - identifier: The user identifier (email, account id, …). Used verbatim.
+    ///   - identifier: The user identifier (email, account id, …). Normalized (NFC →
+    ///     trim → lowercase) before hashing, so casing and stray whitespace cannot
+    ///     split one user into multiple records.
     ///   - preferences: The consent preferences to sync.
     ///   - config: The consent configuration (must carry `consentProjectId`).
     ///   - apiKey: Customer API key. Sent as `X-DG-Api-Key` on EVERY request (reads

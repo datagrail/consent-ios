@@ -264,7 +264,9 @@ public class DataGrailConsent {
     /// to obtain `{ signature, keyId, timestamp }`, then attaches them as request headers.
     /// The shared secret never touches the device.
     /// - Parameters:
-    ///   - identifier: The user identifier (email, account id, …). Used verbatim.
+    ///   - identifier: The user identifier (email, account id, …). Normalized (NFC →
+    ///     trim → lowercase) before hashing, so casing and stray whitespace cannot
+    ///     split one user into multiple records.
     ///   - apiKey: Customer API key, sent as `X-DG-Api-Key` on every request so the
     ///     edge can resolve customer/tier/secret from KVS (required on writes to
     ///     locate the HMAC secret to verify).

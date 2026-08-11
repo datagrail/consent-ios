@@ -239,7 +239,9 @@ public class ConsentManager {
     /// GPC reconciliation. The `getSignature` closure is customer-provided; the SDK
     /// never computes the HMAC and never holds the secret.
     /// - Parameters:
-    ///   - identifier: The user identifier (used verbatim).
+    ///   - identifier: The user identifier. Normalized (NFC → trim → lowercase) before
+    ///     hashing, so casing and stray whitespace cannot split one user into
+    ///     multiple records.
     ///   - apiKey: Customer API key, sent as `X-DG-Api-Key` on the write.
     ///   - gpc: Live GPC signal; when true, non-essential categories are suppressed.
     ///   - preferences: Preferences to sync; defaults to current effective preferences.
