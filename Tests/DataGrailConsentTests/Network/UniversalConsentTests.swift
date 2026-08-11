@@ -217,6 +217,40 @@ final class UniversalConsentTests: XCTestCase {
         waitForExpectations(timeout: 1.0)
     }
 
+    // Hashing an empty normalized identifier yields SHA-256 of the bare tenant prefix —
+    // a valid-looking hash shared by every such caller, which would collapse unrelated
+    // users onto one consent record. "   " must be rejected too: it trims to nothing.
+    func testSetUserIdentifierRejectsIdentifiersEmptyAfterNormalization() {
+        for identifier in ["", "   ", "\t\n"] {
+            let expectation = expectation(description: "empty identifier <\(identifier)> fails")
+
+            let provider: UniversalConsentSignatureProvider = { done in
+                done(.success(UniversalConsentSignature(signature: "s", keyId: "k", timestamp: 1)))
+            }
+
+            service.setUserIdentifier(
+                identifier,
+                preferences: ConsentPreferences(isCustomised: false, cookieOptions: []),
+                config: makeConfig(),
+                apiKey: testApiKey,
+                getSignature: provider
+            ) { result in
+                switch result {
+                case .success:
+                    XCTFail("Expected failure for identifier <\(identifier)>")
+                case .failure:
+                    XCTAssertFalse(
+                        self.mockNetworkClient.requestCalled,
+                        "Must not hit network with an empty normalized identifier"
+                    )
+                }
+                expectation.fulfill()
+            }
+
+            waitForExpectations(timeout: 1.0)
+        }
+    }
+
     func testSetUserIdentifierFailsWithoutProjectId() {
         let expectation = expectation(description: "missing projectId fails")
 

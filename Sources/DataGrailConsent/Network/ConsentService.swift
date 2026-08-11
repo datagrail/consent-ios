@@ -377,10 +377,11 @@ public extension ConsentService {
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
-        // Reject an empty identifier: SHA-256("{customerId}:{projectId}:") is a
-        // deterministic value shared by every empty-identifier caller in the tenant,
-        // so it would collide distinct users onto one consent record.
-        guard !identifier.isEmpty else {
+        // Reject an identifier that is empty AFTER normalizing: SHA-256 over a bare
+        // "{customerId}:{projectId}:" prefix is a deterministic value shared by every
+        // such caller in the tenant, so it would collide distinct users onto one consent
+        // record. Checking the raw string is not enough — "   " trims away to nothing.
+        guard !ConsentService.normalizeUserIdentifier(identifier).isEmpty else {
             completion(.failure(.invalidConfiguration(
                 "identifier must not be empty for Universal Consent"
             )))
