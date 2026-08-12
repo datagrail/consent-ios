@@ -279,6 +279,125 @@ public class ConsentManager {
         )
     }
 
+    /// Fetch a user's stored Universal Consent record and reconcile signals on-device.
+    ///
+    /// The server returns raw, unreconciled data. This applies mandatory client-side
+    /// reconciliation before returning: when an opt-out signal applies, every non-essential
+    /// category is forced off regardless of the stored value. Essential categories survive.
+    ///
+    /// Two signals are considered and the more privacy-protective wins:
+    /// - the record's stored `gpc`, recorded on the web where GPC exists; and
+    /// - `trackingSignal`, this device's live ATT status.
+    ///
+    /// - Parameters:
+    ///   - identifier: The user identifier. Normalized before hashing.
+    ///   - apiKey: Customer API key, sent as `X-DG-Api-Key`.
+    ///   - trackingSignal: This device's live signal. Defaults to the current ATT status.
+    ///   - completion: Receives the reconciled record, or `nil` when no record exists.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    public func fetchUniversalConsent(
+        _ identifier: String,
+        apiKey: String,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
+        completion: @escaping (Result<UniversalConsentRecord?, ConsentError>) -> Void
+    ) {
+        guard let config = currentConfig else {
+            completion(.failure(.notInitialized))
+            return
+        }
+
+        consentService.getUniversalConsent(
+            identifier,
+            config: config,
+            apiKey: apiKey
+        ) { [weak self] result in
+            switch result {
+            case let .success(record):
+                guard let self, let record, let prefs = record.consentPreferences else {
+                    completion(.success(record))
+                    return
+                }
+                let reconciled = ConsentService.reconcile(
+                    cookieOptions: prefs.cookieOptions,
+                    // Either signal suppresses. The stored `gpc` came from the web, the
+                    // tracking signal from this device; neither can re-enable what the
+                    // other suppressed.
+                    suppress: record.gpc || trackingSignal.suppressesNonEssential,
+                    essentialCategoryKeys: Set(self.getEssentialCategories())
+                )
+                completion(.success(record.withCookieOptions(reconciled)))
+            case let .failure(error):
+                completion(.failure(error))
+            }
+        }
+    }
+
+    /// Rehydrate local consent state from the Universal Consent store.
+    ///
+    /// Fetches the record for `identifier`, reconciles it, and — when one exists — persists
+    /// the effective state locally so ``shouldDisplayBanner()``, ``getCategories()``, and
+    /// ``isCategoryEnabled(_:)`` all reflect the consent the user gave on another device.
+    /// This is the read half of Universal Consent: without it a web opt-in is invisible to
+    /// the app and the banner reappears for a user who already answered it.
+    ///
+    /// A read MISS writes nothing. "No record" is the absence of a signal, not a denial, so
+    /// persisting an empty record would both fabricate a choice the user never made and
+    /// suppress the banner that should collect it.
+    ///
+    /// - Parameter completion: `true` when local state was rehydrated from a stored record.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    public func rehydrateFromUniversalConsent(
+        _ identifier: String,
+        apiKey: String,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
+        completion: @escaping (Result<Bool, ConsentError>) -> Void
+    ) {
+        fetchUniversalConsent(
+            identifier,
+            apiKey: apiKey,
+            trackingSignal: trackingSignal
+        ) { [weak self] result in
+            switch result {
+            case let .success(record):
+                guard let self,
+                      let record,
+                      let cookieOptions = record.consentPreferences?.cookieOptions,
+                      !cookieOptions.isEmpty
+                else {
+                    completion(.success(false))
+                    return
+                }
+
+                let preferences = ConsentPreferences(
+                    // A record that came back at all represents an answered prompt, so the
+                    // rehydrated state is customised even if the writer left the flag false.
+                    // shouldDisplayBanner() keys off stored preferences existing, and a
+                    // non-customised record would re-prompt a user who already answered.
+                    isCustomised: true,
+                    cookieOptions: cookieOptions.map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
+                )
+
+                do {
+                    try self.storage.savePreferences(preferences)
+                    // Stamp the CURRENT config version, not the record's. This marks the
+                    // rehydrated consent as current for the config the app is running, which
+                    // is what shouldDisplayBanner() compares against; carrying over a stale
+                    // version from the writing device would re-prompt immediately.
+                    if let version = self.currentConfig?.version {
+                        self.storage.saveConfigVersion(version)
+                    }
+                    completion(.success(true))
+                } catch let error as ConsentError {
+                    completion(.failure(error))
+                } catch {
+                    completion(.failure(.storageError(error.localizedDescription)))
+                }
+            case let .failure(error):
+                completion(.failure(error))
+            }
+        }
+    }
+
     // MARK: - Retry
 
     /// Retry any pending API requests

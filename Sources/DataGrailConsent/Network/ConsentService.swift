@@ -350,6 +350,144 @@ public extension ConsentService {
         return ConsentPreferences(isCustomised: preferences.isCustomised, cookieOptions: reconciled)
     }
 
+    /// Reconcile a wire-format `cookieOptions` MAP against an opt-out signal.
+    ///
+    /// The map overload of ``reconcile(preferences:trackingSignal:essentialCategoryKeys:)``,
+    /// for the read path — the wire format is a map, so converting to an array first would
+    /// be lossy busywork. `suppress` is a decision, not a signal, because the read path
+    /// combines two sources (the record's stored `gpc` and this device's live signal) and
+    /// the more privacy-protective wins.
+    static func reconcile(
+        cookieOptions: [String: Bool],
+        suppress: Bool,
+        essentialCategoryKeys: Set<String>
+    ) -> [String: Bool] {
+        guard suppress else { return cookieOptions }
+        var reconciled: [String: Bool] = [:]
+        for (key, enabled) in cookieOptions {
+            reconciled[key] = essentialCategoryKeys.contains(key) ? enabled : false
+        }
+        return reconciled
+    }
+
+    /// Validate the Universal Consent preconditions and return the user hash.
+    ///
+    /// Shared by the read and write paths, which must agree on all three checks — if a value
+    /// is unsafe to write under, it is unsafe to read under, and a hash computed differently
+    /// on each path would silently split one user across two records.
+    ///
+    /// - An identifier empty AFTER normalization hashes the bare `"{customerId}:{projectId}:"`
+    ///   prefix — a deterministic value every such caller in the tenant shares, collapsing
+    ///   unrelated users onto one record. Checking the raw string is not enough: `"   "` trims
+    ///   away to nothing.
+    /// - A BLANK `consentProjectId` is as missing as a nil one: it hashes
+    ///   `"{customerId}::{identifier}"`, dropping the project scope so the same person lands on
+    ///   one shared record across every project in the tenant. A published config with
+    ///   `"consentProjectId": ""` decodes to an empty string, not nil.
+    /// - `universalConsent.enabled` is the server-published kill switch, so the backend can
+    ///   disable the feature without an app release.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    static func validatedUserHash(identifier: String, config: ConsentConfig) throws -> String {
+        guard !normalizeUserIdentifier(identifier).isEmpty else {
+            throw ConsentError.invalidConfiguration(
+                "identifier must not be empty for Universal Consent"
+            )
+        }
+
+        guard config.universalConsent?.enabled == true else {
+            throw ConsentError.invalidConfiguration(
+                "Universal Consent is not enabled in the current configuration"
+            )
+        }
+
+        guard let projectId = config.consentProjectId,
+              !projectId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ConsentError.invalidConfiguration(
+                "consentProjectId is required for Universal Consent"
+            )
+        }
+
+        return userHash(
+            dgCustomerId: config.dgCustomerId,
+            consentProjectId: projectId,
+            identifier: identifier
+        )
+    }
+
+    /// Read a user's stored Universal Consent record for cross-device rehydration.
+    ///
+    /// `GET /universal_consent?customer_id=..&user_hash=..` with an `X-DG-Api-Key` header.
+    /// Reads are unsigned — only writes carry an HMAC — but the API key is still required so
+    /// the CloudFront Function can resolve the customer from KVS.
+    ///
+    /// The returned record is RAW and UNRECONCILED. Callers must apply signal reconciliation
+    /// before acting on it; ``ConsentManager/fetchUniversalConsent(_:apiKey:trackingSignal:completion:)``
+    /// does this for you.
+    ///
+    /// - Returns: the parsed record, or `nil` when the server reports `not_found`. A miss is
+    ///   the absence of a signal, NOT an opt-out — the two lead to opposite banner decisions,
+    ///   so they must not collapse into one value.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    func getUniversalConsent(
+        _ identifier: String,
+        config: ConsentConfig,
+        apiKey: String,
+        completion: @escaping (Result<UniversalConsentRecord?, ConsentError>) -> Void
+    ) {
+        let userHash: String
+        do {
+            userHash = try Self.validatedUserHash(identifier: identifier, config: config)
+        } catch let error as ConsentError {
+            completion(.failure(error))
+            return
+        } catch {
+            completion(.failure(.invalidConfiguration(error.localizedDescription)))
+            return
+        }
+
+        guard var components = URLComponents(
+            url: buildURL(path: "/universal_consent"),
+            resolvingAgainstBaseURL: false
+        ) else {
+            completion(.failure(.invalidConfiguration("Could not build Universal Consent URL")))
+            return
+        }
+        components.queryItems = [
+            URLQueryItem(name: "customer_id", value: config.dgCustomerId),
+            URLQueryItem(name: "user_hash", value: userHash),
+        ]
+        guard let url = components.url else {
+            completion(.failure(.invalidConfiguration("Could not build Universal Consent URL")))
+            return
+        }
+
+        networkClient.retryWithBackoff(
+            operation: { operationCompletion in
+                self.networkClient.request(
+                    url: url,
+                    method: .get,
+                    headers: ["X-DG-Api-Key": apiKey],
+                    completion: operationCompletion
+                )
+            },
+            completion: { result in
+                switch result {
+                case let .success(data):
+                    do {
+                        let record = try JSONDecoder().decode(UniversalConsentRecord.self, from: data)
+                        completion(.success(record.isFound ? record : nil))
+                    } catch {
+                        completion(.failure(.parseError(
+                            "Failed to decode universal consent record: \(error.localizedDescription)"
+                        )))
+                    }
+                case let .failure(error):
+                    completion(.failure(error))
+                }
+            }
+        )
+    }
+
     /// Register a user identifier and sync their consent to the Universal Consent API.
     ///
     /// The SDK does NOT compute the HMAC. It invokes the customer-provided `getSignature`
@@ -385,44 +523,18 @@ public extension ConsentService {
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
-        // Reject an identifier that is empty AFTER normalizing: SHA-256 over a bare
-        // "{customerId}:{projectId}:" prefix is a deterministic value shared by every
-        // such caller in the tenant, so it would collide distinct users onto one consent
-        // record. Checking the raw string is not enough — "   " trims away to nothing.
-        guard !ConsentService.normalizeUserIdentifier(identifier).isEmpty else {
-            completion(.failure(.invalidConfiguration(
-                "identifier must not be empty for Universal Consent"
-            )))
+        // Identical preconditions to the read path — see validatedUserHash for why each one
+        // is load-bearing.
+        let userHash: String
+        do {
+            userHash = try Self.validatedUserHash(identifier: identifier, config: config)
+        } catch let error as ConsentError {
+            completion(.failure(error))
+            return
+        } catch {
+            completion(.failure(.invalidConfiguration(error.localizedDescription)))
             return
         }
-
-        // Honor the server-published feature gate: `universalConsent.enabled` is the
-        // remote kill switch (mirrors the `showBanner` guard). When it is absent or
-        // false, do not write — the backend can disable the feature without an app release.
-        guard config.universalConsent?.enabled == true else {
-            completion(.failure(.invalidConfiguration(
-                "Universal Consent is not enabled in the current configuration"
-            )))
-            return
-        }
-
-        // A BLANK projectId is as missing as a nil one: it would hash
-        // "{customerId}::{identifier}", dropping the project scope entirely, so the same
-        // person would land on one shared record across every project in the tenant. A
-        // published config with `"consentProjectId": ""` decodes to an empty string, not nil.
-        guard let projectId = config.consentProjectId,
-              !projectId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            completion(.failure(.invalidConfiguration(
-                "consentProjectId is required for Universal Consent"
-            )))
-            return
-        }
-
-        let userHash = Self.userHash(
-            dgCustomerId: config.dgCustomerId,
-            consentProjectId: projectId,
-            identifier: identifier
-        )
 
         // MANDATORY: reconcile the live signal on-device before writing — the server
         // stores raw data.
