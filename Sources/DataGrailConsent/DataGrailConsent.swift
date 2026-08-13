@@ -363,6 +363,11 @@ public extension DataGrailConsent {
     /// HMAC. It invokes the customer-provided `getSignature` closure — which calls the
     /// customer's own backend — to obtain `{ signature, keyId, timestamp }`, then attaches
     /// them as request headers. The shared secret never touches the device.
+    ///
+    /// Reads then writes. The read applies the tracking signal to LOCAL state; the write
+    /// carries the user's RAW preferences. A device signal never changes what is stored
+    /// cross-device — otherwise opening the app with ATT denied would erase a marketing
+    /// opt-in the user made on the web, for every device on their identifier.
     /// - Parameters:
     ///   - identifier: The user identifier (email, account id, …). Normalized (NFC →
     ///     trim → lowercase) before hashing, so casing and stray whitespace cannot
@@ -374,8 +379,9 @@ public extension DataGrailConsent {
     ///     App Tracking Transparency status, which the SDK reads from the OS — you do
     ///     not need to pass this. Override it only if your app manages ATT itself and
     ///     already holds the status. `denied` and `restricted` suppress non-essential
-    ///     categories for this write; `authorized` and `notDetermined` leave the stored
-    ///     preferences untouched. A signal never enables a category.
+    ///     categories in the local state this call rehydrates; `authorized` and
+    ///     `notDetermined` leave it untouched. A signal never enables a category, and
+    ///     never affects what is written to the cross-device store.
     ///   - getSignature: Customer-provided signature provider (calls their backend).
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
@@ -396,15 +402,17 @@ public extension DataGrailConsent {
         // clobbering a richer server-side record with whatever this fresh install happens to
         // hold locally. A read failure must not block the write — a user who just answered
         // the banner still needs their choice saved.
-        manager.rehydrateFromUniversalConsent(
+        manager.rehydrateReturningRawPreferences(
             identifier,
             apiKey: apiKey,
             trackingSignal: trackingSignal
         ) { [weak self] rehydrateResult in
-            if case let .success(rehydrated) = rehydrateResult,
-               rehydrated,
-               let preferences = manager.getCategories()
-            {
+            // The RAW preferences off the record, when one was found. Rehydration persists the
+            // reconciled view locally, so letting the write fall back to getCategories() would
+            // read that suppressed state back and store it as the user's choice.
+            let rawPreferences = (try? rehydrateResult.get()) ?? nil
+
+            if rawPreferences != nil, let preferences = manager.getCategories() {
                 DispatchQueue.main.async {
                     self?.onConsentChangedCallback?(preferences)
                 }
@@ -413,7 +421,7 @@ public extension DataGrailConsent {
             manager.setUserIdentifier(
                 identifier,
                 apiKey: apiKey,
-                trackingSignal: trackingSignal,
+                preferences: rawPreferences,
                 getSignature: getSignature
             ) { result in
                 DispatchQueue.main.async {

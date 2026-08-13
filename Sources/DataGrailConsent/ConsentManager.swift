@@ -234,25 +234,28 @@ public class ConsentManager {
 
     /// Register a user identifier and sync consent to the Universal Consent API.
     ///
-    /// Uses the currently-loaded config (for `consentProjectId`, customer id, etc.),
-    /// the current effective preferences, and the config's essential categories for
-    /// signal reconciliation. The `getSignature` closure is customer-provided; the SDK
+    /// Uses the currently-loaded config (for `consentProjectId`, customer id, etc.) and the
+    /// current stored preferences. The `getSignature` closure is customer-provided; the SDK
     /// never computes the HMAC and never holds the secret.
+    ///
+    /// Writes the RAW preferences. The tracking signal is deliberately not applied here — see
+    /// ``ConsentService/setUserIdentifier(_:preferences:config:apiKey:getSignature:completion:)``
+    /// for why suppressing before a write corrupts the cross-device record.
+    ///
     /// - Parameters:
     ///   - identifier: The user identifier. Normalized (NFC → trim → lowercase) before
     ///     hashing, so casing and stray whitespace cannot split one user into
     ///     multiple records.
     ///   - apiKey: Customer API key, sent as `X-DG-Api-Key` on the write.
-    ///   - trackingSignal: The device's live tracking signal. Defaults to the current
-    ///     ATT status, read from the OS.
-    ///   - preferences: Preferences to sync; defaults to current effective preferences.
+    ///   - preferences: Preferences to sync; defaults to the current stored preferences.
+    ///     Callers that just rehydrated MUST pass the raw record explicitly, since
+    ///     rehydration persists the reconciled view locally.
     ///   - getSignature: Customer-provided signature provider.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     public func setUserIdentifier(
         _ identifier: String,
         apiKey: String,
-        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         preferences: ConsentPreferences? = nil,
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
@@ -272,8 +275,6 @@ public class ConsentManager {
             preferences: prefs,
             config: config,
             apiKey: apiKey,
-            trackingSignal: trackingSignal,
-            essentialCategoryKeys: Set(getEssentialCategories()),
             getSignature: getSignature,
             completion: completion
         )
@@ -352,33 +353,82 @@ public class ConsentManager {
         trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         completion: @escaping (Result<Bool, ConsentError>) -> Void
     ) {
-        fetchUniversalConsent(
+        rehydrateReturningRawPreferences(
             identifier,
             apiKey: apiKey,
             trackingSignal: trackingSignal
+        ) { result in
+            completion(result.map { $0 != nil })
+        }
+    }
+
+    /// Rehydrate, and hand back the RAW stored preferences from the record.
+    ///
+    /// Same behavior as ``rehydrateFromUniversalConsent(_:apiKey:trackingSignal:completion:)``,
+    /// except the completion carries the record's raw preferences (or `nil` on a miss) rather
+    /// than a Bool. The read-then-write entry point needs this: rehydration persists the
+    /// RECONCILED view locally, so a subsequent write that sourced its payload from
+    /// ``getCategories()`` would read back the suppressed state and persist it to the store as
+    /// though the user had chosen it. Returning the raw record lets the write carry what the
+    /// user actually consented to.
+    ///
+    /// Deliberately a separate name rather than an overload — one distinguished only by its
+    /// completion type is ambiguous at every call site that does not annotate the closure.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    func rehydrateReturningRawPreferences(
+        _ identifier: String,
+        apiKey: String,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
+        completion: @escaping (Result<ConsentPreferences?, ConsentError>) -> Void
+    ) {
+        guard let config = currentConfig else {
+            completion(.failure(.notInitialized))
+            return
+        }
+
+        // Goes to the service directly rather than through fetchUniversalConsent, which
+        // returns an already-reconciled record. Both views are needed here: the reconciled
+        // one to persist locally, the raw one to hand back for the write.
+        consentService.getUniversalConsent(
+            identifier,
+            config: config,
+            apiKey: apiKey
         ) { [weak self] result in
             switch result {
             case let .success(record):
                 guard let self,
                       let record,
-                      let cookieOptions = record.consentPreferences?.cookieOptions,
-                      !cookieOptions.isEmpty
+                      let rawCookieOptions = record.consentPreferences?.cookieOptions,
+                      !rawCookieOptions.isEmpty
                 else {
-                    completion(.success(false))
+                    completion(.success(nil))
                     return
                 }
 
-                let preferences = ConsentPreferences(
+                let raw = ConsentPreferences(
                     // A record that came back at all represents an answered prompt, so the
                     // rehydrated state is customised even if the writer left the flag false.
                     // shouldDisplayBanner() keys off stored preferences existing, and a
                     // non-customised record would re-prompt a user who already answered.
                     isCustomised: true,
-                    cookieOptions: cookieOptions.map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
+                    cookieOptions: rawCookieOptions.map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
+                )
+
+                // Local state gets the RECONCILED view — either signal suppresses. The stored
+                // `gpc` came from the web, the tracking signal from this device; neither can
+                // re-enable what the other suppressed.
+                let reconciled = ConsentService.reconcile(
+                    cookieOptions: rawCookieOptions,
+                    suppress: record.gpc || trackingSignal.suppressesNonEssential,
+                    essentialCategoryKeys: Set(self.getEssentialCategories())
+                )
+                let effective = ConsentPreferences(
+                    isCustomised: true,
+                    cookieOptions: reconciled.map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
                 )
 
                 do {
-                    try self.storage.savePreferences(preferences)
+                    try self.storage.savePreferences(effective)
                     // Stamp the CURRENT config version, not the record's. This marks the
                     // rehydrated consent as current for the config the app is running, which
                     // is what shouldDisplayBanner() compares against; carrying over a stale
@@ -386,7 +436,7 @@ public class ConsentManager {
                     if let version = self.currentConfig?.version {
                         self.storage.saveConfigVersion(version)
                     }
-                    completion(.success(true))
+                    completion(.success(raw))
                 } catch let error as ConsentError {
                     completion(.failure(error))
                 } catch {

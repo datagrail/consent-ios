@@ -90,8 +90,6 @@ final class UniversalConsentTests: XCTestCase {
             preferences: marketingOnPreferences(),
             config: makeConfig(),
             apiKey: testApiKey,
-            trackingSignal: .authorized,
-            essentialCategoryKeys: ["dg-category-essential"],
             getSignature: provider
         ) { result in
             if case let .failure(error) = result {
@@ -131,8 +129,6 @@ final class UniversalConsentTests: XCTestCase {
             preferences: marketingOnPreferences(),
             config: makeConfig(),
             apiKey: testApiKey,
-            trackingSignal: .authorized,
-            essentialCategoryKeys: ["dg-category-essential"],
             getSignature: provider
         ) { result in
             if case let .failure(error) = result {
@@ -171,8 +167,15 @@ final class UniversalConsentTests: XCTestCase {
         )
     }
 
-    func testSetUserIdentifierAppliesSignalBeforeWrite() {
-        let expectation = expectation(description: "signal reconciled before write")
+    /// The write must carry the RAW preferences it was handed, never a signal-suppressed view.
+    ///
+    /// The store holds raw choices and the server never merges, so suppressing before a write
+    /// would persist this device's transient ATT state as the user's choice for every device on
+    /// their identifier. ATT `denied` is a cross-app-tracking answer, not a marketing opt-out:
+    /// someone who opted in on the web and then opens the app with ATT denied must not have
+    /// that opt-in erased. Suppression belongs to the read path only.
+    func testSetUserIdentifierWritesRawPreferencesRegardlessOfSignal() {
+        let expectation = expectation(description: "raw preferences written")
         mockNetworkClient.requestResult = .success(Data())
 
         let preferences = ConsentPreferences(
@@ -187,13 +190,14 @@ final class UniversalConsentTests: XCTestCase {
             done(.success(UniversalConsentSignature(signature: "s", keyId: "k", timestamp: 1)))
         }
 
+        // The write path takes no tracking signal at all any more — that is the fix. There is
+        // no parameter to pass and nothing for the service to read, so no signal state can
+        // reach the payload.
         service.setUserIdentifier(
             "user@example.com",
             preferences: preferences,
             config: makeConfig(),
             apiKey: testApiKey,
-            trackingSignal: .denied,
-            essentialCategoryKeys: ["dg-category-essential"],
             getSignature: provider
         ) { result in
             if case let .failure(error) = result {
@@ -208,8 +212,8 @@ final class UniversalConsentTests: XCTestCase {
                 expectation.fulfill()
                 return
             }
-            // Marketing was true in store; the signal must suppress it in the payload.
-            XCTAssertEqual(cookieOptions["dg-category-marketing"], false)
+            // The user's real opt-in survives onto the wire.
+            XCTAssertEqual(cookieOptions["dg-category-marketing"], true)
             XCTAssertEqual(cookieOptions["dg-category-essential"], true)
             expectation.fulfill()
         }

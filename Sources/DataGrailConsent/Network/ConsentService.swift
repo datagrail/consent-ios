@@ -334,6 +334,10 @@ public extension ConsentService {
     /// OFF — it never turns one on. ATT `authorized` is permission to track, not consent
     /// to marketing categories, and `notDetermined` is the absence of an answer rather
     /// than a refusal, so neither changes the stored map in either direction.
+    ///
+    /// READ PATH ONLY. Never call this before a write to the Universal Consent store — the
+    /// store holds raw choices and the server never merges, so persisting a suppressed map
+    /// would overwrite the user's real opt-in for every device on their identifier.
     static func reconcile(
         preferences: ConsentPreferences,
         trackingSignal: TrackingSignal,
@@ -505,11 +509,6 @@ public extension ConsentService {
     ///   - apiKey: Customer API key. Sent as `X-DG-Api-Key` on EVERY request (reads
     ///     and writes) so the CloudFront Function can resolve customer/tier/secret
     ///     from KVS — the edge needs it on writes to locate the HMAC secret to verify.
-    ///   - trackingSignal: The device's live tracking signal. Defaults to the current
-    ///     ATT status, read from the OS — pass an explicit value only when the host app
-    ///     manages ATT itself. `denied`/`restricted` suppress non-essential categories;
-    ///     no signal state ever enables one.
-    ///   - essentialCategoryKeys: GTM keys that must never be suppressed.
     ///   - getSignature: Customer-provided signature provider, invoked per attempt.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
@@ -518,8 +517,6 @@ public extension ConsentService {
         preferences: ConsentPreferences,
         config: ConsentConfig,
         apiKey: String,
-        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
-        essentialCategoryKeys: Set<String> = [],
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
@@ -536,17 +533,15 @@ public extension ConsentService {
             return
         }
 
-        // MANDATORY: reconcile the live signal on-device before writing — the server
-        // stores raw data.
-        let effective = Self.reconcile(
-            preferences: preferences,
-            trackingSignal: trackingSignal,
-            essentialCategoryKeys: essentialCategoryKeys
-        )
-
+        // Write the RAW preferences. The store holds raw choices and the server never merges,
+        // so reconciling here would persist this device's transient signal as the user's
+        // choice — permanently, for every device on this identifier. ATT `denied` is a
+        // cross-app-tracking answer, not a marketing opt-out: someone who opted in on the web
+        // and then opens the app with ATT denied must not have that opt-in erased. Suppression
+        // is a read-time view (see `reconcile`, and the read path in ConsentManager).
         let payload = universalConsentPayload(
             userHash: userHash,
-            preferences: effective,
+            preferences: preferences,
             config: config
         )
 

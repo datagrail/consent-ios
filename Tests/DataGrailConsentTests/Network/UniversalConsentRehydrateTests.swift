@@ -186,6 +186,59 @@ final class UniversalConsentRehydrateTests: XCTestCase {
         XCTAssertTrue(sut.isCategoryEnabled("dg-category-essential"))
     }
 
+    // MARK: - Rehydration persists the reconciled view but hands back the raw one
+
+    /// The read-then-write flow's core invariant, and the reason
+    /// ``ConsentManager/rehydrateReturningRawPreferences(_:apiKey:trackingSignal:completion:)``
+    /// exists at all.
+    ///
+    /// Rehydration deliberately persists the SUPPRESSED state locally — that is what makes
+    /// `isCategoryEnabled` honor the device signal. But the write that follows must carry the
+    /// user's real choice. Sourcing it from `getCategories()` after rehydration would read back
+    /// the suppression and store it as consent, erasing a web opt-in for every device on the
+    /// identifier the first time the app opens with ATT denied.
+    func testRehydrateReturnsRawPreferencesWhileStoringSuppressedOnes() {
+        mockNetworkClient.requestResult = .success(foundRecordJSON(marketing: true))
+        let expectation = expectation(description: "raw returned, suppressed stored")
+
+        var rawPreferences: ConsentPreferences?
+        sut.rehydrateReturningRawPreferences(
+            "user@example.com",
+            apiKey: testApiKey,
+            trackingSignal: .denied
+        ) { result in
+            rawPreferences = try? result.get()
+            expectation.fulfill()
+        }
+        waitForExpectations(timeout: 1.0)
+
+        // Handed back to the write path: the user's actual opt-in.
+        XCTAssertEqual(rawPreferences?.isCategoryEnabled("dg-category-marketing"), true)
+        // Persisted locally: the suppressed view, so reads honor the device signal.
+        XCTAssertFalse(sut.isCategoryEnabled("dg-category-marketing"))
+        XCTAssertTrue(sut.isCategoryEnabled("dg-category-essential"))
+    }
+
+    func testRehydrateReturnsNilOnAMiss() {
+        mockNetworkClient.requestResult = .success(Data(#"{"status":"not_found"}"#.utf8))
+        let expectation = expectation(description: "miss returns nil")
+
+        var result: Result<ConsentPreferences?, ConsentError>?
+        sut.rehydrateReturningRawPreferences(
+            "user@example.com",
+            apiKey: testApiKey,
+            trackingSignal: .authorized
+        ) {
+            result = $0
+            expectation.fulfill()
+        }
+        waitForExpectations(timeout: 1.0)
+
+        // A miss is the absence of a signal, not a denial — nothing to write, nothing stored.
+        XCTAssertNil(try? result?.get() ?? nil)
+        XCTAssertNil(storage.loadPreferences())
+    }
+
     // MARK: - Helpers
 
     private func loadUniversalConsentConfig() {
