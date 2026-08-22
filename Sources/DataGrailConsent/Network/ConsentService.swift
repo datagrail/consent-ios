@@ -4,8 +4,18 @@ import Foundation
 /// Signature material returned by the customer-provided `getSignature` closure.
 ///
 /// The SDK never holds the HMAC secret and never computes the signature itself.
-/// The customer's backend computes `HMAC-SHA256(secret, customerId:userHash:timestamp)`
-/// and hands back this value; the SDK only attaches it as request headers.
+/// The customer's backend computes
+/// `HMAC-SHA256(rawSecretBytes, "{customerId}:{userHash}:{timestamp}:{nonce}")` rendered
+/// as lowercase hex, and hands back this value; the SDK only attaches it as request headers.
+///
+/// `rawSecretBytes` is the shared secret's 64 hex characters DECODED to the 32 raw key
+/// bytes — the HMAC key is those bytes, NOT the ASCII hex string. Keying the HMAC with the
+/// hex string is the single most common Universal Consent integration failure.
+///
+/// `nonce` is a fresh 128-bit value (32 lowercase hex) that the SDK sends in `X-DG-Nonce`.
+/// It MUST be the same value that was folded into the signed string above, or the edge
+/// rejects the write. (Wiring that nonce through to the signer is not yet implemented —
+/// see the gap note in `performSignedWrite`.)
 public struct UniversalConsentSignature {
     /// Hex HMAC signature computed by the customer backend.
     public let signature: String
@@ -613,6 +623,15 @@ public extension ConsentService {
                     "X-DG-Signature": sig.signature,
                     "X-DG-Timestamp": String(sig.timestamp),
                     "X-DG-Key-Id": sig.keyId,
+                    // GAP (TRUST-1843): the contract requires a 128-bit nonce (32 lowercase
+                    // hex) that is ALSO folded into the signed string as the final `:{nonce}`
+                    // segment. This value is neither the right format (a UUID string, not
+                    // 32 hex) nor bound into the HMAC — it is minted here, after and
+                    // independently of `getSignature`, so the signer never sees it and the
+                    // edge's signature check will fail. Fixing this needs a code/API change
+                    // (thread the nonce into `UniversalConsentSignatureProvider` or return it
+                    // on `UniversalConsentSignature`); left for human review, do not patch the
+                    // format alone.
                     "X-DG-Nonce": UUID().uuidString,
                 ]
                 self.networkClient.request(
