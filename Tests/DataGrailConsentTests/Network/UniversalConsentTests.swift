@@ -77,12 +77,12 @@ final class UniversalConsentTests: XCTestCase {
         let expectation = expectation(description: "setUserIdentifier attaches headers")
         mockNetworkClient.requestResult = .success(Data())
 
-        let provider: UniversalConsentSignatureProvider = { done in
-            done(.success(UniversalConsentSignature(
-                signature: "abc123sig",
-                keyId: "key-1",
-                timestamp: 1_720_000_000
-            )))
+        // Capture exactly what the SDK hands the signer, so we can prove the wire headers are
+        // the same timestamp/nonce that were folded into the signed string.
+        var capturedPayload: UniversalConsentSigningPayload?
+        let provider: UniversalConsentSignatureProvider = { payload, done in
+            capturedPayload = payload
+            done(.success(UniversalConsentSignature(signature: "abc123sig", keyId: "key-1")))
         }
 
         service.setUserIdentifier(
@@ -108,8 +108,63 @@ final class UniversalConsentTests: XCTestCase {
             XCTAssertEqual(headers["X-DG-Api-Key"], self.testApiKey)
             XCTAssertEqual(headers["X-DG-Signature"], "abc123sig")
             XCTAssertEqual(headers["X-DG-Key-Id"], "key-1")
-            XCTAssertEqual(headers["X-DG-Timestamp"], "1720000000")
-            XCTAssertNotNil(headers["X-DG-Nonce"])
+
+            guard let payload = capturedPayload else {
+                XCTFail("Signer was never invoked with a payload")
+                expectation.fulfill()
+                return
+            }
+
+            // The nonce is a 128-bit CSPRNG value rendered as 32 lowercase hex — NOT a UUID.
+            XCTAssertNotNil(
+                payload.nonce.range(of: "^[0-9a-f]{32}$", options: .regularExpression),
+                "nonce must be 32 lowercase hex chars, got \(payload.nonce)"
+            )
+
+            // The SDK owns the timestamp + nonce: the wire headers MUST equal the values it
+            // folded into stringToSign, or the signed bytes and the sent bytes drift apart and
+            // the edge rejects the write.
+            XCTAssertEqual(headers["X-DG-Nonce"], payload.nonce)
+            XCTAssertEqual(headers["X-DG-Timestamp"], String(payload.timestamp))
+
+            // Golden: the signer receives exactly "{customerId}:{userHash}:{timestamp}:{nonce}".
+            let expectedUserHash = "1fee132c298d615098190e3e75f9c7e05db20d6cff6398f686fcebc67d1d87a4"
+            let expectedCustomerId = "ac46d8ad-a67a-431f-a5d5-9e3eb922dae7"
+            XCTAssertEqual(payload.customerId, expectedCustomerId)
+            XCTAssertEqual(payload.userHash, expectedUserHash)
+            XCTAssertEqual(
+                payload.stringToSign,
+                "\(expectedCustomerId):\(expectedUserHash):\(payload.timestamp):\(payload.nonce)"
+            )
+            expectation.fulfill()
+        }
+
+        waitForExpectations(timeout: 1.0)
+    }
+
+    /// Limited mode: with no signer, the write carries only X-DG-Api-Key — no signature,
+    /// timestamp, or nonce headers.
+    func testSetUserIdentifierLimitedModeSendsApiKeyOnly() {
+        let expectation = expectation(description: "limited-mode write")
+        mockNetworkClient.requestResult = .success(Data())
+
+        service.setUserIdentifier(
+            "user@example.com",
+            preferences: marketingOnPreferences(),
+            config: makeConfig(),
+            apiKey: testApiKey,
+            getSignature: nil
+        ) { result in
+            if case let .failure(error) = result {
+                XCTFail("Expected success but got error: \(error)")
+            }
+            XCTAssertEqual(self.mockNetworkClient.lastMethod, .post)
+            let headers = self.mockNetworkClient.lastHeaders ?? [:]
+            XCTAssertEqual(headers["X-DG-Api-Key"], self.testApiKey)
+            XCTAssertNil(headers["X-DG-Signature"])
+            XCTAssertNil(headers["X-DG-Timestamp"])
+            XCTAssertNil(headers["X-DG-Nonce"])
+            XCTAssertNil(headers["X-DG-Key-Id"])
             expectation.fulfill()
         }
 
@@ -120,8 +175,8 @@ final class UniversalConsentTests: XCTestCase {
         let expectation = expectation(description: "setUserIdentifier body shape")
         mockNetworkClient.requestResult = .success(Data())
 
-        let provider: UniversalConsentSignatureProvider = { done in
-            done(.success(UniversalConsentSignature(signature: "s", keyId: "k", timestamp: 1)))
+        let provider: UniversalConsentSignatureProvider = { _, done in
+            done(.success(UniversalConsentSignature(signature: "s", keyId: "k")))
         }
 
         service.setUserIdentifier(
@@ -186,8 +241,8 @@ final class UniversalConsentTests: XCTestCase {
             ]
         )
 
-        let provider: UniversalConsentSignatureProvider = { done in
-            done(.success(UniversalConsentSignature(signature: "s", keyId: "k", timestamp: 1)))
+        let provider: UniversalConsentSignatureProvider = { _, done in
+            done(.success(UniversalConsentSignature(signature: "s", keyId: "k")))
         }
 
         // The write path takes no tracking signal at all any more — that is the fix. There is
@@ -229,8 +284,8 @@ final class UniversalConsentTests: XCTestCase {
         for identifier in ["", "   ", "\t\n"] {
             let expectation = expectation(description: "empty identifier <\(identifier)> fails")
 
-            let provider: UniversalConsentSignatureProvider = { done in
-                done(.success(UniversalConsentSignature(signature: "s", keyId: "k", timestamp: 1)))
+            let provider: UniversalConsentSignatureProvider = { _, done in
+                done(.success(UniversalConsentSignature(signature: "s", keyId: "k")))
             }
 
             service.setUserIdentifier(
@@ -268,8 +323,8 @@ final class UniversalConsentTests: XCTestCase {
             config.consentProjectId = projectId
             mockNetworkClient.requestCalled = false
 
-            let provider: UniversalConsentSignatureProvider = { done in
-                done(.success(UniversalConsentSignature(signature: "s", keyId: "k", timestamp: 1)))
+            let provider: UniversalConsentSignatureProvider = { _, done in
+                done(.success(UniversalConsentSignature(signature: "s", keyId: "k")))
             }
 
             service.setUserIdentifier(
@@ -295,7 +350,7 @@ final class UniversalConsentTests: XCTestCase {
     func testSetUserIdentifierPropagatesSignatureFailure() {
         let expectation = expectation(description: "signature provider failure propagates")
 
-        let provider: UniversalConsentSignatureProvider = { done in
+        let provider: UniversalConsentSignatureProvider = { _, done in
             done(.failure(.networkError("backend down")))
         }
 

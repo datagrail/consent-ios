@@ -1,41 +1,73 @@
 import CryptoKit
 import Foundation
+import Security
 
-/// Signature material returned by the customer-provided `getSignature` closure.
+/// The payload the SDK hands to the customer-provided `getSignature` closure.
 ///
-/// The SDK never holds the HMAC secret and never computes the signature itself.
-/// The customer's backend computes
-/// `HMAC-SHA256(rawSecretBytes, "{customerId}:{userHash}:{timestamp}:{nonce}")` rendered
-/// as lowercase hex, and hands back this value; the SDK only attaches it as request headers.
+/// The SDK owns the canonical signing contract: it computes the user hash, generates the
+/// timestamp and nonce, and builds ``stringToSign`` itself. The customer's callback does one
+/// thing — compute `HMAC-SHA256(rawSecretBytes, payload.stringToSign)` rendered as lowercase
+/// hex — and returns it with their keyId. It never builds the string, generates the nonce, or
+/// manages the timestamp.
 ///
-/// `rawSecretBytes` is the shared secret's 64 hex characters DECODED to the 32 raw key
-/// bytes — the HMAC key is those bytes, NOT the ASCII hex string. Keying the HMAC with the
-/// hex string is the single most common Universal Consent integration failure.
+/// The SDK sends the SAME ``timestamp`` and ``nonce`` it folded into ``stringToSign`` as the
+/// `X-DG-Timestamp` and `X-DG-Nonce` headers, so the value signed and the value on the wire
+/// cannot drift — if the customer signs `payload.stringToSign` verbatim, the edge's check
+/// passes by construction.
 ///
-/// `nonce` is a fresh 128-bit value (32 lowercase hex) that the SDK sends in `X-DG-Nonce`.
-/// It MUST be the same value that was folded into the signed string above, or the edge
-/// rejects the write. (Wiring that nonce through to the signer is not yet implemented —
-/// see the gap note in `performSignedWrite`.)
-public struct UniversalConsentSignature {
-    /// Hex HMAC signature computed by the customer backend.
-    public let signature: String
-    /// Identifies which HMAC secret was used (supports key rotation).
-    public let keyId: String
-    /// Unix timestamp (seconds) the signature was minted for.
+/// `rawSecretBytes` is the shared secret's 64 hex characters DECODED to the 32 raw key bytes —
+/// the HMAC key is those bytes, NOT the ASCII hex string. Keying the HMAC with the hex string
+/// is the single most common Universal Consent integration failure.
+public struct UniversalConsentSigningPayload {
+    /// The exact bytes to sign: `"{customerId}:{userHash}:{timestamp}:{nonce}"`. Sign this
+    /// verbatim — do not re-assemble it from the fields below, or a formatting difference will
+    /// silently break signature verification at the edge.
+    public let stringToSign: String
+    /// The DataGrail customer id, first segment of ``stringToSign``.
+    public let customerId: String
+    /// `SHA-256("{customerId}:{projectId}:{normalizedIdentifier}")`, second segment.
+    public let userHash: String
+    /// Unix timestamp (seconds, device clock) the SDK minted for this write and sends in
+    /// `X-DG-Timestamp`. Third segment of ``stringToSign``.
     public let timestamp: Int64
+    /// A fresh 128-bit nonce as 32 lowercase hex the SDK minted for this write and sends in
+    /// `X-DG-Nonce`. Fourth segment of ``stringToSign``.
+    public let nonce: String
 
-    public init(signature: String, keyId: String, timestamp: Int64) {
-        self.signature = signature
-        self.keyId = keyId
+    public init(stringToSign: String, customerId: String, userHash: String, timestamp: Int64, nonce: String) {
+        self.stringToSign = stringToSign
+        self.customerId = customerId
+        self.userHash = userHash
         self.timestamp = timestamp
+        self.nonce = nonce
     }
 }
 
-/// Customer-provided callback that vouches for the current user by returning
-/// signature material. Result-based to match this SDK's existing callback style.
-/// The SDK invokes it per write attempt so an expired signature can be re-minted.
+/// Signature material returned by the customer-provided `getSignature` closure.
+///
+/// The SDK never holds the HMAC secret and never computes the signature itself. The
+/// customer's backend computes `HMAC-SHA256(rawSecretBytes, payload.stringToSign)` rendered as
+/// lowercase hex and hands back this value; the SDK only attaches it as the `X-DG-Signature`
+/// header. `keyId` (sent as `X-DG-Key-Id`) identifies which secret was used, supporting
+/// rotation. The SDK owns the timestamp and nonce, so they are NOT part of this return.
+public struct UniversalConsentSignature {
+    /// Hex HMAC signature computed by the customer backend over `payload.stringToSign`.
+    public let signature: String
+    /// Identifies which HMAC secret was used (supports key rotation).
+    public let keyId: String
+
+    public init(signature: String, keyId: String) {
+        self.signature = signature
+        self.keyId = keyId
+    }
+}
+
+/// Customer-provided callback that vouches for the current user by signing the SDK-built
+/// payload. Result-based to match this SDK's existing callback style. The SDK invokes it per
+/// write attempt — passing a freshly minted ``UniversalConsentSigningPayload`` (new timestamp
+/// and nonce) each time — so a retried write is signed for its own timestamp and nonce.
 public typealias UniversalConsentSignatureProvider =
-    (@escaping (Result<UniversalConsentSignature, ConsentError>) -> Void) -> Void
+    (UniversalConsentSigningPayload, @escaping (Result<UniversalConsentSignature, ConsentError>) -> Void) -> Void
 
 /// Service for sending consent data to backend
 public class ConsentService {
@@ -504,11 +536,17 @@ public extension ConsentService {
 
     /// Register a user identifier and sync their consent to the Universal Consent API.
     ///
-    /// The SDK does NOT compute the HMAC. It invokes the customer-provided `getSignature`
-    /// closure (which calls the customer's own backend) to obtain
-    /// `{ signature, keyId, timestamp }` and attaches them as headers. The shared secret
-    /// never touches the device. The live tracking signal is reconciled on-device before
-    /// the write.
+    /// The SDK owns the signing contract but NOT the secret. On a write it computes the user
+    /// hash, mints a unix `timestamp` and a 128-bit `nonce`, builds
+    /// `stringToSign = "{customerId}:{userHash}:{timestamp}:{nonce}"`, and invokes the
+    /// customer-provided `getSignature` closure (which calls the customer's own backend) with
+    /// that payload to obtain `{ signature, keyId }`. It then attaches `X-DG-Signature`,
+    /// `X-DG-Key-Id`, and the SDK's own `X-DG-Timestamp` / `X-DG-Nonce`. The shared secret
+    /// never touches the device.
+    ///
+    /// LIMITED MODE: when `getSignature` is `nil` the SDK sends an API-key-only write (just
+    /// `X-DG-Api-Key`, no signature/timestamp/nonce). Use it when the customer has not wired a
+    /// signer; the edge treats it as an unauthenticated write per the tier's policy.
     ///
     /// - Parameters:
     ///   - identifier: The user identifier (email, account id, …). Normalized (NFC →
@@ -519,7 +557,8 @@ public extension ConsentService {
     ///   - apiKey: Customer API key. Sent as `X-DG-Api-Key` on EVERY request (reads
     ///     and writes) so the CloudFront Function can resolve customer/tier/secret
     ///     from KVS — the edge needs it on writes to locate the HMAC secret to verify.
-    ///   - getSignature: Customer-provided signature provider, invoked per attempt.
+    ///   - getSignature: Customer-provided signature provider, invoked per attempt with a
+    ///     freshly minted payload. `nil` selects limited (API-key-only) mode.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setUserIdentifier(
@@ -527,7 +566,7 @@ public extension ConsentService {
         preferences: ConsentPreferences,
         config: ConsentConfig,
         apiKey: String,
-        getSignature: @escaping UniversalConsentSignatureProvider,
+        getSignature: UniversalConsentSignatureProvider?,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         // Identical preconditions to the read path — see validatedUserHash for why each one
@@ -564,12 +603,26 @@ public extension ConsentService {
 
         networkClient.retryWithBackoff(
             operation: { operationCompletion in
-                // Invoke the customer signature provider per attempt so an expired
-                // signature can be re-minted on retry. Secret never on device.
+                guard let getSignature else {
+                    // Limited mode: no signer configured, so send an API-key-only write with
+                    // no signature/timestamp/nonce headers.
+                    self.performLimitedWrite(
+                        url: url,
+                        body: body,
+                        apiKey: apiKey,
+                        completion: operationCompletion
+                    )
+                    return
+                }
+                // Mint a fresh timestamp + nonce and invoke the customer signer per attempt,
+                // so a retried write is signed for its own timestamp/nonce and an expired
+                // signature can be re-minted. Secret never on device.
                 self.performSignedWrite(
                     url: url,
                     body: body,
                     apiKey: apiKey,
+                    customerId: config.dgCustomerId,
+                    userHash: userHash,
                     getSignature: getSignature,
                     completion: operationCompletion
                 )
@@ -602,15 +655,33 @@ public extension ConsentService {
         ]
     }
 
-    /// Obtain a fresh signature from the customer provider and POST with the write headers.
+    /// Mint the timestamp + nonce, build `stringToSign`, have the customer sign it, and POST
+    /// with the write headers.
+    ///
+    /// The SDK owns the timestamp and nonce and sends the SAME values it folded into
+    /// `stringToSign` (`X-DG-Timestamp` / `X-DG-Nonce`), so the bytes the customer signed and
+    /// the bytes on the wire cannot drift.
     private func performSignedWrite(
         url: URL,
         body: Data,
         apiKey: String,
+        customerId: String,
+        userHash: String,
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
-        getSignature { signatureResult in
+        let timestamp = Int64(Date().timeIntervalSince1970)
+        let nonce = Self.generateNonce()
+        let stringToSign = "\(customerId):\(userHash):\(timestamp):\(nonce)"
+        let payload = UniversalConsentSigningPayload(
+            stringToSign: stringToSign,
+            customerId: customerId,
+            userHash: userHash,
+            timestamp: timestamp,
+            nonce: nonce
+        )
+
+        getSignature(payload) { signatureResult in
             switch signatureResult {
             case let .failure(error):
                 completion(.failure(error))
@@ -618,21 +689,14 @@ public extension ConsentService {
                 // X-DG-Api-Key goes on every request (reads AND writes): the CloudFront
                 // Function resolves customer/tier/secret from KVS by API key, and needs
                 // it on writes to locate the HMAC secret to verify the signature.
+                // Timestamp and nonce come from the payload we just signed, never from the
+                // callback — that is what guarantees the signed and sent values match.
                 let headers: [String: String] = [
                     "X-DG-Api-Key": apiKey,
                     "X-DG-Signature": sig.signature,
-                    "X-DG-Timestamp": String(sig.timestamp),
+                    "X-DG-Timestamp": String(payload.timestamp),
+                    "X-DG-Nonce": payload.nonce,
                     "X-DG-Key-Id": sig.keyId,
-                    // GAP (TRUST-1843): the contract requires a 128-bit nonce (32 lowercase
-                    // hex) that is ALSO folded into the signed string as the final `:{nonce}`
-                    // segment. This value is neither the right format (a UUID string, not
-                    // 32 hex) nor bound into the HMAC — it is minted here, after and
-                    // independently of `getSignature`, so the signer never sees it and the
-                    // edge's signature check will fail. Fixing this needs a code/API change
-                    // (thread the nonce into `UniversalConsentSignatureProvider` or return it
-                    // on `UniversalConsentSignature`); left for human review, do not patch the
-                    // format alone.
-                    "X-DG-Nonce": UUID().uuidString,
                 ]
                 self.networkClient.request(
                     url: url,
@@ -649,5 +713,44 @@ public extension ConsentService {
                 }
             }
         }
+    }
+
+    /// POST a limited (API-key-only) write: no signer configured, so no signature, timestamp,
+    /// or nonce headers. `X-DG-Api-Key` still goes up so the edge can resolve the customer.
+    private func performLimitedWrite(
+        url: URL,
+        body: Data,
+        apiKey: String,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
+        networkClient.request(
+            url: url,
+            method: .post,
+            body: body,
+            headers: ["X-DG-Api-Key": apiKey]
+        ) { result in
+            switch result {
+            case .success:
+                completion(.success(()))
+            case let .failure(error):
+                completion(.failure(error))
+            }
+        }
+    }
+
+    /// Generate a 128-bit nonce as 32 lowercase hex characters from a CSPRNG.
+    ///
+    /// Prefers `SecRandomCopyBytes`; falls back to `SystemRandomNumberGenerator` (also a
+    /// CSPRNG on Apple platforms) if the Security call ever reports failure. NOT a UUID —
+    /// the contract requires 32 hex characters folded into the signed string.
+    private static func generateNonce() -> String {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        if SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) != errSecSuccess {
+            var rng = SystemRandomNumberGenerator()
+            for index in bytes.indices {
+                bytes[index] = UInt8.random(in: UInt8.min ... UInt8.max, using: &rng)
+            }
+        }
+        return bytes.map { String(format: "%02x", $0) }.joined()
     }
 }

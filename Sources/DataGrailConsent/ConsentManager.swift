@@ -250,14 +250,15 @@ public class ConsentManager {
     ///   - preferences: Preferences to sync; defaults to the current stored preferences.
     ///     Callers that just rehydrated MUST pass the raw record explicitly, since
     ///     rehydration persists the reconciled view locally.
-    ///   - getSignature: Customer-provided signature provider.
+    ///   - getSignature: Customer-provided signature provider. `nil` selects limited
+    ///     (API-key-only) mode.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     public func setUserIdentifier(
         _ identifier: String,
         apiKey: String,
         preferences: ConsentPreferences? = nil,
-        getSignature: @escaping UniversalConsentSignatureProvider,
+        getSignature: UniversalConsentSignatureProvider? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         guard let config = currentConfig else {

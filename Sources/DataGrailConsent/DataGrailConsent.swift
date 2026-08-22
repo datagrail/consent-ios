@@ -358,11 +358,14 @@ public extension DataGrailConsent {
     /// Register a user identifier and sync their consent across devices via the
     /// Universal Consent API.
     ///
-    /// The SDK computes the user hash (`SHA-256(customerId:projectId:identifier)`) and
-    /// reconciles the device's live tracking signal on-device, but does NOT compute the
+    /// The SDK computes the user hash (`SHA-256(customerId:projectId:identifier)`), mints the
+    /// timestamp and nonce, builds `stringToSign = "{customerId}:{userHash}:{timestamp}:{nonce}"`,
+    /// and reconciles the device's live tracking signal on-device — but does NOT compute the
     /// HMAC. It invokes the customer-provided `getSignature` closure — which calls the
-    /// customer's own backend — to obtain `{ signature, keyId, timestamp }`, then attaches
-    /// them as request headers. The shared secret never touches the device.
+    /// customer's own backend — with that payload to obtain `{ signature, keyId }`, then
+    /// attaches `X-DG-Signature`, `X-DG-Key-Id`, and the SDK's own `X-DG-Timestamp` /
+    /// `X-DG-Nonce`. The shared secret never touches the device. Pass `nil` for `getSignature`
+    /// to send a limited (API-key-only) write.
     ///
     /// Reads then writes. The read applies the tracking signal to LOCAL state; the write
     /// carries the user's RAW preferences. A device signal never changes what is stored
@@ -382,14 +385,15 @@ public extension DataGrailConsent {
     ///     categories in the local state this call rehydrates; `authorized` and
     ///     `notDetermined` leave it untouched. A signal never enables a category, and
     ///     never affects what is written to the cross-device store.
-    ///   - getSignature: Customer-provided signature provider (calls their backend).
+    ///   - getSignature: Customer-provided signature provider (calls their backend). `nil`
+    ///     selects limited (API-key-only) mode.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setUserIdentifier(
         _ identifier: String,
         apiKey: String,
         trackingSignal: TrackingSignal = TrackingSignalReader.current(),
-        getSignature: @escaping UniversalConsentSignatureProvider,
+        getSignature: UniversalConsentSignatureProvider? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         guard let manager else {
