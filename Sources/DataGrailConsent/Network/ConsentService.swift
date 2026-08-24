@@ -588,13 +588,17 @@ public extension ConsentService {
         // cross-app-tracking answer, not a marketing opt-out: someone who opted in on the web
         // and then opens the app with ATT denied must not have that opt-in erased. Suppression
         // is a read-time view (see `reconcile`, and the read path in ConsentManager).
-        let payload = universalConsentPayload(
-            userHash: userHash,
-            preferences: preferences,
-            config: config
-        )
-
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
+        let body: Data
+        do {
+            body = try universalConsentPayload(
+                userHash: userHash,
+                preferences: preferences,
+                config: config
+            )
+        } catch let error as ConsentError {
+            completion(.failure(error))
+            return
+        } catch {
             completion(.failure(.parseError("Failed to encode universal consent payload")))
             return
         }
@@ -631,28 +635,43 @@ public extension ConsentService {
         )
     }
 
-    /// Build the Universal Consent write payload. `cookieOptions` is a MAP of `{ gtmKey: Bool }`.
+    /// Build the Universal Consent write payload, serialized to JSON. `cookieOptions` is a MAP
+    /// of `{ gtmKey: Bool }`.
+    ///
+    /// The inner `consent_preferences` object is encoded from ``UniversalConsentPreferences`` —
+    /// the same `Codable` model the read path decodes — rather than a hand-built literal dict, so
+    /// this cross-SDK wire shape has ONE source of truth and cannot silently drift between the
+    /// write and read directions.
     private func universalConsentPayload(
         userHash: String,
         preferences: ConsentPreferences,
         config: ConsentConfig
-    ) -> [String: Any] {
+    ) throws -> Data {
         var cookieOptions: [String: Bool] = [:]
         for option in preferences.cookieOptions {
             cookieOptions[option.gtmKey] = option.isEnabled
         }
 
-        return [
+        let consentPreferences = UniversalConsentPreferences(
+            isCustomised: preferences.isCustomised,
+            cookieOptions: cookieOptions
+        )
+        let encodedPreferences = try JSONEncoder().encode(consentPreferences)
+        guard let preferencesObject = try JSONSerialization.jsonObject(
+            with: encodedPreferences
+        ) as? [String: Any] else {
+            throw ConsentError.parseError("Failed to encode universal consent preferences")
+        }
+
+        let payload: [String: Any] = [
             "customer_id": config.dgCustomerId,
             "user_hash": userHash,
-            "consent_preferences": [
-                "isCustomised": preferences.isCustomised,
-                "cookieOptions": cookieOptions,
-            ],
+            "consent_preferences": preferencesObject,
             "consent_mode": config.consentMode,
             "config_version": config.version,
             "platform": "ios",
         ]
+        return try JSONSerialization.data(withJSONObject: payload)
     }
 
     /// Mint the timestamp + nonce, build `stringToSign`, have the customer sign it, and POST
