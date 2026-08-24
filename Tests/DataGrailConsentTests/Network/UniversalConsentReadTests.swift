@@ -259,6 +259,33 @@ final class UniversalConsentReadTests: XCTestCase {
         }
     }
 
+    /// The suppress decision is centralized so `fetchUniversalConsent` and
+    /// `rehydrateReturningRawPreferences` cannot diverge. Lock its truth table: either the
+    /// record's stored `gpc` or a suppressing tracking signal is enough, and only when both
+    /// are permissive does it not suppress.
+    func testSuppressesCombinesStoredGpcAndTrackingSignal() {
+        func record(gpc: Bool) -> UniversalConsentRecord {
+            UniversalConsentRecord(status: "found", gpc: gpc)
+        }
+
+        XCTAssertFalse(
+            ConsentService.suppresses(record: record(gpc: false), trackingSignal: .authorized),
+            "neither signal suppresses"
+        )
+        XCTAssertTrue(
+            ConsentService.suppresses(record: record(gpc: true), trackingSignal: .authorized),
+            "stored gpc alone suppresses"
+        )
+        XCTAssertTrue(
+            ConsentService.suppresses(record: record(gpc: false), trackingSignal: .denied),
+            "tracking signal alone suppresses"
+        )
+        XCTAssertTrue(
+            ConsentService.suppresses(record: record(gpc: true), trackingSignal: .denied),
+            "both suppress"
+        )
+    }
+
     // MARK: - Helpers
 
     private func makeConfig() -> ConsentConfig {

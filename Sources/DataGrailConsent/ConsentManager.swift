@@ -321,10 +321,7 @@ public class ConsentManager {
                 }
                 let reconciled = ConsentService.reconcile(
                     cookieOptions: prefs.cookieOptions,
-                    // Either signal suppresses. The stored `gpc` came from the web, the
-                    // tracking signal from this device; neither can re-enable what the
-                    // other suppressed.
-                    suppress: record.gpc || trackingSignal.suppressesNonEssential,
+                    suppress: ConsentService.suppresses(record: record, trackingSignal: trackingSignal),
                     essentialCategoryKeys: Set(self.getEssentialCategories())
                 )
                 completion(.success(record.withCookieOptions(reconciled)))
@@ -415,12 +412,11 @@ public class ConsentManager {
                     cookieOptions: rawCookieOptions.map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
                 )
 
-                // Local state gets the RECONCILED view — either signal suppresses. The stored
-                // `gpc` came from the web, the tracking signal from this device; neither can
-                // re-enable what the other suppressed.
+                // Local state gets the RECONCILED view — the suppress decision is shared with
+                // fetchUniversalConsent via ConsentService.suppresses so the two cannot diverge.
                 let reconciled = ConsentService.reconcile(
                     cookieOptions: rawCookieOptions,
-                    suppress: record.gpc || trackingSignal.suppressesNonEssential,
+                    suppress: ConsentService.suppresses(record: record, trackingSignal: trackingSignal),
                     essentialCategoryKeys: Set(self.getEssentialCategories())
                 )
                 let effective = ConsentPreferences(

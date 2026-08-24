@@ -416,6 +416,20 @@ public extension ConsentService {
         return reconciled
     }
 
+    /// Whether a stored record's signals, combined with this device's live signal, suppress
+    /// non-essential categories on read.
+    ///
+    /// The single source of truth for the "does an opt-out signal apply?" decision, shared by
+    /// every read-path call site (`fetchUniversalConsent`, `rehydrateReturningRawPreferences`)
+    /// so what an integrator inspects cannot diverge from what is persisted and drives
+    /// `isCategoryEnabled`. The record's stored `gpc` came from the web where GPC exists; the
+    /// tracking signal belongs to this device. Either suppresses and neither can re-enable what
+    /// the other suppressed. New opt-out-ish signals on the record (`ccpaOptout`, `gppString`,
+    /// `tcfString`) should be folded in here, once, rather than at each call site.
+    static func suppresses(record: UniversalConsentRecord, trackingSignal: TrackingSignal) -> Bool {
+        record.gpc || trackingSignal.suppressesNonEssential
+    }
+
     /// Validate the Universal Consent preconditions and return the user hash.
     ///
     /// Shared by the read and write paths, which must agree on all three checks — if a value
