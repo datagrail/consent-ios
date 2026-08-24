@@ -620,6 +620,11 @@ public extension ConsentService {
         let url = buildURL(path: "/universal_consent")
 
         networkClient.retryWithBackoff(
+            // A hard 4xx (malformed payload, rejected signature/key, 422) will not succeed on
+            // replay, and each attempt re-invokes the customer's signing backend and re-POSTs.
+            // Retry only 5xx/transport failures so a bad request or a secret-rotation mismatch
+            // does not amplify 5x load onto the signing service exactly when it is erroring.
+            shouldRetry: { !$0.isClientError },
             operation: { operationCompletion in
                 guard let getSignature else {
                     // Limited mode: no signer configured, so send an API-key-only write with

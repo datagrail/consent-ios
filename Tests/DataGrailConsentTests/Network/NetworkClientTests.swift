@@ -170,13 +170,14 @@ final class NetworkClientTests: XCTestCase {
         wait(for: [expectation], timeout: 1.0)
 
         guard case let .failure(error) = receivedResult,
-              case let .networkError(message) = error
+              case let .httpError(statusCode, _) = error
         else {
-            XCTFail("Expected network error")
+            XCTFail("Expected HTTP error")
             return
         }
 
-        XCTAssertTrue(message.contains("404"))
+        XCTAssertEqual(statusCode, 404)
+        XCTAssertTrue(error.isClientError)
     }
 
     func testRequestNoData() {
@@ -305,6 +306,62 @@ final class NetworkClientTests: XCTestCase {
             return
         }
         XCTAssertEqual(message, "Persistent failure")
+    }
+
+    func testRetryShortCircuitsWhenShouldRetryReturnsFalse() {
+        // Given a failure the predicate rejects (a 4xx), the operation runs exactly once and
+        // the failure is surfaced without further attempts.
+        let expectation = XCTestExpectation(description: "Retry completes")
+        var receivedResult: Result<String, ConsentError>?
+        var attemptCount = 0
+
+        // When
+        sut.retryWithBackoff(
+            maxAttempts: 5, baseDelay: 0.01,
+            shouldRetry: { !$0.isClientError },
+            operation: { completion in
+                attemptCount += 1
+                completion(.failure(.httpError(statusCode: 422, message: "rejected")))
+            },
+            completion: { (result: Result<String, ConsentError>) in
+                receivedResult = result
+                expectation.fulfill()
+            }
+        )
+
+        // Then
+        wait(for: [expectation], timeout: 1.0)
+
+        XCTAssertEqual(attemptCount, 1, "A 4xx must not be retried")
+        guard case let .failure(error) = receivedResult,
+              case let .httpError(statusCode, _) = error
+        else {
+            XCTFail("Expected HTTP error")
+            return
+        }
+        XCTAssertEqual(statusCode, 422)
+    }
+
+    func testRetryStillRetriesServerErrorsUnderPredicate() {
+        // A 5xx is not a client error, so the same predicate keeps retrying it.
+        let expectation = XCTestExpectation(description: "Retry completes")
+        var attemptCount = 0
+
+        sut.retryWithBackoff(
+            maxAttempts: 3, baseDelay: 0.01,
+            shouldRetry: { !$0.isClientError },
+            operation: { completion in
+                attemptCount += 1
+                completion(.failure(.httpError(statusCode: 503, message: "unavailable")))
+            },
+            completion: { (_: Result<String, ConsentError>) in
+                expectation.fulfill()
+            }
+        )
+
+        wait(for: [expectation], timeout: 1.0)
+
+        XCTAssertEqual(attemptCount, 3, "5xx is retryable and should exhaust attempts")
     }
 
     func testRetryExponentialBackoff() {

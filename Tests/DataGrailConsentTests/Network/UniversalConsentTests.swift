@@ -409,6 +409,7 @@ final class UCMockNetworkClient: NetworkClient {
     override func retryWithBackoff<T>(
         maxAttempts _: Int = 5,
         baseDelay _: TimeInterval = 0.25,
+        shouldRetry _: @escaping (ConsentError) -> Bool = { _ in true },
         operation: @escaping (@escaping (Result<T, ConsentError>) -> Void) -> Void,
         completion: @escaping (Result<T, ConsentError>) -> Void
     ) {
