@@ -75,9 +75,9 @@ public class ConfigService {
         from url: URL, completion: @escaping (Result<ConsentConfig, ConsentError>) -> Void
     ) {
         networkClient.retryWithBackoff(
-            // A definite 4xx (e.g. a bad config URL) cannot succeed on retry — give up rather
-            // than burn all attempts. 429 stays retryable (see ConsentError.isClientError).
-            shouldRetry: { !$0.isClientError },
+            // Shared policy: a definite 4xx (e.g. a bad config URL) gives up, 5xx/transport
+            // retry (429 still retries). See ConsentError.isRetryable.
+            shouldRetry: ConsentError.isRetryable,
             operation: { operationCompletion in
                 self.fetchConfig(from: url, completion: operationCompletion)
             },

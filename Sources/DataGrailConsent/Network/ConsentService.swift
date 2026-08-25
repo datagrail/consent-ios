@@ -135,9 +135,9 @@ public class ConsentService {
         }
 
         networkClient.retryWithBackoff(
-            // A definite 4xx (rejected payload) cannot succeed on retry — give up rather than
-            // burn all attempts. 429 stays retryable (see ConsentError.isClientError).
-            shouldRetry: { !$0.isClientError },
+            // Shared policy: 4xx gives up, 5xx/transport retry (429 still retries).
+            // See ConsentError.isRetryable.
+            shouldRetry: ConsentError.isRetryable,
             operation: { operationCompletion in
                 self.networkClient.request(
                     url: url,
@@ -210,9 +210,9 @@ public class ConsentService {
         }
 
         networkClient.retryWithBackoff(
-            // A definite 4xx cannot succeed on retry — give up rather than burn all attempts.
-            // 429 stays retryable (see ConsentError.isClientError).
-            shouldRetry: { !$0.isClientError },
+            // Shared policy: 4xx gives up, 5xx/transport retry (429 still retries).
+            // See ConsentError.isRetryable.
+            shouldRetry: ConsentError.isRetryable,
             operation: { operationCompletion in
                 self.networkClient.request(url: url, method: .get) { result in
                     switch result {
@@ -552,10 +552,10 @@ public extension ConsentService {
         }
 
         networkClient.retryWithBackoff(
-            // A definite 4xx (bad/rotated key, disabled customer) will not succeed on replay,
-            // so fail fast rather than burning all retries with backoff on a first-time read.
-            // Same predicate the signed write uses; 5xx/transport failures still retry.
-            shouldRetry: { !$0.isClientError },
+            // Shared policy: a definite 4xx (bad/rotated key, disabled customer) gives up,
+            // 5xx/transport retry (429 still retries). Same predicate the signed write uses.
+            // See ConsentError.isRetryable.
+            shouldRetry: ConsentError.isRetryable,
             operation: { operationCompletion in
                 self.networkClient.request(
                     url: url,
@@ -660,10 +660,12 @@ public extension ConsentService {
             // Retry only 5xx/transport failures so a bad request or a secret-rotation mismatch
             // does not amplify 5x load onto the signing service exactly when it is erroring.
             // A signer timeout is likewise not retried: replaying it would just burn another full
-            // timeout budget per attempt, so the wait stays bounded to a single ceiling.
+            // timeout budget per attempt, so the wait stays bounded to a single ceiling. Beyond
+            // that extra rule this composes the shared ConsentError.isRetryable policy, so the
+            // client-error branch cannot drift from the other call sites.
             shouldRetry: { error in
                 if case .signatureTimeout = error { return false }
-                return !error.isClientError
+                return ConsentError.isRetryable(error)
             },
             operation: { operationCompletion in
                 guard let getSignature else {

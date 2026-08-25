@@ -62,4 +62,15 @@ public enum ConsentError: LocalizedError {
         }
         return false
     }
+
+    /// The default retry-eligibility policy for ``NetworkClient/retryWithBackoff(maxAttempts:baseDelay:shouldRetry:operation:completion:)``:
+    /// retry any failure EXCEPT a definitive 4xx client error, which cannot succeed on replay
+    /// (see ``isClientError``; 429 stays retryable). Extracted so every retried call site
+    /// (`savePreferences`, `saveOpen`, `getUniversalConsent`, `setUserIdentifier`, and
+    /// `ConfigService.fetchConfigWithRetry`) shares ONE predicate and a future site cannot
+    /// silently omit or invert it (e.g. `{ $0.isClientError }`). Call sites with an extra
+    /// rule (e.g. the signed write also refusing to retry `.signatureTimeout`) compose this.
+    public static func isRetryable(_ error: ConsentError) -> Bool {
+        !error.isClientError
+    }
 }
