@@ -201,7 +201,22 @@ public class ConsentManager {
             .lowercased()
     }
 
-    /// Get list of essential/always-on category GTM keys from config
+    /// Get list of essential/always-on category GTM keys from config.
+    ///
+    /// Essential = `alwaysOn` OR the `gtmKey` contains the substring `"essential"`
+    /// (case-insensitive). This is the agreed cross-SDK essential definition — consent-android
+    /// unified on the identical predicate in `ConsentConfig.essentialCategoryKeys()`, so the two
+    /// SDKs classify the same categories as essential.
+    ///
+    /// Correctness note: this set is now load-bearing for suppression, not just the banner.
+    /// ``ConsentService/reconcile(cookieOptions:suppress:essentialCategoryKeys:)`` treats every
+    /// key NOT in this set as suppressible by an opt-out signal (ATT/GPC/CCPA), so a genuinely
+    /// essential category missed here would be wrongly forced off on read. The heuristic is
+    /// therefore deliberately broad — both `alwaysOn` and the name-substring fallback contribute,
+    /// across BOTH the layer categories and `initialCategories.initial`. A strictly-necessary
+    /// category that carries neither `always_on: true` nor "essential" in its gtmKey (e.g.
+    /// `dg-category-necessary`) is not detectable from config shape alone and must be published
+    /// with one of those markers to be protected.
     /// - Returns: Array of GTM keys for categories that are always enabled
     public func getEssentialCategories() -> [String] {
         guard let config = currentConfig else {
@@ -210,17 +225,20 @@ public class ConsentManager {
 
         var essentialKeys: [String] = []
 
-        // Check all layers for categories marked as alwaysOn
+        // Layer categories: alwaysOn OR gtmKey contains "essential" (matches android).
         for (_, layer) in config.layout.consentLayers {
             for element in layer.elements where normalizeElementType(element.type) == "category" {
                 guard let categories = element.consentLayerCategories else { continue }
-                for category in categories where category.alwaysOn {
+                for category in categories
+                where (category.alwaysOn || category.gtmKey.lowercased().contains("essential"))
+                    && !essentialKeys.contains(category.gtmKey) {
                     essentialKeys.append(category.gtmKey)
                 }
             }
         }
 
-        // Also check for categories with "essential" in the name as fallback
+        // Also treat any initial category whose gtmKey contains "essential" as essential,
+        // covering configs that declare the category only in initialCategories.initial.
         for gtmKey in config.initialCategories.initial
             where gtmKey.lowercased().contains("essential") && !essentialKeys.contains(gtmKey)
         {
