@@ -27,3 +27,6 @@ playground.xcworkspace
 
 # Build results
 build/
+
+# Universal Consent demo — local env with stage/tenant values (never commit)
+DemoProject/demo-env.local.sh
