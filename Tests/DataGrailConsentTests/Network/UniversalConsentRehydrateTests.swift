@@ -274,6 +274,41 @@ final class UniversalConsentRehydrateTests: XCTestCase {
         XCTAssertFalse(sut.shouldDisplayBanner())
     }
 
+    // MARK: - A signal-only found record (no consent_preferences) must not fabricate an answer
+
+    /// A record can exist for the gpc/ccpa signal alone, carrying NO `consent_preferences` — the
+    /// user left a signal on the web but never actually answered a consent prompt. Fabricating an
+    /// answer from it (isCustomised:true + empty map) would suppress the banner forever and read
+    /// every category, essential included, as disabled for a user who never chose. It must behave
+    /// like a not-yet-answered user: nothing persisted, so the banner still shows.
+    func testSignalOnlyRecordDoesNotFabricateAnswerOrSuppressBanner() {
+        XCTAssertTrue(sut.shouldDisplayBanner())
+        mockNetworkClient.requestResult = .success(Data(#"{"status":"found","gpc":true}"#.utf8))
+
+        let expectation = expectation(description: "signal-only record")
+        var result: Result<ConsentPreferences?, ConsentError>?
+        sut.rehydrateReturningRawPreferences(
+            "user@example.com",
+            apiKey: testApiKey,
+            trackingSignal: .authorized
+        ) {
+            result = $0
+            expectation.fulfill()
+        }
+        waitForExpectations(timeout: 1.0)
+
+        // No consent choices to hand back to the write path.
+        if case let .success(preferences) = result {
+            XCTAssertNil(preferences, "a signal-only record carries no consent choice to write")
+        } else {
+            XCTFail("A signal-only record is not an error, got \(String(describing: result))")
+        }
+        // Nothing persisted, so the user who never answered still sees the banner and no category
+        // is forced to disabled by a fabricated empty record.
+        XCTAssertNil(storage.loadPreferences())
+        XCTAssertTrue(sut.shouldDisplayBanner())
+    }
+
     // MARK: - A caller who never recorded a choice must not sync a fabricated default
 
     func testSetUserIdentifierWithoutAChoiceDoesNotWriteFabricatedDefault() {

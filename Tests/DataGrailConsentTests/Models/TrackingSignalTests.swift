@@ -28,28 +28,25 @@ final class TrackingSignalTests: XCTestCase {
     /// opted out of marketing on the web would be silently opted back in by tapping
     /// "Allow" on an unrelated iOS prompt.
     func testNoSignalStateEnablesADisabledCategory() {
-        let allOff = ConsentPreferences(
-            isCustomised: true,
-            cookieOptions: [
-                CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
-                CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: false),
-                CategoryConsent(gtmKey: "dg-category-performance", isEnabled: false),
-            ]
-        )
+        let allOff: [String: Bool] = [
+            "dg-category-essential": true,
+            "dg-category-marketing": false,
+            "dg-category-performance": false,
+        ]
 
         for signal in [TrackingSignal.authorized, .notDetermined, .denied, .restricted] {
             let effective = ConsentService.reconcile(
-                preferences: allOff,
-                trackingSignal: signal,
+                cookieOptions: allOff,
+                suppress: signal.suppressesNonEssential,
                 essentialCategoryKeys: ["dg-category-essential"]
             )
 
-            XCTAssertFalse(
-                effective.isCategoryEnabled("dg-category-marketing"),
+            XCTAssertEqual(
+                effective["dg-category-marketing"], false,
                 "\(signal.rawValue) must not enable a category the user turned off"
             )
-            XCTAssertFalse(
-                effective.isCategoryEnabled("dg-category-performance"),
+            XCTAssertEqual(
+                effective["dg-category-performance"], false,
                 "\(signal.rawValue) must not enable a category the user turned off"
             )
         }

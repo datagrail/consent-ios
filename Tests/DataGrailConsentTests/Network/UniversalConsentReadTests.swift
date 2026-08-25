@@ -259,6 +259,34 @@ final class UniversalConsentReadTests: XCTestCase {
         }
     }
 
+    /// Essential is always on. A record that omits an essential key entirely (older or
+    /// signal-shaped record) must still resolve it to enabled — never let it fall through to
+    /// disabled after rehydration, with or without a suppressing signal.
+    func testReconcileBackfillsMissingEssentialCategory() {
+        for suppress in [true, false] {
+            let reconciled = ConsentService.reconcile(
+                cookieOptions: ["dg-category-marketing": true],
+                suppress: suppress,
+                essentialCategoryKeys: ["dg-category-essential"]
+            )
+            XCTAssertEqual(
+                reconciled["dg-category-essential"], true,
+                "suppress=\(suppress) must backfill a missing essential category to enabled"
+            )
+        }
+    }
+
+    /// An essential key stored as `false` in the record must still resolve to enabled — essential
+    /// is always on regardless of the stored value.
+    func testReconcileForcesStoredEssentialOn() {
+        let reconciled = ConsentService.reconcile(
+            cookieOptions: ["dg-category-essential": false, "dg-category-marketing": true],
+            suppress: false,
+            essentialCategoryKeys: ["dg-category-essential"]
+        )
+        XCTAssertEqual(reconciled["dg-category-essential"], true)
+    }
+
     /// The suppress decision is centralized so `fetchUniversalConsent` and
     /// `rehydrateReturningRawPreferences` cannot diverge. Lock its truth table: either the
     /// record's stored `gpc` or a suppressing tracking signal is enough, and only when both

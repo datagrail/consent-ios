@@ -371,53 +371,39 @@ public extension ConsentService {
         bytes.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Reconcile stored preferences against the device's live tracking signal.
-    ///
-    /// The Universal Consent API returns raw, unreconciled data. Clients MUST reconcile
-    /// the live signal locally before acting: when the signal suppresses (ATT `denied`
-    /// or `restricted`), every non-essential category is forced off regardless of what
-    /// the stored map says. Essential/always-on categories are always preserved.
-    ///
-    /// Suppression is one-directional by design. A live signal may only turn categories
-    /// OFF — it never turns one on. ATT `authorized` is permission to track, not consent
-    /// to marketing categories, and `notDetermined` is the absence of an answer rather
-    /// than a refusal, so neither changes the stored map in either direction.
-    ///
-    /// READ PATH ONLY. Never call this before a write to the Universal Consent store — the
-    /// store holds raw choices and the server never merges, so persisting a suppressed map
-    /// would overwrite the user's real opt-in for every device on their identifier.
-    static func reconcile(
-        preferences: ConsentPreferences,
-        trackingSignal: TrackingSignal,
-        essentialCategoryKeys: Set<String>
-    ) -> ConsentPreferences {
-        guard trackingSignal.suppressesNonEssential else { return preferences }
-
-        let reconciled = preferences.cookieOptions.map { option -> CategoryConsent in
-            guard essentialCategoryKeys.contains(option.gtmKey) else {
-                return CategoryConsent(gtmKey: option.gtmKey, isEnabled: false)
-            }
-            return option
-        }
-        return ConsentPreferences(isCustomised: preferences.isCustomised, cookieOptions: reconciled)
-    }
-
     /// Reconcile a wire-format `cookieOptions` MAP against an opt-out signal.
     ///
-    /// The map overload of ``reconcile(preferences:trackingSignal:essentialCategoryKeys:)``,
-    /// for the read path — the wire format is a map, so converting to an array first would
-    /// be lossy busywork. `suppress` is a decision, not a signal, because the read path
-    /// combines two sources (the record's stored `gpc` and this device's live signal) and
+    /// The Universal Consent API returns raw, unreconciled data. Clients MUST reconcile the
+    /// signal locally before acting: when it suppresses, every non-essential category is forced
+    /// off regardless of what the stored map says. Essential/always-on categories are always
+    /// enabled (and backfilled if the record omitted them).
+    ///
+    /// Suppression is one-directional by design — a signal may only turn categories OFF, never
+    /// on. The wire format is a map, so this operates on the map directly rather than converting
+    /// to an array first. `suppress` is a decision, not a signal, because the read path combines
+    /// two sources (the record's stored `gpc`/`ccpaOptout` and this device's live signal) and
     /// the more privacy-protective wins.
+    ///
+    /// READ PATH ONLY. Never call this before a write to the Universal Consent store — the store
+    /// holds raw choices and the server never merges, so persisting a suppressed map would
+    /// overwrite the user's real opt-in for every device on their identifier.
     static func reconcile(
         cookieOptions: [String: Bool],
         suppress: Bool,
         essentialCategoryKeys: Set<String>
     ) -> [String: Bool] {
-        guard suppress else { return cookieOptions }
         var reconciled: [String: Bool] = [:]
         for (key, enabled) in cookieOptions {
-            reconciled[key] = essentialCategoryKeys.contains(key) ? enabled : false
+            // Essential categories are always on, so they resolve to enabled regardless of the
+            // stored value or the opt-out signal. Non-essential categories keep their stored
+            // value unless the signal suppresses them (OFF-only — a signal never re-enables).
+            reconciled[key] = essentialCategoryKeys.contains(key) ? true : (suppress ? false : enabled)
+        }
+        // Backfill essential categories the stored record omitted. Essential is always enabled,
+        // so a key missing from an older or signal-shaped record must still resolve to enabled
+        // rather than fall through to disabled after rehydration.
+        for key in essentialCategoryKeys where reconciled[key] == nil {
+            reconciled[key] = true
         }
         return reconciled
     }

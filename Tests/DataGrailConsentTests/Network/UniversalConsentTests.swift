@@ -34,41 +34,35 @@ final class UniversalConsentTests: XCTestCase {
     func testDeniedSignalSuppressesNonEssential() {
         // Stored map shows marketing:true — a client that trusts it naively would fire
         // marketing tags for a user who declined tracking. Effective must suppress it.
-        let stored = ConsentPreferences(
-            isCustomised: true,
-            cookieOptions: [
-                CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
-                CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: true),
-                CategoryConsent(gtmKey: "dg-category-performance", isEnabled: true),
-            ]
-        )
+        let stored: [String: Bool] = [
+            "dg-category-essential": true,
+            "dg-category-marketing": true,
+            "dg-category-performance": true,
+        ]
 
         let effective = ConsentService.reconcile(
-            preferences: stored,
-            trackingSignal: .denied,
+            cookieOptions: stored,
+            suppress: TrackingSignal.denied.suppressesNonEssential,
             essentialCategoryKeys: ["dg-category-essential"]
         )
 
-        XCTAssertFalse(effective.isCategoryEnabled("dg-category-marketing"))
-        XCTAssertFalse(effective.isCategoryEnabled("dg-category-performance"))
-        XCTAssertTrue(effective.isCategoryEnabled("dg-category-essential"))
+        XCTAssertEqual(effective["dg-category-marketing"], false)
+        XCTAssertEqual(effective["dg-category-performance"], false)
+        XCTAssertEqual(effective["dg-category-essential"], true)
     }
 
     func testAuthorizedSignalLeavesPreferencesUntouched() {
-        let stored = ConsentPreferences(
-            isCustomised: true,
-            cookieOptions: [
-                CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: true),
-            ]
-        )
+        let stored: [String: Bool] = [
+            "dg-category-marketing": true,
+        ]
 
         let effective = ConsentService.reconcile(
-            preferences: stored,
-            trackingSignal: .authorized,
+            cookieOptions: stored,
+            suppress: TrackingSignal.authorized.suppressesNonEssential,
             essentialCategoryKeys: ["dg-category-essential"]
         )
 
-        XCTAssertTrue(effective.isCategoryEnabled("dg-category-marketing"))
+        XCTAssertEqual(effective["dg-category-marketing"], true)
     }
 
     // MARK: - Signed POST attaches headers

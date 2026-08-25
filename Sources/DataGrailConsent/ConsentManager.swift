@@ -396,6 +396,15 @@ public class ConsentManager {
             return
         }
 
+        // Capture storage, the essential categories, and the current config version up front
+        // so the completion needs no `self`. A `[weak self]` deallocated mid-flight (e.g. a
+        // re-initialize on logout/login while this fetch is in flight) must not silently skip
+        // persisting or fall through to unreconciled state — the same hazard fetchUniversalConsent
+        // was rewritten to avoid.
+        let storage = self.storage
+        let essentialCategoryKeys = Set(getEssentialCategories())
+        let currentVersion = config.version
+
         // Goes to the service directly rather than through fetchUniversalConsent, which
         // returns an already-reconciled record. Both views are needed here: the reconciled
         // one to persist locally, the raw one to hand back for the write.
@@ -403,13 +412,9 @@ public class ConsentManager {
             identifier,
             config: config,
             apiKey: apiKey
-        ) { [weak self] result in
+        ) { result in
             switch result {
             case let .success(record):
-                guard let self else {
-                    completion(.success(nil))
-                    return
-                }
                 // A miss (no record) writes nothing. A FOUND record is authoritative even when
                 // its cookieOptions map is present-but-empty (answered with zero non-essential
                 // categories) — treating that as a miss would re-prompt a user who already
@@ -418,10 +423,21 @@ public class ConsentManager {
                     completion(.success(nil))
                     return
                 }
-                let rawCookieOptions = record.consentPreferences?.cookieOptions ?? [:]
+                // A signal-only record (a gpc/ccpa signal on file, but consentPreferences nil)
+                // is NOT an answered prompt: the user never chose. Fabricating isCustomised:true
+                // with an empty map would suppress the banner forever AND read every category —
+                // including always-on essential — as disabled for a user who never answered.
+                // Leave local state untouched so the banner still shows, and return nil (no raw
+                // choice to write back). Mirrors fetchUniversalConsent, which returns the record
+                // unreconciled when consentPreferences is nil.
+                guard let storedPrefs = record.consentPreferences else {
+                    completion(.success(nil))
+                    return
+                }
+                let rawCookieOptions = storedPrefs.cookieOptions
 
                 let raw = ConsentPreferences(
-                    // A record that came back at all represents an answered prompt, so the
+                    // A record with stored preferences represents an answered prompt, so the
                     // rehydrated state is customised even if the writer left the flag false.
                     // shouldDisplayBanner() keys off stored preferences existing, and a
                     // non-customised record would re-prompt a user who already answered.
@@ -436,7 +452,7 @@ public class ConsentManager {
                     record: record,
                     rawCookieOptions: rawCookieOptions,
                     trackingSignal: trackingSignal,
-                    essentialCategoryKeys: Set(self.getEssentialCategories())
+                    essentialCategoryKeys: essentialCategoryKeys
                 )
                 let effective = ConsentPreferences(
                     isCustomised: true,
@@ -444,14 +460,12 @@ public class ConsentManager {
                 )
 
                 do {
-                    try self.storage.savePreferences(effective)
+                    try storage.savePreferences(effective)
                     // Stamp the CURRENT config version, not the record's. This marks the
                     // rehydrated consent as current for the config the app is running, which
                     // is what shouldDisplayBanner() compares against; carrying over a stale
                     // version from the writing device would re-prompt immediately.
-                    if let version = self.currentConfig?.version {
-                        self.storage.saveConfigVersion(version)
-                    }
+                    storage.saveConfigVersion(currentVersion)
                     completion(.success(raw))
                 } catch let error as ConsentError {
                     completion(.failure(error))
