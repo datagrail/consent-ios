@@ -341,3 +341,124 @@ final class UniversalConsentRehydrateTests: XCTestCase {
         """.utf8)
     }
 }
+
+// MARK: - Write-through: sync the local choice, never re-POST the fetched record
+
+// In an extension so the primary test class stays within SwiftLint's type_body_length limit.
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+extension UniversalConsentRehydrateTests {
+
+    /// On a found record the write must carry the user's CURRENT LOCAL choice (sync-on-change),
+    /// not the record it just fetched. Re-POSTing the fetched map would discard a local opt-out
+    /// the user made on this device before associating their identity — and echo state the edge
+    /// already holds.
+    func testSyncWritesLocalRawChoiceNotTheFetchedRecordOnAHit() {
+        // The user opted marketing OFF locally before associating their identity.
+        try? storage.savePreferences(ConsentPreferences(
+            isCustomised: true,
+            cookieOptions: [
+                CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
+                CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: false),
+            ]
+        ))
+        // The stored record disagrees (marketing ON).
+        mockNetworkClient.requestResult = .success(foundRecordJSON(marketing: true))
+
+        let expectation = expectation(description: "write-through local choice")
+        sut.syncUserIdentifier(
+            "user@example.com",
+            apiKey: testApiKey,
+            trackingSignal: .authorized
+        ) { result in
+            if case let .failure(error) = result {
+                XCTFail("Expected success, got \(error)")
+            }
+            expectation.fulfill()
+        }
+        waitForExpectations(timeout: 1.0)
+
+        // The last request is the WRITE, and it carries the LOCAL choice (marketing OFF) — NOT
+        // the fetched record (marketing ON).
+        XCTAssertEqual(mockNetworkClient.lastMethod, .post)
+        guard let body = mockNetworkClient.lastBody,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let prefs = json["consent_preferences"] as? [String: Any],
+              let cookieOptions = prefs["cookieOptions"] as? [String: Bool]
+        else {
+            return XCTFail("Failed to parse write body")
+        }
+        XCTAssertEqual(cookieOptions["dg-category-marketing"], false, "write carries the LOCAL choice")
+
+        // Local reads still reflect the record — remote wins for the read side.
+        XCTAssertTrue(sut.isCategoryEnabled("dg-category-marketing"))
+    }
+
+    /// A found record with no local change is adopted into local state and NOT re-POSTed. The
+    /// only request is the GET; a trailing write would clobber a richer server record with this
+    /// fresh install's defaults, or pointlessly echo state the edge already holds.
+    func testSyncAdoptsWithoutPostWhenThereIsNoLocalChoice() {
+        XCTAssertNil(storage.loadPreferences())
+        mockNetworkClient.requestResult = .success(foundRecordJSON(marketing: true))
+
+        let expectation = expectation(description: "adopt without post")
+        sut.syncUserIdentifier(
+            "user@example.com",
+            apiKey: testApiKey,
+            trackingSignal: .authorized
+        ) { result in
+            if case let .failure(error) = result {
+                XCTFail("Expected success, got \(error)")
+            }
+            expectation.fulfill()
+        }
+        waitForExpectations(timeout: 1.0)
+
+        // The record was adopted into local state...
+        XCTAssertTrue(sut.isCategoryEnabled("dg-category-marketing"))
+        XCTAssertFalse(sut.shouldDisplayBanner())
+        // ...but nothing was POSTed: the last (and only) request was the GET.
+        XCTAssertEqual(
+            mockNetworkClient.lastMethod,
+            .get,
+            "a found record with no local change is adopted, not re-POSTed"
+        )
+    }
+
+    /// A miss with a local choice seeds the first cross-device record, and the write carries the
+    /// RAW choice: a device signal (here ATT denied) suppresses local reads but must never be
+    /// folded into the cross-device store, or a later session without the signal reads it back as
+    /// a revocation the user never made.
+    func testSyncWritesRawLocalChoiceWithoutFoldingTheDeviceSignal() {
+        try? storage.savePreferences(ConsentPreferences(
+            isCustomised: true,
+            cookieOptions: [
+                CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
+                CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: true),
+            ]
+        ))
+        mockNetworkClient.requestResult = .success(Data(#"{"status":"not_found"}"#.utf8))
+
+        let expectation = expectation(description: "seed raw choice, signal not folded")
+        sut.syncUserIdentifier(
+            "user@example.com",
+            apiKey: testApiKey,
+            trackingSignal: .denied
+        ) { result in
+            if case let .failure(error) = result {
+                XCTFail("Expected success, got \(error)")
+            }
+            expectation.fulfill()
+        }
+        waitForExpectations(timeout: 1.0)
+
+        XCTAssertEqual(mockNetworkClient.lastMethod, .post)
+        guard let body = mockNetworkClient.lastBody,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let prefs = json["consent_preferences"] as? [String: Any],
+              let cookieOptions = prefs["cookieOptions"] as? [String: Bool]
+        else {
+            return XCTFail("Failed to parse write body")
+        }
+        XCTAssertEqual(cookieOptions["dg-category-marketing"], true, "raw local choice, signal not folded")
+    }
+}

@@ -480,3 +480,79 @@ public class ConsentManager {
         currentConfig = nil
     }
 }
+
+// MARK: - Universal Consent read-then-write coordination
+
+// In an extension (not the class body) so the coordinator stays within SwiftLint's
+// type_body_length limit, matching how the public adapter splits its own UC surface.
+extension ConsentManager {
+
+    /// Read-then-write coordination behind
+    /// ``DataGrailConsent/setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)``.
+    ///
+    /// Rehydrates any stored record onto local state FIRST (so a choice made on the web or
+    /// another device is honored locally), then WRITES the user's CURRENT LOCAL choice —
+    /// sync-on-change / write-through. It deliberately does NOT re-POST the record it just
+    /// fetched: the edge already holds that state, and echoing it back would discard a choice the
+    /// user made on THIS device before calling. When there is no local choice to sync — a fresh
+    /// install that merely adopted a record — it adopts-WITHOUT-POST: the record is already
+    /// applied to local state above, so there is nothing to write. Conflict resolution across
+    /// devices is the edge's job, not the SDK's.
+    ///
+    /// The local choice is captured from storage BEFORE the rehydrate persists the
+    /// signal-reconciled view, so the write carries the RAW choice and no device signal (ATT/GPC)
+    /// leaks into the cross-device store.
+    ///
+    /// A read FAILURE (as opposed to a miss) does NOT write: overwriting a record we could not
+    /// read would silently erase the user's real cross-device choice.
+    ///
+    /// - Parameter onRehydrated: Invoked with the effective local preferences only when a record
+    ///   was rehydrated, so the adapter can fire its consent-changed listener.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    func syncUserIdentifier(
+        _ identifier: String,
+        apiKey: String,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
+        getSignature: UniversalConsentSignatureProvider? = nil,
+        onRehydrated: ((ConsentPreferences) -> Void)? = nil,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
+        // Capture the user's RAW local choice BEFORE rehydrate overwrites storage with the
+        // signal-reconciled view. nil means the user has recorded no local choice yet.
+        let localChoice = storage.loadPreferences()
+
+        rehydrateReturningRawPreferences(
+            identifier,
+            apiKey: apiKey,
+            trackingSignal: trackingSignal
+        ) { [weak self] result in
+            guard let self else {
+                completion(.failure(.notInitialized))
+                return
+            }
+            switch result {
+            case let .failure(error):
+                completion(.failure(error))
+            case let .success(rawFromRecord):
+                if rawFromRecord != nil, let effective = self.getCategories() {
+                    onRehydrated?(effective)
+                }
+                // Adopt-without-POST: a found record with no local change is already applied to
+                // local state, so re-POSTing it would only echo state the edge already holds.
+                if localChoice == nil, rawFromRecord != nil {
+                    completion(.success(()))
+                    return
+                }
+                // Write-through the user's RAW local choice. On a genuine miss with no local
+                // choice the writer surfaces "nothing to sync" rather than fabricating a default.
+                self.setUserIdentifier(
+                    identifier,
+                    apiKey: apiKey,
+                    preferences: localChoice,
+                    getSignature: getSignature,
+                    completion: completion
+                )
+            }
+        }
+    }
+}

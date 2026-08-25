@@ -401,52 +401,25 @@ public extension DataGrailConsent {
             return
         }
 
-        // READ then WRITE, matching the web SDK's setUserIdentifier flow. Rehydrating first
-        // means the write persists the user's actual cross-device state rather than
-        // clobbering a richer server-side record with whatever this fresh install happens to
-        // hold locally.
-        manager.rehydrateReturningRawPreferences(
+        // READ then WRITE. Rehydrating first honors a choice made on the web or another device
+        // in local state; the write then carries the user's CURRENT LOCAL choice (sync-on-change)
+        // and NEVER re-POSTs the fetched record — see ConsentManager.syncUserIdentifier.
+        manager.syncUserIdentifier(
             identifier,
             apiKey: apiKey,
-            trackingSignal: trackingSignal
-        ) { [weak self] rehydrateResult in
-            switch rehydrateResult {
-            case let .failure(error):
-                // A read FAILURE is not a miss, and the two must not collapse. On failure we
-                // cannot know whether local storage holds the user's raw choice or the
-                // suppressed view a prior successful rehydrate persisted. Letting the write
-                // fall back to getCategories() here could POST that suppressed view as the
-                // user's raw cross-device choice — the exact corruption c525cec (TRUST-2491)
-                // fixed on the write path — silently, since the write itself would succeed.
-                // Surface the read failure instead; the caller can retry, and the user's real
-                // choice stays in local storage to sync on a later successful call.
+            trackingSignal: trackingSignal,
+            getSignature: getSignature,
+            onRehydrated: { [weak self] preferences in
                 DispatchQueue.main.async {
-                    completion(.failure(error))
+                    self?.onConsentChangedCallback?(preferences)
                 }
-
-            case let .success(rawPreferences):
-                // The RAW preferences off the record on a hit, or nil on a GENUINE miss. On a
-                // miss the getCategories() fallback in ConsentManager.setUserIdentifier is
-                // safe: no prior rehydrate could have written a suppressed view for a user who
-                // has no stored record.
-                if rawPreferences != nil, let preferences = manager.getCategories() {
-                    DispatchQueue.main.async {
-                        self?.onConsentChangedCallback?(preferences)
-                    }
-                }
-
-                manager.setUserIdentifier(
-                    identifier,
-                    apiKey: apiKey,
-                    preferences: rawPreferences,
-                    getSignature: getSignature
-                ) { result in
-                    DispatchQueue.main.async {
-                        completion(result)
-                    }
+            },
+            completion: { result in
+                DispatchQueue.main.async {
+                    completion(result)
                 }
             }
-        }
+        )
     }
 
     /// Fetch a user's stored Universal Consent record without changing local state.
