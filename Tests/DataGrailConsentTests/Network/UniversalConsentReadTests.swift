@@ -161,8 +161,11 @@ final class UniversalConsentReadTests: XCTestCase {
         }
     }
 
+    // Only a nil or empty projectId is rejected. A whitespace-only projectId is NOT trimmed away:
+    // the cross-SDK contract hashes projectId VERBATIM, so it is a (degenerate) non-empty scope
+    // hashed as-is — see UniversalConsentHashTests.
     func testGetFailsWithoutUsableProjectId() {
-        for projectId: String? in [nil, "", "   "] {
+        for projectId: String? in [nil, ""] {
             let expectation = expectation(description: "unusable projectId \(projectId ?? "nil") fails")
             var config = makeConfig()
             config.consentProjectId = projectId

@@ -309,8 +309,14 @@ final class UniversalConsentTests: XCTestCase {
     /// "{customerId}::{identifier}" and drop the project scope, merging one person's records
     /// across every project in the tenant. A published config with `"consentProjectId": ""`
     /// decodes to an empty string, not nil, so both cases have to be rejected.
+    ///
+    /// A whitespace-only projectId is deliberately NOT rejected here: the cross-SDK contract
+    /// inserts projectId VERBATIM (only the identifier is normalized), and the blank-check gates
+    /// on the same raw value the hash uses. Trimming for the check while hashing verbatim was the
+    /// inconsistency this fix removed; trimming BEFORE the hash would diverge from every other SDK.
+    /// Verbatim handling of whitespace-carrying projectIds is locked in UniversalConsentHashTests.
     func testSetUserIdentifierFailsWithoutUsableProjectId() {
-        for projectId: String? in [nil, "", "   "] {
+        for projectId: String? in [nil, ""] {
             let expectation = expectation(description: "unusable projectId \(projectId ?? "nil") fails")
 
             let config = makeConfig(consentProjectId: projectId)

@@ -75,4 +75,63 @@ final class UniversalConsentHashTests: XCTestCase {
         let once = ConsentService.normalizeUserIdentifier("  User@Example.com  ")
         XCTAssertEqual(ConsentService.normalizeUserIdentifier(once), once)
     }
+
+    // MARK: - projectId is hashed VERBATIM, and the blank-check gates the same value
+
+    /// The cross-SDK contract inserts `projectId` into the hash input VERBATIM — web/Android/React
+    /// and every documented backend helper interpolate it raw and normalize ONLY the identifier.
+    /// So `validatedUserHash` must both (a) reproduce the golden hash for the golden projectId and
+    /// (b) hash a whitespace-carrying projectId byte-for-byte the same as `userHash` does with the
+    /// raw value — i.e. it must NOT trim before hashing. Trimming here would validate one string
+    /// while hashing another and would split the user from every other SDK's record.
+    func testValidatedUserHashHashesProjectIdVerbatim() throws {
+        // Golden projectId: validatedUserHash agrees with the golden vector.
+        let goldenConfig = UCFixtures.makeConfig(privacyDomain: "x", consentProjectId: goldenProjectId)
+        XCTAssertEqual(
+            try ConsentService.validatedUserHash(identifier: "user@example.com", config: goldenConfig),
+            goldenHash
+        )
+
+        // A projectId with incidental trailing whitespace is hashed verbatim — identical to
+        // userHash on the raw value, and (guard against a trim-before-hash regression) NOT the
+        // golden hash.
+        let rawProjectId = "proj_abc123 "
+        let wsConfig = UCFixtures.makeConfig(privacyDomain: "x", consentProjectId: rawProjectId)
+        let validated = try ConsentService.validatedUserHash(identifier: "user@example.com", config: wsConfig)
+        XCTAssertEqual(
+            validated,
+            ConsentService.userHash(
+                dgCustomerId: goldenCustomerId,
+                consentProjectId: rawProjectId,
+                identifier: "user@example.com"
+            ),
+            "validatedUserHash must hash the projectId verbatim, not a trimmed copy"
+        )
+        XCTAssertNotEqual(validated, goldenHash, "a trailing-whitespace projectId is a distinct scope")
+    }
+
+    /// An empty (missing) projectId is rejected — the same verbatim value the hash would use.
+    func testValidatedUserHashRejectsEmptyProjectId() {
+        let config = UCFixtures.makeConfig(privacyDomain: "x", consentProjectId: "")
+        XCTAssertThrowsError(
+            try ConsentService.validatedUserHash(identifier: "user@example.com", config: config)
+        )
+    }
+
+    /// A whitespace-only projectId is NOT rejected: the blank-check gates on the raw value the
+    /// hash uses, and the cross-SDK contract hashes projectId verbatim. It is a degenerate but
+    /// non-empty scope, hashed as-is (byte-identical to `userHash` on the raw value) — the fix
+    /// deliberately does not trim it away, which would validate one string and hash another.
+    func testValidatedUserHashAcceptsWhitespaceProjectIdVerbatim() throws {
+        let raw = "   "
+        let config = UCFixtures.makeConfig(privacyDomain: "x", consentProjectId: raw)
+        XCTAssertEqual(
+            try ConsentService.validatedUserHash(identifier: "user@example.com", config: config),
+            ConsentService.userHash(
+                dgCustomerId: goldenCustomerId,
+                consentProjectId: raw,
+                identifier: "user@example.com"
+            )
+        )
+    }
 }

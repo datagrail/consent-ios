@@ -474,6 +474,12 @@ public extension ConsentService {
     ///   `"{customerId}::{identifier}"`, dropping the project scope so the same person lands on
     ///   one shared record across every project in the tenant. A published config with
     ///   `"consentProjectId": ""` decodes to an empty string, not nil.
+    ///   Unlike the identifier, `consentProjectId` is inserted into the hash input VERBATIM —
+    ///   web/Android/React and every documented customer backend helper interpolate it raw and
+    ///   normalize only the identifier (TRUST-1843, developer-integration.md). The blank-check
+    ///   therefore gates on the SAME raw value the hash uses (`.isEmpty`, not a trimmed copy):
+    ///   trimming here would validate one string while hashing another, and trimming BEFORE the
+    ///   hash would diverge byte-for-byte from every other SDK and split the user across records.
     /// - `universalConsent.enabled` is the server-published kill switch, so the backend can
     ///   disable the feature without an app release.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
@@ -490,8 +496,7 @@ public extension ConsentService {
             )
         }
 
-        guard let projectId = config.consentProjectId,
-              !projectId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let projectId = config.consentProjectId, !projectId.isEmpty else {
             throw ConsentError.invalidConfiguration(
                 "consentProjectId is required for Universal Consent"
             )
