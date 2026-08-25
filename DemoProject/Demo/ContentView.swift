@@ -107,7 +107,9 @@ struct ContentView: View {
 
     // One ConsentService instance drives the SDK's Universal Consent write/read against
     // the STAGE endpoint. privacyDomain is the host the SDK prepends with https://.
-    private let consentService = ConsentService(
+    // `static` so it is built once, not re-constructed (new NetworkClient/ConsentStorage)
+    // every time SwiftUI re-creates this View value — e.g. on every keystroke.
+    private static let consentService = ConsentService(
         networkClient: NetworkClient(),
         storage: ConsentStorage(),
         privacyDomain: DemoConfig.consentApiHost
@@ -265,7 +267,7 @@ struct ContentView: View {
         }
 
         begin("Saving consent for \(email)…")
-        consentService.setUserIdentifier(
+        Self.consentService.setUserIdentifier(
             email,
             preferences: prefs,
             config: config,
@@ -297,7 +299,7 @@ struct ContentView: View {
         }
 
         begin("Reading consent for \(email)…")
-        consentService.getUniversalConsent(
+        Self.consentService.getUniversalConsent(
             email,
             config: config,
             apiKey: DemoConfig.apiKey
