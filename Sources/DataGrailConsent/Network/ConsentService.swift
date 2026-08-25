@@ -122,6 +122,9 @@ public class ConsentService {
         }
 
         networkClient.retryWithBackoff(
+            // A definite 4xx (rejected payload) cannot succeed on retry — give up rather than
+            // burn all attempts. 429 stays retryable (see ConsentError.isClientError).
+            shouldRetry: { !$0.isClientError },
             operation: { operationCompletion in
                 self.networkClient.request(
                     url: url,
@@ -194,6 +197,9 @@ public class ConsentService {
         }
 
         networkClient.retryWithBackoff(
+            // A definite 4xx cannot succeed on retry — give up rather than burn all attempts.
+            // 429 stays retryable (see ConsentError.isClientError).
+            shouldRetry: { !$0.isClientError },
             operation: { operationCompletion in
                 self.networkClient.request(url: url, method: .get) { result in
                     switch result {
