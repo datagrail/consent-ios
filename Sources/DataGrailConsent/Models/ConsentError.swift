@@ -18,6 +18,12 @@ public enum ConsentError: LocalizedError {
     case parseError(String)
     case storageError(String)
     case validationError(String)
+    /// The customer-provided `getSignature` callback did not return within
+    /// ``ConsentService/universalConsentSignatureTimeout``. The Universal Consent write is
+    /// abandoned rather than left hanging on a signer the SDK does not control and that may
+    /// never call back. Not retried: a signer that already blew the timeout budget would just
+    /// blow it again.
+    case signatureTimeout
 
     public var errorDescription: String? {
         switch self {
@@ -37,6 +43,8 @@ public enum ConsentError: LocalizedError {
             return "Storage error: \(message)"
         case let .validationError(message):
             return "Validation error: \(message)"
+        case .signatureTimeout:
+            return "Signature request timed out: the getSignature callback did not return in time."
         }
     }
 

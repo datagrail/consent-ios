@@ -71,18 +71,31 @@ public typealias UniversalConsentSignatureProvider =
 
 /// Service for sending consent data to backend
 public class ConsentService {
+    /// Maximum time to wait for the customer-provided `getSignature` callback before failing a
+    /// Universal Consent write with ``ConsentError/signatureTimeout``. The callback calls the
+    /// customer's own signing backend, which the SDK does not control; without a ceiling a signer
+    /// that never calls back would hang the write forever. 30s is generous for a backend HMAC
+    /// round-trip while still failing fast enough to surface a clear error to the host app.
+    public static let universalConsentSignatureTimeout: TimeInterval = 30
+
     private let networkClient: NetworkClient
     private let storage: ConsentStorage
     private let privacyDomain: String
+    /// The signer wait ceiling for this instance. Defaults to
+    /// ``universalConsentSignatureTimeout``; injectable so tests can drive the timeout path
+    /// without waiting the full production budget.
+    private let signatureTimeout: TimeInterval
 
     public init(
         networkClient: NetworkClient,
         storage: ConsentStorage,
-        privacyDomain: String
+        privacyDomain: String,
+        signatureTimeout: TimeInterval = ConsentService.universalConsentSignatureTimeout
     ) {
         self.networkClient = networkClient
         self.storage = storage
         self.privacyDomain = privacyDomain
+        self.signatureTimeout = signatureTimeout
     }
 
     /// Save consent preferences to backend
@@ -646,7 +659,12 @@ public extension ConsentService {
             // replay, and each attempt re-invokes the customer's signing backend and re-POSTs.
             // Retry only 5xx/transport failures so a bad request or a secret-rotation mismatch
             // does not amplify 5x load onto the signing service exactly when it is erroring.
-            shouldRetry: { !$0.isClientError },
+            // A signer timeout is likewise not retried: replaying it would just burn another full
+            // timeout budget per attempt, so the wait stays bounded to a single ceiling.
+            shouldRetry: { error in
+                if case .signatureTimeout = error { return false }
+                return !error.isClientError
+            },
             operation: { operationCompletion in
                 guard let getSignature else {
                     // Limited mode: no signer configured, so send an API-key-only write with
@@ -724,6 +742,7 @@ public extension ConsentService {
     /// The SDK owns the timestamp and nonce and sends the SAME values it folded into
     /// `stringToSign` (`X-DG-Timestamp` / `X-DG-Nonce`), so the bytes the customer signed and
     /// the bytes on the wire cannot drift.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     private func performSignedWrite(
         _ request: UniversalConsentWriteRequest,
         customerId: String,
@@ -742,7 +761,7 @@ public extension ConsentService {
             nonce: nonce
         )
 
-        getSignature(payload) { signatureResult in
+        requestSignature(for: payload, getSignature: getSignature) { signatureResult in
             switch signatureResult {
             case let .failure(error):
                 completion(.failure(error))
@@ -773,6 +792,46 @@ public extension ConsentService {
                     }
                 }
             }
+        }
+    }
+
+    /// Invoke the customer's `getSignature` and deliver its result, but abandon the wait after
+    /// ``signatureTimeout`` so a signer that never calls back cannot hang the write forever.
+    ///
+    /// Races the callback against a Swift-concurrency timer: whichever fires first wins and the
+    /// result is delivered exactly once. If the timer wins, the write fails with
+    /// ``ConsentError/signatureTimeout``; a late callback that arrives after the timeout is
+    /// dropped (the SDK has already given up and cannot un-fail the write). The timer is cancelled
+    /// as soon as the callback returns so the common (fast) path leaks no pending task.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    private func requestSignature(
+        for payload: UniversalConsentSigningPayload,
+        getSignature: @escaping UniversalConsentSignatureProvider,
+        completion: @escaping (Result<UniversalConsentSignature, ConsentError>) -> Void
+    ) {
+        // Deliver-once guard: the callback and the timeout can race on separate threads, and the
+        // completion must fire exactly once regardless of which arrives first (or if both do).
+        let lock = NSLock()
+        var delivered = false
+        func deliver(_ result: Result<UniversalConsentSignature, ConsentError>) {
+            lock.lock()
+            let alreadyDelivered = delivered
+            delivered = true
+            lock.unlock()
+            guard !alreadyDelivered else { return }
+            completion(result)
+        }
+
+        let timeout = signatureTimeout
+        let timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            deliver(.failure(.signatureTimeout))
+        }
+
+        getSignature(payload) { result in
+            timeoutTask.cancel()
+            deliver(result)
         }
     }
 

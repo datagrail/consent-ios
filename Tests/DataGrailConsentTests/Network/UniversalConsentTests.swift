@@ -373,6 +373,56 @@ final class UniversalConsentTests: XCTestCase {
     }
 }
 
+// MARK: - Signer timeout
+
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+extension UniversalConsentTests {
+    /// A signer that never calls back must not hang the write forever: once the bounded
+    /// `signatureTimeout` elapses the write fails with `.signatureTimeout`, and nothing is ever
+    /// POSTed (there is no signature to send). Uses a tiny injected timeout so the test finishes
+    /// in ~100ms instead of the 30s production budget.
+    func testSetUserIdentifierTimesOutWhenSignerNeverReturns() {
+        let expectation = expectation(description: "write fails with signatureTimeout")
+
+        let timeoutService = ConsentService(
+            networkClient: mockNetworkClient,
+            storage: mockStorage,
+            privacyDomain: testPrivacyDomain,
+            signatureTimeout: 0.1
+        )
+
+        // Never calls `done` — models a customer signing backend that hangs.
+        let provider: UniversalConsentSignatureProvider = { _, _ in }
+
+        timeoutService.setUserIdentifier(
+            "user@example.com",
+            preferences: marketingOnPreferences(),
+            config: makeConfig(),
+            apiKey: testApiKey,
+            getSignature: provider
+        ) { result in
+            switch result {
+            case .success:
+                XCTFail("Expected signatureTimeout but the write succeeded")
+            case let .failure(error):
+                guard case .signatureTimeout = error else {
+                    XCTFail("Expected .signatureTimeout but got \(error)")
+                    expectation.fulfill()
+                    return
+                }
+                XCTAssertFalse(
+                    self.mockNetworkClient.requestCalled,
+                    "Must not POST when the signer never produced a signature"
+                )
+            }
+            expectation.fulfill()
+        }
+
+        // Comfortably above the 0.1s injected timeout, far below the 30s production budget.
+        waitForExpectations(timeout: 2.0)
+    }
+}
+
 // MARK: - Mocks
 
 @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
