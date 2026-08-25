@@ -34,7 +34,10 @@ public struct UniversalConsentPreferences: Codable, Equatable {
 public struct UniversalConsentRecord: Codable, Equatable {
     /// `"found"` or `"not_found"`.
     public let status: String
-    public let consentPreferences: UniversalConsentPreferences?
+    // `var` so `withCookieOptions` can copy-mutate `self` rather than re-list every field
+    // through the initializer — a future field then carries over automatically instead of
+    // silently resetting to its default.
+    public var consentPreferences: UniversalConsentPreferences?
     public let consentMode: String?
     public let ccpaOptout: Bool
     public let platform: String?
@@ -108,21 +111,13 @@ public struct UniversalConsentRecord: Codable, Equatable {
     /// A copy of this record carrying a different `cookieOptions` map, used to return the
     /// reconciled state without mutating the raw decoded record.
     func withCookieOptions(_ cookieOptions: [String: Bool]) -> UniversalConsentRecord {
-        UniversalConsentRecord(
-            status: status,
-            consentPreferences: UniversalConsentPreferences(
-                isCustomised: consentPreferences?.isCustomised ?? false,
-                cookieOptions: cookieOptions
-            ),
-            consentMode: consentMode,
-            ccpaOptout: ccpaOptout,
-            platform: platform,
-            policyName: policyName,
-            configVersion: configVersion,
-            updatedAt: updatedAt,
-            gpc: gpc,
-            tcfString: tcfString,
-            gppString: gppString
+        // Copy self and swap only the preferences, so every other field — including any added
+        // in the future — carries over untouched rather than defaulting through the initializer.
+        var copy = self
+        copy.consentPreferences = UniversalConsentPreferences(
+            isCustomised: consentPreferences?.isCustomised ?? false,
+            cookieOptions: cookieOptions
         )
+        return copy
     }
 }
