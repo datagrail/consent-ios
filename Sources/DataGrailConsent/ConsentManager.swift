@@ -551,14 +551,28 @@ extension ConsentManager {
                 if rawFromRecord != nil, let effective = self.getCategories() {
                     onRehydrated?(effective)
                 }
-                // Adopt-without-POST: a found record with no local change is already applied to
-                // local state, so re-POSTing it would only echo state the edge already holds.
-                if localChoice == nil, rawFromRecord != nil {
+                // Adopt-without-POST when a FOUND record leaves no GENUINE local change to sync:
+                // either there is no local choice, or the local choice already equals the record's
+                // cookieOptions. The rehydrate above already applied the record to local state, so
+                // re-POSTing an unchanged snapshot only echoes state the edge holds — and because
+                // the server never merges, an equal-but-older snapshot could clobber a record that
+                // is newer than this device knows. Sync-on-change writes genuine changes only.
+                if let rawFromRecord,
+                   localChoice == nil || Self.cookieOptionsMatch(localChoice, rawFromRecord) {
                     completion(.success(()))
                     return
                 }
-                // Write-through the user's RAW local choice. On a genuine miss with no local
-                // choice the writer surfaces "nothing to sync" rather than fabricating a default.
+                // Reaching here is either a MISS (no record to adopt — seed the first record from
+                // the local choice) or a FOUND record the local choice genuinely DIFFERS from.
+                // Write the RAW local choice through; on a genuine miss with no local choice the
+                // writer surfaces "nothing to sync" rather than fabricating a default.
+                //
+                // NOTE (TRUST-2592): when a found record and the local choice differ, deciding
+                // which side WINS a true cross-device conflict — a stale local snapshot vs. a
+                // newer remote answer — needs a provenance-aware, decision_ts-stamped merge the
+                // SDK does not hold and the store never performs; that reconciliation is the
+                // edge's job. Until then the local change is written through (sync-on-change); the
+                // equality guard above only removes the redundant re-write of an unchanged choice.
                 self.setUserIdentifier(
                     identifier,
                     apiKey: apiKey,
@@ -568,5 +582,27 @@ extension ConsentManager {
                 )
             }
         }
+    }
+
+    /// Whether a local choice's cookieOptions equal a just-fetched record's, compared as an
+    /// order-independent `{gtmKey: isEnabled}` map. Used by ``syncUserIdentifier`` to skip a
+    /// redundant Universal Consent re-write when the local choice adds no genuine change over the
+    /// record just adopted — only `cookieOptions` are compared, since that is the payload the
+    /// write carries. A `nil` local choice is never a match (the caller handles the miss/adopt
+    /// case separately).
+    private static func cookieOptionsMatch(
+        _ local: ConsentPreferences?,
+        _ record: ConsentPreferences
+    ) -> Bool {
+        guard let local else { return false }
+        return cookieOptionsMap(local) == cookieOptionsMap(record)
+    }
+
+    private static func cookieOptionsMap(_ prefs: ConsentPreferences) -> [String: Bool] {
+        var map: [String: Bool] = [:]
+        for option in prefs.cookieOptions {
+            map[option.gtmKey] = option.isEnabled
+        }
+        return map
     }
 }

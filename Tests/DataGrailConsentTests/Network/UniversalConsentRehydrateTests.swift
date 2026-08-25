@@ -459,6 +459,43 @@ extension UniversalConsentRehydrateTests {
         )
     }
 
+    /// A found record whose cookieOptions ALREADY EQUAL the local choice is adopted without a
+    /// re-POST — even though a local choice exists. Re-writing an unchanged snapshot only echoes
+    /// state the edge holds and, because the server never merges, an equal-but-older snapshot
+    /// could clobber a record newer than this device knows. Sync-on-change writes genuine changes.
+    func testSyncAdoptsWithoutPostWhenLocalChoiceEqualsTheFoundRecord() {
+        // Local choice matches the stored record exactly (both marketing ON).
+        try? storage.savePreferences(ConsentPreferences(
+            isCustomised: true,
+            cookieOptions: [
+                CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
+                CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: true),
+            ]
+        ))
+        mockNetworkClient.requestResult = .success(foundRecordJSON(marketing: true))
+
+        let expectation = expectation(description: "adopt without post when unchanged")
+        sut.syncUserIdentifier(
+            "user@example.com",
+            apiKey: testApiKey,
+            trackingSignal: .authorized
+        ) { result in
+            if case let .failure(error) = result {
+                XCTFail("Expected success, got \(error)")
+            }
+            expectation.fulfill()
+        }
+        waitForExpectations(timeout: 1.0)
+
+        // Nothing was POSTed: the last (and only) request was the GET — the local choice equals
+        // the record, so there is no genuine change to sync.
+        XCTAssertEqual(
+            mockNetworkClient.lastMethod,
+            .get,
+            "an unchanged local choice equal to the found record is adopted, not re-POSTed"
+        )
+    }
+
     /// A miss with a local choice seeds the first cross-device record, and the write carries the
     /// RAW choice: a device signal (here ATT denied) suppresses local reads but must never be
     /// folded into the cross-device store, or a later session without the signal reads it back as
