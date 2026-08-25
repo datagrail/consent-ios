@@ -266,8 +266,14 @@ public class ConsentManager {
             return
         }
 
-        guard let prefs = preferences ?? getCategories() else {
-            completion(.failure(.invalidConfiguration("No consent preferences available to sync")))
+        // Never fall back to getCategories(): its default (isCustomised: false) would POST a
+        // fabricated choice for a user who never saw the banner, and any found record makes
+        // rehydrate treat that identifier as answered — the banner would never show again.
+        // Only an explicitly passed value or a real stored choice may be synced.
+        guard let prefs = preferences ?? storage.loadPreferences() else {
+            completion(.failure(.invalidConfiguration(
+                "No consent preferences to sync — pass preferences or record a choice first"
+            )))
             return
         }
 
@@ -308,21 +314,27 @@ public class ConsentManager {
             return
         }
 
+        // Capture the essential categories up front so reconciliation needs no `self` in the
+        // completion. A `[weak self]` that deallocated mid-flight (e.g. a re-initialize on
+        // logout/login while this fetch is in flight) used to fall through to returning the
+        // RAW, unreconciled record — skipping ATT/GPC/CCPA suppression entirely.
+        let essentialCategoryKeys = Set(getEssentialCategories())
         consentService.getUniversalConsent(
             identifier,
             config: config,
             apiKey: apiKey
-        ) { [weak self] result in
+        ) { result in
             switch result {
             case let .success(record):
-                guard let self, let record, let prefs = record.consentPreferences else {
+                guard let record, let prefs = record.consentPreferences else {
                     completion(.success(record))
                     return
                 }
-                let reconciled = ConsentService.reconcile(
-                    cookieOptions: prefs.cookieOptions,
-                    suppress: ConsentService.suppresses(record: record, trackingSignal: trackingSignal),
-                    essentialCategoryKeys: Set(self.getEssentialCategories())
+                let reconciled = ConsentService.reconciledCookieOptions(
+                    record: record,
+                    rawCookieOptions: prefs.cookieOptions,
+                    trackingSignal: trackingSignal,
+                    essentialCategoryKeys: essentialCategoryKeys
                 )
                 completion(.success(record.withCookieOptions(reconciled)))
             case let .failure(error):
@@ -394,14 +406,19 @@ public class ConsentManager {
         ) { [weak self] result in
             switch result {
             case let .success(record):
-                guard let self,
-                      let record,
-                      let rawCookieOptions = record.consentPreferences?.cookieOptions,
-                      !rawCookieOptions.isEmpty
-                else {
+                guard let self else {
                     completion(.success(nil))
                     return
                 }
+                // A miss (no record) writes nothing. A FOUND record is authoritative even when
+                // its cookieOptions map is present-but-empty (answered with zero non-essential
+                // categories) — treating that as a miss would re-prompt a user who already
+                // answered, diverging from fetchUniversalConsent which counts it as found.
+                guard let record else {
+                    completion(.success(nil))
+                    return
+                }
+                let rawCookieOptions = record.consentPreferences?.cookieOptions ?? [:]
 
                 let raw = ConsentPreferences(
                     // A record that came back at all represents an answered prompt, so the
@@ -412,11 +429,13 @@ public class ConsentManager {
                     cookieOptions: rawCookieOptions.map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
                 )
 
-                // Local state gets the RECONCILED view — the suppress decision is shared with
-                // fetchUniversalConsent via ConsentService.suppresses so the two cannot diverge.
-                let reconciled = ConsentService.reconcile(
-                    cookieOptions: rawCookieOptions,
-                    suppress: ConsentService.suppresses(record: record, trackingSignal: trackingSignal),
+                // Local state gets the RECONCILED view — the suppress+reconcile sequence is
+                // shared with fetchUniversalConsent via ConsentService.reconciledCookieOptions
+                // so the two read paths cannot diverge.
+                let reconciled = ConsentService.reconciledCookieOptions(
+                    record: record,
+                    rawCookieOptions: rawCookieOptions,
+                    trackingSignal: trackingSignal,
                     essentialCategoryKeys: Set(self.getEssentialCategories())
                 )
                 let effective = ConsentPreferences(

@@ -22,6 +22,8 @@ public struct ConsentConfig: Codable {
 
     /// Consent project identifier used for the Universal Consent user-hash.
     /// Present in the published config JSON but optional for backwards compatibility.
+    /// `var` (not `let`) so the synthesized memberwise initializer defaults it to `nil`,
+    /// which the many non-UC config builders in the test suite rely on.
     public var consentProjectId: String?
 
     /// Universal Consent feature configuration. Absent when the feature is disabled.

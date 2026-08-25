@@ -362,7 +362,13 @@ public extension ConsentService {
     ) -> String {
         let input = "\(dgCustomerId):\(consentProjectId):\(normalizeUserIdentifier(identifier))"
         let digest = SHA256.hash(data: Data(input.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        return hexEncoded(digest)
+    }
+
+    /// Lowercase hex encoding (two chars per byte), shared by the user hash and the nonce so
+    /// the two cannot render bytes differently.
+    static func hexEncoded<Bytes: Sequence>(_ bytes: Bytes) -> String where Bytes.Element == UInt8 {
+        bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     /// Reconcile stored preferences against the device's live tracking signal.
@@ -422,12 +428,31 @@ public extension ConsentService {
     /// The single source of truth for the "does an opt-out signal apply?" decision, shared by
     /// every read-path call site (`fetchUniversalConsent`, `rehydrateReturningRawPreferences`)
     /// so what an integrator inspects cannot diverge from what is persisted and drives
-    /// `isCategoryEnabled`. The record's stored `gpc` came from the web where GPC exists; the
-    /// tracking signal belongs to this device. Either suppresses and neither can re-enable what
-    /// the other suppressed. New opt-out-ish signals on the record (`ccpaOptout`, `gppString`,
-    /// `tcfString`) should be folded in here, once, rather than at each call site.
+    /// `isCategoryEnabled`. The record's stored `gpc` and `ccpaOptout` came from the web where
+    /// those signals exist; the tracking signal belongs to this device. Any of them suppresses
+    /// and none can re-enable what another suppressed — consistent with the OFF-only reconcile
+    /// contract. A stored CCPA "do not sell/share" opt-out is a marketing opt-out, so it must
+    /// force non-essential categories off on read just as GPC does. Remaining opt-out-ish
+    /// signals on the record (`gppString`, `tcfString`) get folded in here, once, when their
+    /// on-device meaning is settled, rather than at each call site.
     static func suppresses(record: UniversalConsentRecord, trackingSignal: TrackingSignal) -> Bool {
-        record.gpc || trackingSignal.suppressesNonEssential
+        record.gpc || record.ccpaOptout || trackingSignal.suppressesNonEssential
+    }
+
+    /// Reconcile a record's raw `cookieOptions` for the read path: the single suppress
+    /// decision and the OFF-only reconcile applied together, so `fetchUniversalConsent` and
+    /// `rehydrateReturningRawPreferences` share one sequence rather than hand-rolling it each.
+    static func reconciledCookieOptions(
+        record: UniversalConsentRecord,
+        rawCookieOptions: [String: Bool],
+        trackingSignal: TrackingSignal,
+        essentialCategoryKeys: Set<String>
+    ) -> [String: Bool] {
+        reconcile(
+            cookieOptions: rawCookieOptions,
+            suppress: suppresses(record: record, trackingSignal: trackingSignal),
+            essentialCategoryKeys: essentialCategoryKeys
+        )
     }
 
     /// Validate the Universal Consent preconditions and return the user hash.
@@ -522,6 +547,10 @@ public extension ConsentService {
         }
 
         networkClient.retryWithBackoff(
+            // A definite 4xx (bad/rotated key, disabled customer) will not succeed on replay,
+            // so fail fast rather than burning all retries with backoff on a first-time read.
+            // Same predicate the signed write uses; 5xx/transport failures still retry.
+            shouldRetry: { !$0.isClientError },
             operation: { operationCompletion in
                 self.networkClient.request(
                     url: url,
@@ -618,6 +647,7 @@ public extension ConsentService {
         }
 
         let url = buildURL(path: "/universal_consent")
+        let writeRequest = UniversalConsentWriteRequest(url: url, body: body, apiKey: apiKey)
 
         networkClient.retryWithBackoff(
             // A hard 4xx (malformed payload, rejected signature/key, 422) will not succeed on
@@ -629,21 +659,14 @@ public extension ConsentService {
                 guard let getSignature else {
                     // Limited mode: no signer configured, so send an API-key-only write with
                     // no signature/timestamp/nonce headers.
-                    self.performLimitedWrite(
-                        url: url,
-                        body: body,
-                        apiKey: apiKey,
-                        completion: operationCompletion
-                    )
+                    self.performLimitedWrite(writeRequest, completion: operationCompletion)
                     return
                 }
                 // Mint a fresh timestamp + nonce and invoke the customer signer per attempt,
                 // so a retried write is signed for its own timestamp/nonce and an expired
                 // signature can be re-minted. Secret never on device.
                 self.performSignedWrite(
-                    url: url,
-                    body: body,
-                    apiKey: apiKey,
+                    writeRequest,
                     customerId: config.dgCustomerId,
                     userHash: userHash,
                     getSignature: getSignature,
@@ -693,6 +716,16 @@ public extension ConsentService {
         return try JSONSerialization.data(withJSONObject: payload)
     }
 
+    /// The transport inputs both write modes share: where to POST, the encoded body, and the
+    /// API key the edge needs on every request. Bundled so the signed and limited write helpers
+    /// stay within SwiftLint's parameter-count limit without splitting three values that always
+    /// travel together — this does not change the signing contract.
+    private struct UniversalConsentWriteRequest {
+        let url: URL
+        let body: Data
+        let apiKey: String
+    }
+
     /// Mint the timestamp + nonce, build `stringToSign`, have the customer sign it, and POST
     /// with the write headers.
     ///
@@ -700,9 +733,7 @@ public extension ConsentService {
     /// `stringToSign` (`X-DG-Timestamp` / `X-DG-Nonce`), so the bytes the customer signed and
     /// the bytes on the wire cannot drift.
     private func performSignedWrite(
-        url: URL,
-        body: Data,
-        apiKey: String,
+        _ request: UniversalConsentWriteRequest,
         customerId: String,
         userHash: String,
         getSignature: @escaping UniversalConsentSignatureProvider,
@@ -730,16 +761,16 @@ public extension ConsentService {
                 // Timestamp and nonce come from the payload we just signed, never from the
                 // callback — that is what guarantees the signed and sent values match.
                 let headers: [String: String] = [
-                    "X-DG-Api-Key": apiKey,
+                    "X-DG-Api-Key": request.apiKey,
                     "X-DG-Signature": sig.signature,
                     "X-DG-Timestamp": String(payload.timestamp),
                     "X-DG-Nonce": payload.nonce,
                     "X-DG-Key-Id": sig.keyId,
                 ]
                 self.networkClient.request(
-                    url: url,
+                    url: request.url,
                     method: .post,
-                    body: body,
+                    body: request.body,
                     headers: headers
                 ) { result in
                     switch result {
@@ -756,16 +787,14 @@ public extension ConsentService {
     /// POST a limited (API-key-only) write: no signer configured, so no signature, timestamp,
     /// or nonce headers. `X-DG-Api-Key` still goes up so the edge can resolve the customer.
     private func performLimitedWrite(
-        url: URL,
-        body: Data,
-        apiKey: String,
+        _ request: UniversalConsentWriteRequest,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         networkClient.request(
-            url: url,
+            url: request.url,
             method: .post,
-            body: body,
-            headers: ["X-DG-Api-Key": apiKey]
+            body: request.body,
+            headers: ["X-DG-Api-Key": request.apiKey]
         ) { result in
             switch result {
             case .success:
@@ -789,6 +818,6 @@ public extension ConsentService {
                 bytes[index] = UInt8.random(in: UInt8.min ... UInt8.max, using: &rng)
             }
         }
-        return bytes.map { String(format: "%02x", $0) }.joined()
+        return hexEncoded(bytes)
     }
 }
