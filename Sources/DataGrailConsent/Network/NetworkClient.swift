@@ -68,7 +68,7 @@ public class NetworkClient {
             }
 
             guard (200 ... 299).contains(statusCode) else {
-                completion(.failure(.networkError("HTTP \(statusCode), data: \(dataSize) bytes")))
+                completion(.failure(.httpError(statusCode: statusCode, message: "data: \(dataSize) bytes")))
                 return
             }
 
@@ -87,11 +87,17 @@ public class NetworkClient {
     /// - Parameters:
     ///   - maxAttempts: Maximum number of retry attempts (default: 5)
     ///   - baseDelay: Base delay in seconds (default: 0.25)
+    ///   - shouldRetry: Predicate deciding whether a given failure is worth retrying. Defaults
+    ///     to retrying every failure, preserving the behavior of existing callers. Operations
+    ///     that re-invoke an external service per attempt pass a predicate that skips retries
+    ///     the server has already rejected (e.g. 4xx), to avoid amplifying load onto that
+    ///     service during an error.
     ///   - operation: The operation to retry
     ///   - completion: Completion handler with result
     public func retryWithBackoff<T>(
         maxAttempts: Int = 5,
         baseDelay: TimeInterval = 0.25,
+        shouldRetry: @escaping (ConsentError) -> Bool = { _ in true },
         operation: @escaping (@escaping (Result<T, ConsentError>) -> Void) -> Void,
         completion: @escaping (Result<T, ConsentError>) -> Void
     ) {
@@ -102,7 +108,7 @@ public class NetworkClient {
                     completion(.success(value))
 
                 case let .failure(error):
-                    if attemptNumber >= maxAttempts {
+                    if attemptNumber >= maxAttempts || !shouldRetry(error) {
                         completion(.failure(error))
                         return
                     }

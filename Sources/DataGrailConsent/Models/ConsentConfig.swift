@@ -20,11 +20,40 @@ public struct ConsentConfig: Codable {
     public let initialCategories: InitialCategories
     public let layout: Layout
 
+    /// Consent project identifier used for the Universal Consent user-hash.
+    /// Present in the published config JSON but optional for backwards compatibility.
+    /// `var` (not `let`) so the synthesized memberwise initializer defaults it to `nil`,
+    /// which the many non-UC config builders in the test suite rely on.
+    public var consentProjectId: String?
+
+    /// Universal Consent feature configuration. Absent when the feature is disabled.
+    public var universalConsent: UniversalConsentConfig?
+
     enum CodingKeys: String, CodingKey {
         case version, consentContainerVersionId, dgCustomerId, dch, dc, privacyDomain
         case plugins, testMode, ignoreDoNotTrack, trackingDetailsUrl, consentMode
         case showBanner, consentPolicy, gppUsNat, initialCategories, layout
         case publishDate = "p"
+        case consentProjectId, universalConsent
+    }
+}
+
+/// Universal Consent feature configuration.
+public struct UniversalConsentConfig: Codable {
+    /// Whether Universal Consent (cross-device consent sync) is enabled.
+    public let enabled: Bool
+
+    /// Whether opt-out state should be synced through Universal Consent.
+    public let syncOptout: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case syncOptout = "sync_optout"
+    }
+
+    public init(enabled: Bool, syncOptout: Bool) {
+        self.enabled = enabled
+        self.syncOptout = syncOptout
     }
 }
 
