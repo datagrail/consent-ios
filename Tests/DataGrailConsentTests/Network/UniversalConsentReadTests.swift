@@ -264,25 +264,29 @@ final class UniversalConsentReadTests: XCTestCase {
     /// record's stored `gpc` or a suppressing tracking signal is enough, and only when both
     /// are permissive does it not suppress.
     func testSuppressesCombinesStoredGpcAndTrackingSignal() {
-        func record(gpc: Bool) -> UniversalConsentRecord {
-            UniversalConsentRecord(status: "found", gpc: gpc)
+        func record(gpc: Bool = false, ccpaOptout: Bool = false) -> UniversalConsentRecord {
+            UniversalConsentRecord(status: "found", ccpaOptout: ccpaOptout, gpc: gpc)
         }
 
         XCTAssertFalse(
-            ConsentService.suppresses(record: record(gpc: false), trackingSignal: .authorized),
-            "neither signal suppresses"
+            ConsentService.suppresses(record: record(), trackingSignal: .authorized),
+            "no signal suppresses"
         )
         XCTAssertTrue(
             ConsentService.suppresses(record: record(gpc: true), trackingSignal: .authorized),
             "stored gpc alone suppresses"
         )
         XCTAssertTrue(
-            ConsentService.suppresses(record: record(gpc: false), trackingSignal: .denied),
+            ConsentService.suppresses(record: record(ccpaOptout: true), trackingSignal: .authorized),
+            "stored CCPA opt-out alone suppresses"
+        )
+        XCTAssertTrue(
+            ConsentService.suppresses(record: record(), trackingSignal: .denied),
             "tracking signal alone suppresses"
         )
         XCTAssertTrue(
-            ConsentService.suppresses(record: record(gpc: true), trackingSignal: .denied),
-            "both suppress"
+            ConsentService.suppresses(record: record(gpc: true, ccpaOptout: true), trackingSignal: .denied),
+            "all suppress"
         )
     }
 

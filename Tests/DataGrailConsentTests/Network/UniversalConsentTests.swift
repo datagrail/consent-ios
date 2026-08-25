@@ -319,8 +319,7 @@ final class UniversalConsentTests: XCTestCase {
         for projectId: String? in [nil, "", "   "] {
             let expectation = expectation(description: "unusable projectId \(projectId ?? "nil") fails")
 
-            var config = makeConfig()
-            config.consentProjectId = projectId
+            let config = makeConfig(consentProjectId: projectId)
             mockNetworkClient.requestCalled = false
 
             let provider: UniversalConsentSignatureProvider = { _, done in
@@ -375,8 +374,8 @@ final class UniversalConsentTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func makeConfig() -> ConsentConfig {
-        UCFixtures.makeConfig(privacyDomain: testPrivacyDomain)
+    private func makeConfig(consentProjectId: String? = UCFixtures.projectId) -> ConsentConfig {
+        UCFixtures.makeConfig(privacyDomain: testPrivacyDomain, consentProjectId: consentProjectId)
     }
 }
 

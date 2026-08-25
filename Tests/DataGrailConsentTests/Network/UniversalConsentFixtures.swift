@@ -7,7 +7,7 @@ enum UCFixtures {
     static let customerId = "ac46d8ad-a67a-431f-a5d5-9e3eb922dae7"
     static let projectId = "proj_abc123"
 
-    static func makeConfig(privacyDomain: String) -> ConsentConfig {
+    static func makeConfig(privacyDomain: String, consentProjectId: String? = projectId) -> ConsentConfig {
         ConsentConfig(
             version: "1.0.0",
             consentContainerVersionId: "container1",
@@ -49,7 +49,7 @@ enum UCFixtures {
                 gpcDntLayerId: nil,
                 consentLayers: [:]
             ),
-            consentProjectId: projectId,
+            consentProjectId: consentProjectId,
             universalConsent: UniversalConsentConfig(enabled: true, syncOptout: false)
         )
     }

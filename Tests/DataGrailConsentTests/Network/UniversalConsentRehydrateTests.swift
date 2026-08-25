@@ -234,8 +234,71 @@ final class UniversalConsentRehydrateTests: XCTestCase {
         }
         waitForExpectations(timeout: 1.0)
 
-        // A miss is the absence of a signal, not a denial — nothing to write, nothing stored.
-        XCTAssertNil(try? result?.get() ?? nil)
+        // A miss is the absence of a signal, not a denial — a success carrying nil, nothing
+        // to write, nothing stored.
+        if case let .success(preferences) = result {
+            XCTAssertNil(preferences, "a miss returns success(nil), not a fabricated record")
+        } else {
+            XCTFail("A miss is not an error, got \(String(describing: result))")
+        }
+        XCTAssertNil(storage.loadPreferences())
+    }
+
+    // MARK: - A found record answered with zero non-essential categories is still an answer
+
+    func testFoundRecordWithEmptyCookieOptionsRehydratesAndSuppressesBanner() {
+        XCTAssertTrue(sut.shouldDisplayBanner())
+        mockNetworkClient.requestResult = .success(Data(#"""
+        {"status":"found","consent_preferences":{"isCustomised":true,"cookieOptions":{}},"gpc":false}
+        """#.utf8))
+
+        let expectation = expectation(description: "empty-map record rehydrates")
+        sut.rehydrateFromUniversalConsent(
+            "user@example.com",
+            apiKey: testApiKey,
+            trackingSignal: .authorized
+        ) { result in
+            switch result {
+            case let .success(rehydrated):
+                XCTAssertTrue(rehydrated, "a found record with zero non-essential categories is still an answer")
+            case let .failure(error):
+                XCTFail("Expected success, got \(error)")
+            }
+            expectation.fulfill()
+        }
+        waitForExpectations(timeout: 1.0)
+
+        // A present-but-empty cookieOptions map is a found record, not a miss. Local state now
+        // exists, so the banner does not re-prompt a user who already answered elsewhere.
+        XCTAssertNotNil(storage.loadPreferences())
+        XCTAssertFalse(sut.shouldDisplayBanner())
+    }
+
+    // MARK: - A caller who never recorded a choice must not sync a fabricated default
+
+    func testSetUserIdentifierWithoutAChoiceDoesNotWriteFabricatedDefault() {
+        // Fresh install: the user never answered a banner, so there is no stored choice and
+        // no preferences are passed in.
+        XCTAssertNil(storage.loadPreferences())
+        mockNetworkClient.requestCalled = false
+
+        let expectation = expectation(description: "no write without a choice")
+        sut.setUserIdentifier("user@example.com", apiKey: testApiKey) { result in
+            switch result {
+            case .success:
+                XCTFail("Must not sync a fabricated default for a user who never answered")
+            case let .failure(error):
+                guard case .invalidConfiguration = error else {
+                    return XCTFail("Expected invalidConfiguration, got \(error)")
+                }
+            }
+            expectation.fulfill()
+        }
+        waitForExpectations(timeout: 1.0)
+
+        // The default (isCustomised: false) was never POSTed to the cross-device store — which
+        // would otherwise mark the identifier answered and hide the banner forever.
+        XCTAssertFalse(mockNetworkClient.requestCalled)
         XCTAssertNil(storage.loadPreferences())
     }
 
