@@ -364,6 +364,23 @@ final class NetworkClientTests: XCTestCase {
         XCTAssertEqual(attemptCount, 3, "5xx is retryable and should exhaust attempts")
     }
 
+    func testClientErrorCarveOutFor408And429() {
+        // 408 (Request Timeout) and 429 (Too Many Requests) are transient, not definitive
+        // rejections, so they must NOT be client errors and must stay retryable — matching the
+        // web SDK's isRetryableStatus. Every other 4xx (e.g. 400/403) is a permanent rejection:
+        // a client error and non-retryable.
+        for status in [408, 429] {
+            let error = ConsentError.httpError(statusCode: status, message: "transient")
+            XCTAssertFalse(error.isClientError, "\(status) must not be a client error")
+            XCTAssertTrue(ConsentError.isRetryable(error), "\(status) must be retryable")
+        }
+        for status in [400, 403] {
+            let error = ConsentError.httpError(statusCode: status, message: "rejected")
+            XCTAssertTrue(error.isClientError, "\(status) must be a client error")
+            XCTAssertFalse(ConsentError.isRetryable(error), "\(status) must not be retryable")
+        }
+    }
+
     func testRetryExponentialBackoff() {
         // Given
         let expectation = XCTestExpectation(description: "Retry completes")

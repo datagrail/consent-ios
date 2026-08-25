@@ -9,7 +9,7 @@ public enum ConsentError: LocalizedError {
     /// A non-2xx HTTP response, carrying the status code so callers can decide whether
     /// retrying could help. Transport-level failures stay ``networkError``.
     ///
-    /// NOTE: This case is new as of 2.0. Non-2xx responses previously surfaced as
+    /// NOTE: This case is new as of 1.7.0. Non-2xx responses previously surfaced as
     /// ``networkError``; they now surface here so retry logic can branch on the status code
     /// (see ``isClientError``). This is a source-breaking change for host apps that switch
     /// exhaustively over `ConsentError` — add a case for `.httpError` (or an `@unknown default`).
@@ -53,19 +53,21 @@ public enum ConsentError: LocalizedError {
     /// that re-invoke an external service per attempt (e.g. a customer's signing backend) must
     /// not retry it. 5xx and transport failures are retryable and are NOT client errors.
     ///
-    /// 429 (Too Many Requests) is deliberately EXCLUDED: it is not a permanent rejection but a
-    /// rate-limit that clears with time, so it must remain retryable (with backoff). Treating it
-    /// as a client error would make a rate-limited UC read/write give up after a single attempt.
+    /// 408 (Request Timeout) and 429 (Too Many Requests) are deliberately EXCLUDED: neither is a
+    /// permanent rejection. 408 is a transient timeout and 429 is a rate-limit that clears with
+    /// time, so both must remain retryable (with backoff). This mirrors the web SDK's
+    /// `isRetryableStatus` (`status === 408 || status === 429`). Treating either as a client error
+    /// would make a timed-out or rate-limited UC read/write give up after a single attempt.
     public var isClientError: Bool {
         if case let .httpError(statusCode, _) = self {
-            return (400 ..< 500).contains(statusCode) && statusCode != 429
+            return (400 ..< 500).contains(statusCode) && statusCode != 429 && statusCode != 408
         }
         return false
     }
 
     /// The default retry-eligibility policy for ``NetworkClient/retryWithBackoff(maxAttempts:baseDelay:shouldRetry:operation:completion:)``:
     /// retry any failure EXCEPT a definitive 4xx client error, which cannot succeed on replay
-    /// (see ``isClientError``; 429 stays retryable). Extracted so every retried call site
+    /// (see ``isClientError``; 408 and 429 stay retryable). Extracted so every retried call site
     /// (`savePreferences`, `saveOpen`, `getUniversalConsent`, `setUserIdentifier`, and
     /// `ConfigService.fetchConfigWithRetry`) shares ONE predicate and a future site cannot
     /// silently omit or invert it (e.g. `{ $0.isClientError }`). Call sites with an extra
