@@ -29,13 +29,13 @@ Add the package in Xcode:
 
 1. File > Add Packages
 2. Enter: `https://github.com/datagrail/consent-ios.git`
-3. Select version `1.5.0`
+3. Select version `1.6.0`
 
 Or add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/datagrail/consent-ios.git", from: "1.5.0")
+    .package(url: "https://github.com/datagrail/consent-ios.git", from: "1.6.0")
 ]
 ```
 

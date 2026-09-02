@@ -305,10 +305,12 @@ public class DataGrailConsent {
         /// - Parameters:
         ///   - presentingViewController: The view controller to present from
         ///   - style: Display style (.modal or .fullScreen)
+        ///   - textStyleConfig: Optional font overrides for banner text elements
         ///   - completion: Called when user saves preferences or dismisses (nil if dismissed)
         public func showBanner(
             from presentingViewController: UIViewController,
             style: BannerDisplayStyle,
+            textStyleConfig: BannerTextStyleConfig = BannerTextStyleConfig(),
             completion: @escaping (ConsentPreferences?) -> Void
         ) {
             guard let manager, let config = manager.config else {
@@ -322,6 +324,7 @@ public class DataGrailConsent {
                 config: config,
                 initialPreferences: currentPreferences,
                 displayStyle: style,
+                textStyleConfig: textStyleConfig,
                 completion: { [weak self] preferences in
                     guard let self, let preferences else {
                         completion(nil)
@@ -343,4 +346,154 @@ public class DataGrailConsent {
             presentingViewController.present(bannerVC, animated: true)
         }
     #endif
+}
+
+// MARK: - Universal Consent
+
+// In an extension, not the main class body, so the primary declaration stays inside
+// SwiftLint's type_body_length limit. Same file: these call `manager` and
+// `onConsentChangedCallback`, which are private and therefore file-scoped.
+public extension DataGrailConsent {
+
+    /// Register a user identifier and sync their consent across devices via the
+    /// Universal Consent API.
+    ///
+    /// The SDK computes the user hash (`SHA-256(customerId:projectId:identifier)`), mints the
+    /// timestamp and nonce, builds `stringToSign = "{customerId}:{userHash}:{timestamp}:{nonce}"`,
+    /// and reconciles the device's live tracking signal on-device — but does NOT compute the
+    /// HMAC. It invokes the customer-provided `getSignature` closure — which calls the
+    /// customer's own backend — with that payload to obtain `{ signature, keyId }`, then
+    /// attaches `X-DG-Signature`, `X-DG-Key-Id`, and the SDK's own `X-DG-Timestamp` /
+    /// `X-DG-Nonce`. The shared secret never touches the device. Pass `nil` for `getSignature`
+    /// to send a limited (API-key-only) write.
+    ///
+    /// Reads then writes. The read applies the tracking signal to LOCAL state; the write
+    /// carries the user's RAW preferences. A device signal never changes what is stored
+    /// cross-device — otherwise opening the app with ATT denied would erase a marketing
+    /// opt-in the user made on the web, for every device on their identifier.
+    /// - Parameters:
+    ///   - identifier: The user identifier (email, account id, …). Normalized (NFC →
+    ///     trim → lowercase) before hashing, so casing and stray whitespace cannot
+    ///     split one user into multiple records.
+    ///   - apiKey: Customer API key, sent as `X-DG-Api-Key` on every request so the
+    ///     edge can resolve customer/tier/secret from KVS (required on writes to
+    ///     locate the HMAC secret to verify).
+    ///   - trackingSignal: The device's live tracking signal. Defaults to the current
+    ///     App Tracking Transparency status, which the SDK reads from the OS — you do
+    ///     not need to pass this. Override it only if your app manages ATT itself and
+    ///     already holds the status. `denied` and `restricted` suppress non-essential
+    ///     categories in the local state this call rehydrates; `authorized` and
+    ///     `notDetermined` leave it untouched. A signal never enables a category, and
+    ///     never affects what is written to the cross-device store.
+    ///   - getSignature: Customer-provided signature provider (calls their backend). `nil`
+    ///     selects limited (API-key-only) mode.
+    ///   - completion: Completion handler with result.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    func setUserIdentifier(
+        _ identifier: String,
+        apiKey: String,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
+        getSignature: UniversalConsentSignatureProvider? = nil,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
+        guard let manager else {
+            completion(.failure(.notInitialized))
+            return
+        }
+
+        // READ then WRITE. Rehydrating first honors a choice made on the web or another device
+        // in local state; the write then carries the user's CURRENT LOCAL choice (sync-on-change)
+        // and NEVER re-POSTs the fetched record — see ConsentManager.syncUserIdentifier.
+        manager.syncUserIdentifier(
+            identifier,
+            apiKey: apiKey,
+            trackingSignal: trackingSignal,
+            getSignature: getSignature,
+            onRehydrated: { [weak self] preferences in
+                DispatchQueue.main.async {
+                    self?.onConsentChangedCallback?(preferences)
+                }
+            },
+            completion: { result in
+                DispatchQueue.main.async {
+                    completion(result)
+                }
+            }
+        )
+    }
+
+    /// Fetch a user's stored Universal Consent record without changing local state.
+    ///
+    /// Returns the record with signals already reconciled on-device (see
+    /// ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` for the
+    /// read-then-write flow that also applies it locally). Use this when you want to inspect
+    /// stored consent without touching the local store.
+    ///
+    /// - Parameters:
+    ///   - identifier: The user identifier. Normalized (NFC → trim → lowercase) before hashing.
+    ///   - apiKey: Customer API key, sent as `X-DG-Api-Key`.
+    ///   - trackingSignal: This device's live signal. Defaults to the current ATT status.
+    ///   - completion: Receives the reconciled record, or `nil` when no record is stored for
+    ///     this user. `nil` means "no signal" — it is NOT an opt-out.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    func fetchUniversalConsent(
+        _ identifier: String,
+        apiKey: String,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
+        completion: @escaping (Result<UniversalConsentRecord?, ConsentError>) -> Void
+    ) {
+        guard let manager else {
+            completion(.failure(.notInitialized))
+            return
+        }
+
+        manager.fetchUniversalConsent(
+            identifier,
+            apiKey: apiKey,
+            trackingSignal: trackingSignal
+        ) { result in
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+    }
+
+    /// Rehydrate local consent state from the Universal Consent store.
+    ///
+    /// Call this after ``initialize(configUrl:completion:)`` and BEFORE
+    /// ``shouldDisplayBanner()`` when you know who the user is. When a stored record exists,
+    /// its effective state is applied locally, so the banner does not re-prompt a user who
+    /// already consented on another device.
+    ///
+    /// A read miss leaves local state untouched and writes nothing — "no record" is the
+    /// absence of a signal, not a denial, so the banner still shows.
+    ///
+    /// - Parameter completion: `true` when local state was rehydrated from a stored record.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    func rehydrateFromUniversalConsent(
+        _ identifier: String,
+        apiKey: String,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
+        completion: @escaping (Result<Bool, ConsentError>) -> Void
+    ) {
+        guard let manager else {
+            completion(.failure(.notInitialized))
+            return
+        }
+
+        manager.rehydrateFromUniversalConsent(
+            identifier,
+            apiKey: apiKey,
+            trackingSignal: trackingSignal
+        ) { [weak self] result in
+            if case .success(true) = result, let preferences = manager.getCategories() {
+                DispatchQueue.main.async {
+                    self?.onConsentChangedCallback?(preferences)
+                }
+            }
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+    }
 }
