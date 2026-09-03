@@ -117,6 +117,17 @@ final class ConsentServiceTests: XCTestCase {
                 XCTAssertTrue(urlString.contains("revision=1.0.0"))
                 XCTAssertTrue(urlString.contains("default_policy=true"))
                 XCTAssertTrue(urlString.contains("locale_code="))
+
+                guard let url = self.mockNetworkClient.lastURL,
+                      let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+                else {
+                    XCTFail("Failed to parse save_open URL query items")
+                    expectation.fulfill()
+                    return
+                }
+                XCTAssertEqual(queryItems.first { $0.name == "library_version" }?.value, "1.5.0")
+                XCTAssertFalse((queryItems.first { $0.name == "os_version" }?.value ?? "").isEmpty)
+                XCTAssertEqual(queryItems.first { $0.name == "schema_version" }?.value, "v1")
             case let .failure(error):
                 XCTFail("Expected success but got error: \(error)")
             }
@@ -220,6 +231,8 @@ final class ConsentServiceTests: XCTestCase {
                 XCTAssertEqual(payload["revision"] as? String, "1.0.0")
                 XCTAssertEqual(payload["default_policy"] as? String, "true")
                 XCTAssertNotNil(payload["locale_code"])
+                XCTAssertEqual(payload["library_version"] as? String, "1.5.0")
+                XCTAssertFalse((payload["os_version"] as? String ?? "").isEmpty)
             }
             expectation.fulfill()
         }

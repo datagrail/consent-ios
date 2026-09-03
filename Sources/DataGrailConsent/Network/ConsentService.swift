@@ -69,8 +69,23 @@ public struct UniversalConsentSignature {
 public typealias UniversalConsentSignatureProvider =
     (UniversalConsentSigningPayload, @escaping (Result<UniversalConsentSignature, ConsentError>) -> Void) -> Void
 
+#if canImport(UIKit)
+    import UIKit
+#endif
+
 /// Service for sending consent data to backend
 public class ConsentService {
+    /// SDK version reported to the backend for version-analytics telemetry.
+    /// ponytail: no build-time version injection exists for this package (podspec version
+    /// isn't readable at runtime); keep this in sync manually with DataGrailConsent.podspec's s.version.
+    private static let sdkVersion = "1.5.0"
+
+    /// Wire schema version this SDK's models are written against. This SDK mirrors the v1
+    /// (byte-equivalent legacy) wire format and doesn't consume consent-schema's generated
+    /// types, so there's no runtime value to read this from — bump manually if/when this SDK
+    /// migrates to a newer schema.
+    private static let schemaVersion = "v1"
+
     /// Maximum time to wait for the customer-provided `getSignature` callback before failing a
     /// Universal Consent write with ``ConsentError/signatureTimeout``. The callback calls the
     /// customer's own signing backend, which the SDK does not control; without a ceiling a signer
@@ -174,6 +189,15 @@ public class ConsentService {
         }
     }
 
+    private var currentOsVersion: String {
+        #if canImport(UIKit)
+            return UIDevice.current.systemVersion
+        #else
+            let version = ProcessInfo.processInfo.operatingSystemVersion
+            return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
+        #endif
+    }
+
     /// Save banner open event to backend
     /// - Parameters:
     ///   - config: The consent configuration
@@ -186,23 +210,12 @@ public class ConsentService {
         let localeCode = currentLocaleCode
         let timestamp = ISO8601DateFormatter().string(from: Date())
 
+        let payload = saveOpenPayload(
+            config: config, consentId: consentId, localeCode: localeCode, timestamp: timestamp
+        )
+
         var components = URLComponents(string: "https://\(privacyDomain)/save_open")
-        var queryItems = [
-            URLQueryItem(name: "customer", value: config.dgCustomerId),
-            URLQueryItem(name: "action", value: "open"),
-            URLQueryItem(name: "policy_name", value: config.consentPolicy.name),
-            URLQueryItem(name: "revision", value: config.version),
-            URLQueryItem(name: "default_policy", value: String(config.consentPolicy.default)),
-            URLQueryItem(name: "locale_code", value: localeCode),
-            URLQueryItem(name: "consent_id", value: consentId),
-            URLQueryItem(name: "config_version", value: config.version),
-            URLQueryItem(name: "consent_container_version_id", value: config.consentContainerVersionId),
-            URLQueryItem(name: "timestamp", value: timestamp),
-        ]
-        if let policyUuid = config.consentPolicy.uuid {
-            queryItems.append(URLQueryItem(name: "policy_uuid", value: policyUuid))
-        }
-        components?.queryItems = queryItems
+        components?.queryItems = payload.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
 
         guard let url = components?.url else {
             completion(.failure(.networkError("Invalid URL")))
@@ -226,26 +239,36 @@ public class ConsentService {
                 case .success:
                     completion(.success(()))
                 case let .failure(error):
-                    var payload: [String: Any] = [
-                        "customer": config.dgCustomerId,
-                        "action": "open",
-                        "policy_name": config.consentPolicy.name,
-                        "revision": config.version,
-                        "default_policy": String(config.consentPolicy.default),
-                        "locale_code": localeCode,
-                        "consent_id": consentId,
-                        "config_version": config.version,
-                        "consent_container_version_id": config.consentContainerVersionId,
-                        "timestamp": timestamp,
-                    ]
-                    if let policyUuid = config.consentPolicy.uuid {
-                        payload["policy_uuid"] = policyUuid
-                    }
                     self.queueFailedRequest(payload: payload, endpoint: "save_open")
                     completion(.failure(error))
                 }
             }
         )
+    }
+
+    /// Build the field set shared by the save_open query string and its offline-retry payload
+    private func saveOpenPayload(
+        config: ConsentConfig, consentId: String, localeCode: String, timestamp: String
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "customer": config.dgCustomerId,
+            "action": "open",
+            "policy_name": config.consentPolicy.name,
+            "revision": config.version,
+            "default_policy": String(config.consentPolicy.default),
+            "locale_code": localeCode,
+            "consent_id": consentId,
+            "config_version": config.version,
+            "consent_container_version_id": config.consentContainerVersionId,
+            "timestamp": timestamp,
+            "library_version": Self.sdkVersion,
+            "os_version": currentOsVersion,
+            "schema_version": Self.schemaVersion,
+        ]
+        if let policyUuid = config.consentPolicy.uuid {
+            payload["policy_uuid"] = policyUuid
+        }
+        return payload
     }
 
     /// Retry any pending requests that failed previously
