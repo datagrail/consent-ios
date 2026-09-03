@@ -127,6 +127,7 @@ final class ConsentServiceTests: XCTestCase {
                 }
                 XCTAssertEqual(queryItems.first { $0.name == "library_version" }?.value, "1.5.0")
                 XCTAssertFalse((queryItems.first { $0.name == "os_version" }?.value ?? "").isEmpty)
+                XCTAssertEqual(queryItems.first { $0.name == "schema_version" }?.value, "v1")
             case let .failure(error):
                 XCTFail("Expected success but got error: \(error)")
             }

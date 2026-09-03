@@ -80,6 +80,12 @@ public class ConsentService {
     /// isn't readable at runtime); keep this in sync manually with DataGrailConsent.podspec's s.version.
     private static let sdkVersion = "1.5.0"
 
+    /// Wire schema version this SDK's models are written against. This SDK mirrors the v1
+    /// (byte-equivalent legacy) wire format and doesn't consume consent-schema's generated
+    /// types, so there's no runtime value to read this from — bump manually if/when this SDK
+    /// migrates to a newer schema.
+    private static let schemaVersion = "v1"
+
     /// Maximum time to wait for the customer-provided `getSignature` callback before failing a
     /// Universal Consent write with ``ConsentError/signatureTimeout``. The callback calls the
     /// customer's own signing backend, which the SDK does not control; without a ceiling a signer
@@ -257,6 +263,7 @@ public class ConsentService {
             "timestamp": timestamp,
             "library_version": Self.sdkVersion,
             "os_version": currentOsVersion,
+            "schema_version": Self.schemaVersion,
         ]
         if let policyUuid = config.consentPolicy.uuid {
             payload["policy_uuid"] = policyUuid
