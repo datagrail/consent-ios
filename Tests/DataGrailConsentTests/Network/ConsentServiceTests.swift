@@ -125,7 +125,7 @@ final class ConsentServiceTests: XCTestCase {
                     expectation.fulfill()
                     return
                 }
-                XCTAssertEqual(queryItems.first { $0.name == "library_version" }?.value, "1.5.0")
+                XCTAssertEqual(queryItems.first { $0.name == "library_version" }?.value, "1.7.0")
                 XCTAssertFalse((queryItems.first { $0.name == "os_version" }?.value ?? "").isEmpty)
                 XCTAssertEqual(queryItems.first { $0.name == "schema_version" }?.value, "v1")
             case let .failure(error):
@@ -231,7 +231,7 @@ final class ConsentServiceTests: XCTestCase {
                 XCTAssertEqual(payload["revision"] as? String, "1.0.0")
                 XCTAssertEqual(payload["default_policy"] as? String, "true")
                 XCTAssertNotNil(payload["locale_code"])
-                XCTAssertEqual(payload["library_version"] as? String, "1.5.0")
+                XCTAssertEqual(payload["library_version"] as? String, "1.7.0")
                 XCTAssertFalse((payload["os_version"] as? String ?? "").isEmpty)
             }
             expectation.fulfill()
