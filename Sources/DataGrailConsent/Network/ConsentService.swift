@@ -210,12 +210,13 @@ public class ConsentService {
         let localeCode = currentLocaleCode
         let timestamp = ISO8601DateFormatter().string(from: Date())
 
-        let payload = saveOpenPayload(
+        let payloadFields = saveOpenPayload(
             config: config, consentId: consentId, localeCode: localeCode, timestamp: timestamp
         )
+        let payload = Dictionary(uniqueKeysWithValues: payloadFields)
 
         var components = URLComponents(string: "https://\(privacyDomain)/save_open")
-        components?.queryItems = payload.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
+        components?.queryItems = payloadFields.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
 
         guard let url = components?.url else {
             completion(.failure(.networkError("Invalid URL")))
@@ -246,27 +247,29 @@ public class ConsentService {
         )
     }
 
-    /// Build the field set shared by the save_open query string and its offline-retry payload
+    /// Build the field set shared by the save_open query string and its offline-retry payload.
+    /// Returns an ordered array (rather than `[String: Any]`) so the live request's query-string
+    /// field order stays deterministic — a `Dictionary`'s iteration order is unspecified.
     private func saveOpenPayload(
         config: ConsentConfig, consentId: String, localeCode: String, timestamp: String
-    ) -> [String: Any] {
-        var payload: [String: Any] = [
-            "customer": config.dgCustomerId,
-            "action": "open",
-            "policy_name": config.consentPolicy.name,
-            "revision": config.version,
-            "default_policy": String(config.consentPolicy.default),
-            "locale_code": localeCode,
-            "consent_id": consentId,
-            "config_version": config.version,
-            "consent_container_version_id": config.consentContainerVersionId,
-            "timestamp": timestamp,
-            "library_version": Self.sdkVersion,
-            "os_version": currentOsVersion,
-            "schema_version": Self.schemaVersion,
+    ) -> [(key: String, value: Any)] {
+        var payload: [(key: String, value: Any)] = [
+            ("customer", config.dgCustomerId),
+            ("action", "open"),
+            ("policy_name", config.consentPolicy.name),
+            ("revision", config.version),
+            ("default_policy", String(config.consentPolicy.default)),
+            ("locale_code", localeCode),
+            ("consent_id", consentId),
+            ("config_version", config.version),
+            ("consent_container_version_id", config.consentContainerVersionId),
+            ("timestamp", timestamp),
+            ("library_version", Self.sdkVersion),
+            ("os_version", currentOsVersion),
+            ("schema_version", Self.schemaVersion),
         ]
         if let policyUuid = config.consentPolicy.uuid {
-            payload["policy_uuid"] = policyUuid
+            payload.append(("policy_uuid", policyUuid))
         }
         return payload
     }
