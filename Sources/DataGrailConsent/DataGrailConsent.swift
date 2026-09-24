@@ -371,6 +371,19 @@ public extension DataGrailConsent {
     /// carries the user's RAW preferences. A device signal never changes what is stored
     /// cross-device — otherwise opening the app with ATT denied would erase a marketing
     /// opt-in the user made on the web, for every device on their identifier.
+    ///
+    /// Login transitions and anonymous history. When no record is stored for this identity and
+    /// the device is not already bound to it (first login on this device, or a different user
+    /// logging in), a consent choice already on the device is pre-login anonymous history. The
+    /// SDK cannot tell whether that choice was made by the person now logging in or by a previous
+    /// user of a shared device, and does no heuristic shared-device or shared-account detection.
+    /// So by default it is NOT written to this identity's record: local state returns to neutral
+    /// (the banner shows again) and the call succeeds without writing. Pass
+    /// `attachAnonymousConsent: true` only when your app has its own same-session continuity
+    /// signal (e.g. the choice and the login happened in one visit). Once bound, later calls sync
+    /// local changes as before. The SDK also cannot detect two people sharing one account; a
+    /// stored record vs. a differing local choice is resolved as before (TRUST-2592). Call
+    /// ``clearUserIdentifier()`` on logout — the SDK cannot detect a logout it is not told about.
     /// - Parameters:
     ///   - identifier: The user identifier (email, account id, …). Normalized (NFC →
     ///     trim → lowercase) before hashing, so casing and stray whitespace cannot
@@ -387,6 +400,8 @@ public extension DataGrailConsent {
     ///     never affects what is written to the cross-device store.
     ///   - getSignature: Customer-provided signature provider (calls their backend). `nil`
     ///     selects limited (API-key-only) mode.
+    ///   - attachAnonymousConsent: Opt in to writing a pre-login local choice to this identity's
+    ///     record on a login transition (see above). Default `false`.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setUserIdentifier(
@@ -394,6 +409,7 @@ public extension DataGrailConsent {
         apiKey: String,
         trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         getSignature: UniversalConsentSignatureProvider? = nil,
+        attachAnonymousConsent: Bool = false,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         guard let manager else {
@@ -409,6 +425,7 @@ public extension DataGrailConsent {
             apiKey: apiKey,
             trackingSignal: trackingSignal,
             getSignature: getSignature,
+            attachAnonymousConsent: attachAnonymousConsent,
             onRehydrated: { [weak self] preferences in
                 DispatchQueue.main.async {
                     self?.onConsentChangedCallback?(preferences)
@@ -422,10 +439,31 @@ public extension DataGrailConsent {
         )
     }
 
+    /// Log out of Universal Consent: clear the identity binding and return this device to
+    /// neutral.
+    ///
+    /// The host MUST call this on logout — the SDK cannot detect a logout it is not told about.
+    /// Afterwards reads return the config's default exactly as a fresh install sees it
+    /// (``shouldDisplayBanner()`` is true again, ``hasUserConsent()`` false), and the
+    /// consent-changed listener fires with those default preferences so the app can re-gate its
+    /// SDKs.
+    ///
+    /// Non-destructive, unlike ``reset()``: no network request is made, the user's stored
+    /// Universal Consent record is not deleted or modified, the device's unique id, cached
+    /// config, config version, locale and pending offline queue are kept, and the SDK stays
+    /// initialized. Idempotent and safe to call when no identifier is set; a no-op before
+    /// ``initialize(configUrl:completion:)``, like ``reset()``.
+    func clearUserIdentifier() {
+        guard let preferences = manager?.clearUserIdentifier() else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onConsentChangedCallback?(preferences)
+        }
+    }
+
     /// Fetch a user's stored Universal Consent record without changing local state.
     ///
     /// Returns the record with signals already reconciled on-device (see
-    /// ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` for the
+    /// ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:attachAnonymousConsent:completion:)`` for the
     /// read-then-write flow that also applies it locally). Use this when you want to inspect
     /// stored consent without touching the local store.
     ///

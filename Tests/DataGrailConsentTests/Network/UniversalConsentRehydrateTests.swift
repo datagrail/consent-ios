@@ -500,6 +500,9 @@ extension UniversalConsentRehydrateTests {
     /// RAW choice: a device signal (here ATT denied) suppresses local reads but must never be
     /// folded into the cross-device store, or a later session without the signal reads it back as
     /// a revocation the user never made.
+    ///
+    /// Opts in with `attachAnonymousConsent: true`: without it, a first-login miss no longer seeds
+    /// the record from a pre-login choice (TRUST-2902, covered in UniversalConsentLogoutTests).
     func testSyncWritesRawLocalChoiceWithoutFoldingTheDeviceSignal() {
         try? storage.savePreferences(ConsentPreferences(
             isCustomised: true,
@@ -514,7 +517,8 @@ extension UniversalConsentRehydrateTests {
         sut.syncUserIdentifier(
             "user@example.com",
             apiKey: testApiKey,
-            trackingSignal: .denied
+            trackingSignal: .denied,
+            attachAnonymousConsent: true
         ) { result in
             if case let .failure(error) = result {
                 XCTFail("Expected success, got \(error)")
