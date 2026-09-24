@@ -390,24 +390,16 @@ public class ConsentManager {
         }
     }
 
-    /// Rehydrate, and hand back the RAW stored preferences from the record.
-    ///
-    /// Same behavior as ``rehydrateFromUniversalConsent(_:apiKey:trackingSignal:completion:)``,
-    /// except the completion carries the record's raw preferences (or `nil` on a miss) rather
-    /// than a Bool. The read-then-write entry point needs this: rehydration persists the
-    /// RECONCILED view locally, so a subsequent write that sourced its payload from
-    /// ``getCategories()`` would read back the suppressed state and persist it to the store as
-    /// though the user had chosen it. Returning the raw record lets the write carry what the
-    /// user actually consented to.
-    ///
-    /// Deliberately a separate name rather than an overload — one distinguished only by its
-    /// completion type is ambiguous at every call site that does not annotate the closure.
+    /// The rehydrate behind ``rehydrateReturningRawPreferences(_:apiKey:trackingSignal:completion:)``,
+    /// additionally reporting whether the store held a record at all. `raw` alone cannot tell a
+    /// GENUINE MISS from a signal-only found record (both carry no raw choice), and the
+    /// read-then-write path must treat only a genuine miss as a login transition (TRUST-2902).
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
-    func rehydrateReturningRawPreferences(
+    func rehydrateReportingFound(
         _ identifier: String,
         apiKey: String,
-        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
-        completion: @escaping (Result<ConsentPreferences?, ConsentError>) -> Void
+        trackingSignal: TrackingSignal,
+        completion: @escaping (Result<(found: Bool, raw: ConsentPreferences?), ConsentError>) -> Void
     ) {
         guard let config = currentConfig else {
             completion(.failure(.notInitialized))
@@ -438,7 +430,7 @@ public class ConsentManager {
                 // categories) — treating that as a miss would re-prompt a user who already
                 // answered, diverging from fetchUniversalConsent which counts it as found.
                 guard let record else {
-                    completion(.success(nil))
+                    completion(.success((found: false, raw: nil)))
                     return
                 }
                 // A signal-only record (a gpc/ccpa signal on file, but consentPreferences nil)
@@ -449,7 +441,7 @@ public class ConsentManager {
                 // choice to write back). Mirrors fetchUniversalConsent, which returns the record
                 // unreconciled when consentPreferences is nil.
                 guard let storedPrefs = record.consentPreferences else {
-                    completion(.success(nil))
+                    completion(.success((found: true, raw: nil)))
                     return
                 }
                 let rawCookieOptions = storedPrefs.cookieOptions
@@ -484,7 +476,7 @@ public class ConsentManager {
                     // is what shouldDisplayBanner() compares against; carrying over a stale
                     // version from the writing device would re-prompt immediately.
                     storage.saveConfigVersion(currentVersion)
-                    completion(.success(raw))
+                    completion(.success((found: true, raw: raw)))
                 } catch let error as ConsentError {
                     completion(.failure(error))
                 } catch {
@@ -519,8 +511,36 @@ public class ConsentManager {
 // type_body_length limit, matching how the public adapter splits its own UC surface.
 extension ConsentManager {
 
+    /// Rehydrate, and hand back the RAW stored preferences from the record.
+    ///
+    /// Same behavior as ``rehydrateFromUniversalConsent(_:apiKey:trackingSignal:completion:)``,
+    /// except the completion carries the record's raw preferences (or `nil` on a miss) rather
+    /// than a Bool. The read-then-write entry point needs this: rehydration persists the
+    /// RECONCILED view locally, so a subsequent write that sourced its payload from
+    /// ``getCategories()`` would read back the suppressed state and persist it to the store as
+    /// though the user had chosen it. Returning the raw record lets the write carry what the
+    /// user actually consented to.
+    ///
+    /// Deliberately a separate name rather than an overload — one distinguished only by its
+    /// completion type is ambiguous at every call site that does not annotate the closure.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    func rehydrateReturningRawPreferences(
+        _ identifier: String,
+        apiKey: String,
+        trackingSignal: TrackingSignal = TrackingSignalReader.current(),
+        completion: @escaping (Result<ConsentPreferences?, ConsentError>) -> Void
+    ) {
+        rehydrateReportingFound(
+            identifier,
+            apiKey: apiKey,
+            trackingSignal: trackingSignal
+        ) { result in
+            completion(result.map(\.raw))
+        }
+    }
+
     /// Read-then-write coordination behind
-    /// ``DataGrailConsent/setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)``.
+    /// ``DataGrailConsent/setUserIdentifier(_:apiKey:trackingSignal:getSignature:attachAnonymousConsent:completion:)``.
     ///
     /// Rehydrates any stored record onto local state FIRST (so a choice made on the web or
     /// another device is honored locally), then WRITES the user's CURRENT LOCAL choice —
@@ -536,24 +556,43 @@ extension ConsentManager {
     /// leaks into the cross-device store.
     ///
     /// A read FAILURE (as opposed to a miss) does NOT write: overwriting a record we could not
-    /// read would silently erase the user's real cross-device choice.
+    /// read would silently erase the user's real cross-device choice. It also leaves the identity
+    /// binding unchanged.
     ///
-    /// - Parameter onRehydrated: Invoked with the effective local preferences only when a record
-    ///   was rehydrated, so the adapter can fire its consent-changed listener.
+    /// No anonymous-history attribution (TRUST-2902): on a GENUINE MISS where this device is not
+    /// already bound to `identifier` (first login, or a different user logging in on a shared
+    /// device) and it holds an explicit local choice, that choice is pre-login anonymous history
+    /// the SDK cannot attribute to this person. It is NOT written; local state returns to neutral
+    /// (as ``clearUserIdentifier()`` does) and the call succeeds without persisting anything.
+    /// `attachAnonymousConsent: true` restores the seed-from-local-choice write for hosts that
+    /// know the choice and the login happened in one visit. Found-record paths are unchanged
+    /// (TRUST-2592 owns found-vs-local conflicts). The binding is set only once the call
+    /// succeeds, so a failed write is still recognised as a transition on retry.
+    ///
+    /// - Parameter onRehydrated: Invoked with the effective local preferences whenever this call
+    ///   changed local state — a record was rehydrated, or local state returned to neutral — so
+    ///   the adapter can fire its consent-changed listener.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func syncUserIdentifier(
         _ identifier: String,
         apiKey: String,
         trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         getSignature: UniversalConsentSignatureProvider? = nil,
+        attachAnonymousConsent: Bool = false,
         onRehydrated: ((ConsentPreferences) -> Void)? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         // Capture the user's RAW local choice BEFORE rehydrate overwrites storage with the
         // signal-reconciled view. nil means the user has recorded no local choice yet.
         let localChoice = storage.loadPreferences()
+        // nil when the preconditions fail — the read below fails on the same validation, so
+        // no branch that binds is reachable without a hash.
+        let userHash = currentConfig.flatMap {
+            try? ConsentService.validatedUserHash(identifier: identifier, config: $0)
+        }
+        let wasBound = userHash != nil && storage.loadBoundUserHash() == userHash
 
-        rehydrateReturningRawPreferences(
+        rehydrateReportingFound(
             identifier,
             apiKey: apiKey,
             trackingSignal: trackingSignal
@@ -565,7 +604,36 @@ extension ConsentManager {
             switch result {
             case let .failure(error):
                 completion(.failure(error))
-            case let .success(rawFromRecord):
+            case let .success(outcome):
+                // Bind only after the call succeeds, so a failed write never binds.
+                let storage = self.storage
+                let bindingCompletion: (Result<Void, ConsentError>) -> Void = { writeResult in
+                    if case .success = writeResult, let userHash {
+                        storage.saveBoundUserHash(userHash)
+                    }
+                    completion(writeResult)
+                }
+                let write: (ConsentPreferences?) -> Void = { preferences in
+                    self.setUserIdentifier(
+                        identifier,
+                        apiKey: apiKey,
+                        preferences: preferences,
+                        getSignature: getSignature,
+                        completion: bindingCompletion
+                    )
+                }
+                guard outcome.found else {
+                    self.handleGenuineMiss(
+                        localChoice: localChoice,
+                        isTransition: !wasBound && !attachAnonymousConsent,
+                        userHash: userHash,
+                        onRehydrated: onRehydrated,
+                        write: write,
+                        completion: bindingCompletion
+                    )
+                    return
+                }
+                let rawFromRecord = outcome.raw
                 if rawFromRecord != nil, let effective = self.getCategories() {
                     onRehydrated?(effective)
                 }
@@ -577,13 +645,13 @@ extension ConsentManager {
                 // is newer than this device knows. Sync-on-change writes genuine changes only.
                 if let rawFromRecord,
                    localChoice == nil || Self.cookieOptionsMatch(localChoice, rawFromRecord) {
-                    completion(.success(()))
+                    bindingCompletion(.success(()))
                     return
                 }
-                // Reaching here is either a MISS (no record to adopt — seed the first record from
-                // the local choice) or a FOUND record the local choice genuinely DIFFERS from.
-                // Write the RAW local choice through; on a genuine miss with no local choice the
-                // writer surfaces "nothing to sync" rather than fabricating a default.
+                // Reaching here is a FOUND record the local choice genuinely DIFFERS from (or a
+                // signal-only record with no raw choice). Write the RAW local choice through; with
+                // no local choice the writer surfaces "nothing to sync" rather than fabricating a
+                // default.
                 //
                 // NOTE (TRUST-2592): when a found record and the local choice differ, deciding
                 // which side WINS a true cross-device conflict — a stale local snapshot vs. a
@@ -591,15 +659,70 @@ extension ConsentManager {
                 // SDK does not hold and the store never performs; that reconciliation is the
                 // edge's job. Until then the local change is written through (sync-on-change); the
                 // equality guard above only removes the redundant re-write of an unchanged choice.
-                self.setUserIdentifier(
-                    identifier,
-                    apiKey: apiKey,
-                    preferences: localChoice,
-                    getSignature: getSignature,
-                    completion: completion
-                )
+                write(localChoice)
             }
         }
+    }
+
+    /// The GENUINE-MISS half of ``syncUserIdentifier``: no record is stored for this identity.
+    ///
+    /// - A login TRANSITION (device unbound or bound to someone else, no opt-in) holding an
+    ///   explicit local choice returns local state to neutral and writes nothing — see
+    ///   ``syncUserIdentifier`` for why.
+    /// - Otherwise the existing behavior is unchanged: seed the first record from the local
+    ///   choice, or — with no local choice — surface "nothing to sync" from the writer. That
+    ///   no-choice case still binds: the read succeeded, there is no anonymous history to
+    ///   protect, and leaving the device unbound would make the user's first in-app choice look
+    ///   like anonymous history on the next call, so it would be discarded instead of synced.
+    ///
+    /// - Parameter write: The existing Universal Consent write for this identifier, invoked with
+    ///   the preferences to seed the record from (it already reports through `completion`).
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    private func handleGenuineMiss(
+        localChoice: ConsentPreferences?,
+        isTransition: Bool,
+        userHash: String?,
+        onRehydrated: ((ConsentPreferences) -> Void)?,
+        write: (ConsentPreferences?) -> Void,
+        completion: (Result<Void, ConsentError>) -> Void
+    ) {
+        guard let localChoice else {
+            if let userHash {
+                storage.saveBoundUserHash(userHash)
+            }
+            write(nil)
+            return
+        }
+        if isTransition {
+            returnToNeutral()
+            if let effective = getCategories() {
+                onRehydrated?(effective)
+            }
+            completion(.success(()))
+            return
+        }
+        write(localChoice)
+    }
+
+    /// Clear the Universal Consent identity binding and return local consent to neutral.
+    ///
+    /// Backs ``DataGrailConsent/clearUserIdentifier()``. Non-destructive: no network call, the
+    /// server-side record is untouched, and the unique id, config cache, config version, locale
+    /// and pending queue are all kept. Idempotent.
+    ///
+    /// - Returns: The now-effective (default) preferences, or `nil` when no config is loaded.
+    @discardableResult
+    public func clearUserIdentifier() -> ConsentPreferences? {
+        storage.clearBoundUserHash()
+        returnToNeutral()
+        return getCategories()
+    }
+
+    /// Remove the stored explicit choice so reads fall through to the config default via the
+    /// existing ``getCategories()`` / ``shouldDisplayBanner()`` no-choice path — exactly what a
+    /// fresh install sees. Shared by logout and the no-attribution login transition.
+    private func returnToNeutral() {
+        storage.removePreferences()
     }
 
     /// Whether a local choice's cookieOptions equal a just-fetched record's, compared as an
