@@ -464,6 +464,43 @@ public extension DataGrailConsent {
         }
     }
 
+    /// Record the user's explicit CCPA/CPRA "Do Not Sell or Share My Personal Information"
+    /// (DNSMPI) choice.
+    ///
+    /// iOS has no OS or browser DNSMPI signal, so your app is the source of truth: call this from
+    /// your own "Do Not Sell or Share" control. The SDK never derives this value from a category
+    /// choice, ATT or any other signal.
+    ///
+    /// The flag is stored on the device and changes no category (the consent-changed listener
+    /// does not fire). It is written to the user's Universal Consent record as `ccpa_optout` only
+    /// when Universal Consent is enabled, the customer's `universalConsent.sync_optout` setting is
+    /// on, ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` has succeeded in
+    /// this app session, and the user has an explicit consent choice stored. Otherwise it is kept
+    /// locally and sent with the next Universal Consent write. When a login finds a stored record,
+    /// the record's value replaces this one; ``clearUserIdentifier()`` resets it to `false`.
+    ///
+    /// - Parameters:
+    ///   - optedOut: `true` when the user opts out of sale/sharing.
+    ///   - completion: Called on the main queue; a write-through failure is reported here and
+    ///     the local flag is kept.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    func setCcpaOptout(_ optedOut: Bool, completion: ((Result<Void, ConsentError>) -> Void)? = nil) {
+        guard let manager else {
+            DispatchQueue.main.async { completion?(.failure(.notInitialized)) }
+            return
+        }
+        manager.setCcpaOptout(optedOut) { result in
+            DispatchQueue.main.async { completion?(result) }
+        }
+    }
+
+    /// The user's CCPA/CPRA "Do Not Sell or Share" choice stored on this device: set by
+    /// ``setCcpaOptout(_:completion:)`` or adopted from a Universal Consent record. `false` when
+    /// never set or before initialization.
+    func getCcpaOptout() -> Bool {
+        manager?.getCcpaOptout() ?? false
+    }
+
     /// Fetch a user's stored Universal Consent record without changing local state.
     ///
     /// Returns the record with signals already reconciled on-device (see
