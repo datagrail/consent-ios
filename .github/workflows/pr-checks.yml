@@ -104,6 +104,40 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  demo-tests:
+    name: Demo App Tests (iOS Simulator)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: 'latest-stable'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Run Demo App Tests on iOS Simulator
+        working-directory: DemoProject
+        run: |
+          SIMULATOR_ID=$(xcrun simctl list devices available iPhone | \
+            grep -m 1 "iPhone" | \
+            sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')
+
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "Error: No iPhone simulator found"
+            exit 1
+          fi
+
+          echo "Using simulator ID: $SIMULATOR_ID"
+
+          xcodegen generate
+          xcodebuild test \
+            -project Demo.xcodeproj \
+            -scheme Demo \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID"
+
   pod-lint:
     name: Podspec Validation
     runs-on: macos-latest

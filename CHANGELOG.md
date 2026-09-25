@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Demo app: a **Config URL** tab that loads a pre-signed test config link from the Mobile tab and previews it with the SDK's banner, showing the SDK and config schema versions and a specific error for expired, altered, deleted, unreachable, unparseable, or unsupported-schema links. Demo-only; the SDK's public API is unchanged.
+
 ## [1.7.0] - 2026-08-25
 
 ### Added

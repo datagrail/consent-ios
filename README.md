@@ -248,7 +248,10 @@ A full-featured demo app is included under `DemoProject/`. To run it:
 ./launch_demo.sh --clean  # Clean build first
 ```
 
-The demo app provides config URL input, banner display in both modal and fullscreen modes, live category status, and debug logging.
+The demo app has two tabs:
+
+- **Config URL** — paste a pre-signed test config link from the Mobile tab and preview it with the SDK's banner (modal or full screen). See [DemoProject/README-config-url-tester.md](DemoProject/README-config-url-tester.md).
+- **Universal Consent** — the cross-device consent demo. See [DemoProject/README-uc-demo.md](DemoProject/README-uc-demo.md).
 
 ## Testing
 
