@@ -876,3 +876,17 @@ extension ConsentManager {
         return map
     }
 }
+
+// MARK: - Universal Consent API key resolution (TRUST-2603)
+
+extension ConsentManager {
+    /// Resolve the edge API key for a Universal Consent call: an explicit value passed by the host
+    /// wins (existing integrations behave exactly as before); otherwise fall back to
+    /// `universalConsent.apiKey` from config.json, which lets the key rotate server-side with no
+    /// client release. Returns `nil` when neither is present, so the caller can fail fast. An empty
+    /// string counts as absent at either source.
+    static func resolveUniversalConsentApiKey(explicit: String?, in config: ConsentConfig?) -> String? {
+        let candidate = explicit?.isEmpty == false ? explicit : config?.universalConsent?.apiKey
+        return candidate?.isEmpty == false ? candidate : nil
+    }
+}
