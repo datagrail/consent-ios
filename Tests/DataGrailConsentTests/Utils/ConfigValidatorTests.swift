@@ -171,19 +171,92 @@ final class ConfigValidatorTests: XCTestCase {
         XCTAssertNoThrow(try ConfigValidator.validate(config))
     }
 
+    // MARK: - Real Configs
+
+    /// Regression guard: every captured real config must pass, or wiring the validator into
+    /// `ConfigService` would fail `initialize` for customers with no cached config.
+    func testBundledRealConfigsPass() throws {
+        let resources = ["test-config", "config-bys", "config-cpra-us-ca", "config-gdpr-fr", "config-no-sync-ot"]
+        for name in resources {
+            let url = try XCTUnwrap(Bundle.module.url(forResource: name, withExtension: "json"), name)
+            let config = try JSONDecoder().decode(ConsentConfig.self, from: Data(contentsOf: url))
+            XCTAssertNoThrow(try ConfigValidator.validate(config), name)
+        }
+    }
+
+    // MARK: - Per-Type Translation Rules
+
+    func testLinkElementWithoutLinksFails() {
+        for links in [nil, [LinkItem]()] {
+            let config = createValidConfig(elements: [makeElement(type: "ConsentLayerLinkElement", links: links)])
+            assertValidationError(config, contains: "has no links")
+        }
+    }
+
+    func testLinkWithoutTranslationsFails() {
+        let link = LinkItem(id: "link1", order: 1, translations: [:])
+        let config = createValidConfig(elements: [makeElement(type: "ConsentLayerLinkElement", links: [link])])
+        assertValidationError(config, contains: "Link 'link1'")
+    }
+
+    func testLinkElementWithTranslatedLinksPasses() {
+        let link = LinkItem(id: "link1", order: 1, translations: Self.enTranslation)
+        let config = createValidConfig(elements: [makeElement(type: "ConsentLayerLinkElement", links: [link])])
+        XCTAssertNoThrow(try ConfigValidator.validate(config))
+    }
+
+    func testTypesWithTypeSpecificTextPassWithoutTranslations() {
+        let types = [
+            "ConsentLayerLanguagePickerElement",
+            "ConsentLayerTrackingDetailsElement",
+            "ConsentLayerBrowserSignalNoticeElement",
+        ]
+        for type in types {
+            let config = createValidConfig(elements: [makeElement(type: type)])
+            XCTAssertNoThrow(try ConfigValidator.validate(config), type)
+        }
+    }
+
+    func testTextElementWithoutTranslationsFails() {
+        let config = createValidConfig(elements: [makeElement(type: "ConsentLayerTextElement")])
+        assertValidationError(config, contains: "has no translations")
+    }
+
+    func testUnknownElementTypeFails() {
+        let config = createValidConfig(elements: [makeElement(type: "ConsentLayerMysteryElement")])
+        assertValidationError(config, contains: "Invalid element type")
+    }
+
     // MARK: - Helper Methods
 
-    // swiftlint:disable:next function_body_length
-    private func createValidConfig() -> ConsentConfig {
-        let element = ConsentLayerElement(
+    private static let enTranslation = [
+        "en": ElementTranslation(id: "t1", locale: "en", value: "Test", text: nil, url: nil),
+    ]
+
+    private func assertValidationError(
+        _ config: ConsentConfig, contains expected: String, line: UInt = #line
+    ) {
+        XCTAssertThrowsError(try ConfigValidator.validate(config), line: line) { error in
+            guard case let ConsentError.validationError(message) = error else {
+                XCTFail("Expected validationError, got \(error)", line: line)
+                return
+            }
+            XCTAssertTrue(message.contains(expected), "\(message)", line: line)
+        }
+    }
+
+    private func makeElement(
+        type: String, links: [LinkItem]? = nil, translations: [String: ElementTranslation]? = nil
+    ) -> ConsentLayerElement {
+        ConsentLayerElement(
             id: "elem1",
             order: 1,
-            type: "ConsentLayerTextElement",
+            type: type,
             style: nil,
             buttonAction: nil,
             targetConsentLayer: nil,
             categories: nil,
-            links: nil,
+            links: links,
             consentLayerCategories: nil,
             showTrackingDetailsLink: nil,
             consentLayerCategoriesConfigId: nil,
@@ -195,10 +268,12 @@ final class ConfigValidatorTests: XCTestCase {
             showCookies: nil,
             showIcons: nil,
             groupByVendor: nil,
-            translations: [
-                "en": ElementTranslation(id: "t1", locale: "en", value: "Test", text: nil, url: nil),
-            ]
+            translations: translations
         )
+    }
+
+    private func createValidConfig(elements: [ConsentLayerElement]? = nil) -> ConsentConfig {
+        let element = makeElement(type: "ConsentLayerTextElement", translations: Self.enTranslation)
 
         let layer = ConsentLayer(
             id: "layer1",
@@ -206,7 +281,7 @@ final class ConfigValidatorTests: XCTestCase {
             position: "bottom",
             showCloseButton: true,
             bannerApiId: "first",
-            elements: [element]
+            elements: elements ?? [element]
         )
 
         let layout = Layout(
