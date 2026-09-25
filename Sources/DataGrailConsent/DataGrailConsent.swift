@@ -371,6 +371,27 @@ public extension DataGrailConsent {
     /// carries the user's RAW preferences. A device signal never changes what is stored
     /// cross-device — otherwise opening the app with ATT denied would erase a marketing
     /// opt-in the user made on the web, for every device on their identifier.
+    ///
+    /// Login vs. re-sync. The SDK remembers (as a hash) which identity the device is bound to.
+    /// - On a LOGIN (device unbound, or bound to someone else) where a record is stored, the
+    ///   record wins: it replaces local state (categories it does not mention take their config
+    ///   default, never the prior local value) and nothing from the device is written, even if
+    ///   the user made a choice before logging in. A stored record that carries no consent
+    ///   choice returns local state to neutral.
+    /// - On a LOGIN where no record is stored, an explicit choice made on this device (a banner
+    ///   answer or a `savePreferences`/`acceptAll`/`rejectAll` call) seeds the new identity's
+    ///   record. Config defaults are never written. State left behind by a different bound
+    ///   identity is never attributed to the new one: nothing is written and local state returns
+    ///   to neutral.
+    /// - Once bound (a RE-SYNC), a local change is written through as before.
+    /// When there is nothing to write, the call succeeds without writing.
+    ///
+    /// What the SDK cannot detect: it cannot tell whether a pre-login choice was made by the
+    /// person now logging in or by a previous user of a shared device — on a no-record login it
+    /// attaches that choice by design — and does no heuristic shared-device or shared-account
+    /// detection. It cannot detect two people sharing one account; a stored record vs. a
+    /// differing post-login local choice is resolved as before (TRUST-2592). And it cannot detect
+    /// a logout it is not told about: call ``clearUserIdentifier()`` on logout.
     /// - Parameters:
     ///   - identifier: The user identifier (email, account id, …). Normalized (NFC →
     ///     trim → lowercase) before hashing, so casing and stray whitespace cannot
@@ -420,6 +441,27 @@ public extension DataGrailConsent {
                 }
             }
         )
+    }
+
+    /// Log out of Universal Consent: clear the identity binding and return this device to
+    /// neutral.
+    ///
+    /// The host MUST call this on logout — the SDK cannot detect a logout it is not told about.
+    /// Afterwards reads return the config's default exactly as a fresh install sees it
+    /// (``shouldDisplayBanner()`` is true again, ``hasUserConsent()`` false), and the
+    /// consent-changed listener fires with those default preferences so the app can re-gate its
+    /// SDKs.
+    ///
+    /// Non-destructive, unlike ``reset()``: no network request is made, the user's stored
+    /// Universal Consent record is not deleted or modified, the device's unique id, cached
+    /// config, config version, locale and pending offline queue are kept, and the SDK stays
+    /// initialized. Idempotent and safe to call when no identifier is set; a no-op before
+    /// ``initialize(configUrl:completion:)``, like ``reset()``.
+    func clearUserIdentifier() {
+        guard let preferences = manager?.clearUserIdentifier() else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onConsentChangedCallback?(preferences)
+        }
     }
 
     /// Fetch a user's stored Universal Consent record without changing local state.
