@@ -551,16 +551,19 @@ extension ConsentManager {
     /// Which case applies depends on the persisted identity binding (TRUST-2902):
     ///
     /// - LOGIN (the device is unbound, or bound to a different identity):
-    ///   - FOUND record: the record wins. It is adopted locally and nothing from the device is
-    ///     written, even when the device holds a pre-login choice.
+    ///   - FOUND record: the record wins. It REPLACES local state — each category it carries takes
+    ///     its reconciled value, each category it omits takes the neutral value, never the prior
+    ///     local one — and nothing from the device is written, even when the device holds a
+    ///     pre-login choice. A found record carrying no choice (signal-only) drops any stored
+    ///     local state to neutral instead.
     ///   - MISS with an EXPLICIT local choice: that choice seeds the new identity's record.
     ///     Explicit means a stored choice (`loadPreferences() != nil` — only a user save or a
     ///     rehydrate ever writes it; initialize never seeds it) recorded while the device was not
     ///     bound to a DIFFERENT identity. State left behind by another bound identity belongs to
     ///     that identity (it may be their rehydrated record), so it is never explicit here.
     ///   - MISS without an explicit choice: nothing is written and the call succeeds. If another
-    ///     identity was bound, local state returns to neutral (as ``clearUserIdentifier()`` does)
-    ///     so their state does not linger; otherwise local state is left as it is.
+    ///     identity's state is stored, local state returns to neutral (as ``clearUserIdentifier()``
+    ///     does) so it does not linger; otherwise local state is left as it is.
     /// - RE-SYNC (already bound to this identity, so local changes are post-login): sync-on-change
     ///   as before — a found record is adopted and a GENUINE local change is written through
     ///   (an unchanged choice is not re-POSTed); on a miss the local choice seeds the record.
@@ -570,9 +573,9 @@ extension ConsentManager {
     /// the user's real cross-device choice) and leaves the binding unchanged. Otherwise the
     /// binding is set once the call succeeds, so a failed write is still a login on retry.
     ///
-    /// - Parameter onRehydrated: Invoked with the effective local preferences whenever this call
-    ///   changed local state — a record was rehydrated, or local state returned to neutral — so
-    ///   the adapter can fire its consent-changed listener.
+    /// - Parameter onRehydrated: Invoked with the effective local preferences exactly when this
+    ///   call rewrote local state — a record was adopted, or local state returned to neutral —
+    ///   and never for a no-op, so the adapter can fire its consent-changed listener.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func syncUserIdentifier(
         _ identifier: String,
@@ -626,8 +629,14 @@ extension ConsentManager {
                         completion: bindingCompletion
                     )
                 }
-                if outcome.raw != nil, let effective = self.getCategories() {
-                    onRehydrated?(effective)
+                if outcome.raw != nil {
+                    // A LOGIN replaces local state with the record; it never merges with it.
+                    if !binding.isResync {
+                        self.fillOmittedCategoriesWithNeutral()
+                    }
+                    if let effective = self.getCategories() {
+                        onRehydrated?(effective)
+                    }
                 }
                 // The choice this call may write: never another bound identity's leftover state.
                 let explicitChoice = binding.boundToOther ? nil : localChoice
@@ -635,9 +644,10 @@ extension ConsentManager {
                     write(explicitChoice)
                     return
                 }
-                // No write. Another identity's state must not linger for this one when nothing
-                // from the record replaced it (a miss, or a found record carrying no choice).
-                if binding.boundToOther, outcome.raw == nil {
+                // No write. On a LOGIN, stored state the record did not replace (a miss over another
+                // identity's state, or a found record carrying no choice) is dropped to neutral.
+                // Nothing stored means nothing to drop: no rewrite, so no listener.
+                if !binding.isResync, outcome.raw == nil, localChoice != nil {
                     self.returnToNeutral()
                     if let effective = self.getCategories() {
                         onRehydrated?(effective)
@@ -693,6 +703,32 @@ extension ConsentManager {
         storage.clearBoundUserHash()
         returnToNeutral()
         return getCategories()
+    }
+
+    /// Complete a record just adopted on a LOGIN so it REPLACES local state rather than merging:
+    /// every configured category the record omits takes its neutral value — the one
+    /// ``isCategoryEnabled(_:)`` reads with no stored choice (`initialCategories.initial`), with
+    /// essential always on — instead of reading as disabled. The rehydrate already overwrote the
+    /// stored choice, so no prior local value survives; this only fills the gaps.
+    private func fillOmittedCategoriesWithNeutral() {
+        guard let config = currentConfig, let adopted = storage.loadPreferences() else { return }
+        let present = Set(adopted.cookieOptions.map(\.gtmKey))
+        let essential = Set(getEssentialCategories())
+        let initial = Set(config.initialCategories.initial)
+        let filled = getAllCategoryKeys(config)
+            .filter { !present.contains($0) }
+            .sorted()
+            .map { CategoryConsent(gtmKey: $0, isEnabled: essential.contains($0) || initial.contains($0)) }
+        guard !filled.isEmpty else { return }
+        do {
+            try storage.savePreferences(ConsentPreferences(
+                isCustomised: adopted.isCustomised,
+                cookieOptions: adopted.cookieOptions + filled
+            ))
+        } catch {
+            // Left unfilled, an omitted category reads as disabled — the more protective failure.
+            Logger.error("Failed to fill omitted categories after login: \(error.localizedDescription)")
+        }
     }
 
     /// Remove the stored explicit choice so reads fall through to the config default via the

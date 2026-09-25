@@ -374,8 +374,10 @@ public extension DataGrailConsent {
     ///
     /// Login vs. re-sync. The SDK remembers (as a hash) which identity the device is bound to.
     /// - On a LOGIN (device unbound, or bound to someone else) where a record is stored, the
-    ///   record wins: it is adopted locally and nothing from the device is written, even if the
-    ///   user made a choice before logging in.
+    ///   record wins: it replaces local state (categories it does not mention take their config
+    ///   default, never the prior local value) and nothing from the device is written, even if
+    ///   the user made a choice before logging in. A stored record that carries no consent
+    ///   choice returns local state to neutral.
     /// - On a LOGIN where no record is stored, an explicit choice made on this device (a banner
     ///   answer or a `savePreferences`/`acceptAll`/`rejectAll` call) seeds the new identity's
     ///   record. Config defaults are never written. State left behind by a different bound
