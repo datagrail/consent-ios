@@ -7,6 +7,13 @@ public class ConsentManager {
     private let consentService: ConsentService
     private var currentConfig: ConsentConfig?
 
+    /// Monotonic token bumped whenever the identity binding is invalidated (logout or reset).
+    /// ``syncUserIdentifier`` captures it before its async read and rechecks it before mutating,
+    /// so a login whose network round-trip outlives a logout cannot rebind or write after it.
+    /// See the ``invalidatePendingIdentitySync()`` helpers in the coordination extension.
+    fileprivate let identityLock = NSLock()
+    fileprivate var identityGeneration = 0
+
     /// Current loaded configuration (read-only)
     public var config: ConsentConfig? {
         currentConfig
@@ -500,6 +507,7 @@ public class ConsentManager {
 
     /// Clear all consent data
     public func reset() {
+        invalidatePendingIdentitySync()
         storage.clearAll()
         currentConfig = nil
     }
@@ -510,6 +518,28 @@ public class ConsentManager {
 // In an extension (not the class body) so the coordinator stays within SwiftLint's
 // type_body_length limit, matching how the public adapter splits its own UC surface.
 extension ConsentManager {
+
+    fileprivate var currentIdentityGeneration: Int {
+        identityLock.lock()
+        defer { identityLock.unlock() }
+        return identityGeneration
+    }
+
+    /// Invalidate any in-flight ``syncUserIdentifier`` so its completion cannot mutate storage.
+    /// Called by every path that clears the binding (logout and reset).
+    fileprivate func invalidatePendingIdentitySync() {
+        identityLock.lock()
+        identityGeneration &+= 1
+        identityLock.unlock()
+    }
+
+    /// The failure a sync completion returns when a logout bumped the generation mid-flight;
+    /// `nil` when the login is still current and may proceed to mutate storage.
+    fileprivate func logoutSupersededError(since generation: Int) -> ConsentError? {
+        currentIdentityGeneration == generation
+            ? nil
+            : .validationError("User identifier sync superseded by logout")
+    }
 
     /// Rehydrate, and hand back the RAW stored preferences from the record.
     ///
@@ -598,6 +628,10 @@ extension ConsentManager {
             isResync: userHash != nil && bound == userHash,
             boundToOther: bound != nil && bound != userHash
         )
+        // Snapshot before the async read. A logout (clearUserIdentifier/reset) that lands while
+        // the read is in flight bumps the generation; the completion below then bails without
+        // rebinding, adopting, or writing, so an in-flight login can't undo the logout.
+        let generation = self.currentIdentityGeneration
 
         rehydrateReportingFound(
             identifier,
@@ -612,50 +646,90 @@ extension ConsentManager {
             case let .failure(error):
                 completion(.failure(error))
             case let .success(outcome):
-                // Bind only after the call succeeds, so a failed write never binds.
-                let storage = self.storage
-                let bindingCompletion: (Result<Void, ConsentError>) -> Void = { writeResult in
-                    if case .success = writeResult, let userHash {
-                        storage.saveBoundUserHash(userHash)
-                    }
-                    completion(writeResult)
-                }
-                let write: (ConsentPreferences) -> Void = { preferences in
-                    self.setUserIdentifier(
-                        identifier,
-                        apiKey: apiKey,
-                        preferences: preferences,
-                        getSignature: getSignature,
-                        completion: bindingCompletion
-                    )
-                }
-                if outcome.raw != nil {
-                    // A LOGIN replaces local state with the record; it never merges with it.
-                    if !binding.isResync {
-                        self.fillOmittedCategoriesWithNeutral()
-                    }
-                    if let effective = self.getCategories() {
-                        onRehydrated?(effective)
-                    }
-                }
-                // The choice this call may write: never another bound identity's leftover state.
-                let explicitChoice = binding.boundToOther ? nil : localChoice
-                if let explicitChoice, self.shouldWrite(explicitChoice, outcome: outcome, binding: binding) {
-                    write(explicitChoice)
-                    return
-                }
-                // No write. On a LOGIN, stored state the record did not replace (a miss over another
-                // identity's state, or a found record carrying no choice) is dropped to neutral.
-                // Nothing stored means nothing to drop: no rewrite, so no listener.
-                if !binding.isResync, outcome.raw == nil, localChoice != nil {
-                    self.returnToNeutral()
-                    if let effective = self.getCategories() {
-                        onRehydrated?(effective)
-                    }
-                }
-                bindingCompletion(.success(()))
+                self.applySyncOutcome(
+                    outcome,
+                    identifier: identifier,
+                    apiKey: apiKey,
+                    getSignature: getSignature,
+                    localChoice: localChoice,
+                    userHash: userHash,
+                    binding: binding,
+                    generation: generation,
+                    onRehydrated: onRehydrated,
+                    completion: completion
+                )
             }
         }
+    }
+
+    /// Apply a successful read's outcome: adopt/complete a found record, seed-write an explicit
+    /// unbound choice, or drop leftover state to neutral — then bind on success. Split out of
+    /// ``syncUserIdentifier`` for readability and to keep each body within SwiftLint's limits.
+    ///
+    /// Guards against a logout that landed while the read (or a subsequent seed-write) was in
+    /// flight: `generation` is the identity generation captured before the read, and any change
+    /// means a ``clearUserIdentifier()``/``reset()`` superseded this login, so it must not rebind
+    /// or mutate storage.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    private func applySyncOutcome( // swiftlint:disable:this function_parameter_count
+        _ outcome: (found: Bool, raw: ConsentPreferences?),
+        identifier: String,
+        apiKey: String,
+        getSignature: UniversalConsentSignatureProvider?,
+        localChoice: ConsentPreferences?,
+        userHash: String?,
+        binding: LoginBinding,
+        generation: Int,
+        onRehydrated: ((ConsentPreferences) -> Void)?,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
+        // A logout raced in during the read: honor it, don't rebind or mutate storage.
+        if let superseded = logoutSupersededError(since: generation) {
+            return completion(.failure(superseded))
+        }
+        // Bind only after the call succeeds, so a failed write never binds.
+        let bindingCompletion: (Result<Void, ConsentError>) -> Void = { [weak self] writeResult in
+            // Recheck: a seed-write adds a second async hop, so a logout could still have landed
+            // after the read guard passed. Don't rebind if it did.
+            if let superseded = self?.logoutSupersededError(since: generation) {
+                return completion(.failure(superseded))
+            }
+            if case .success = writeResult, let userHash {
+                self?.storage.saveBoundUserHash(userHash)
+            }
+            completion(writeResult)
+        }
+        if outcome.raw != nil {
+            // A LOGIN replaces local state with the record; it never merges with it.
+            if !binding.isResync {
+                fillOmittedCategoriesWithNeutral()
+            }
+            if let effective = getCategories() {
+                onRehydrated?(effective)
+            }
+        }
+        // The choice this call may write: never another bound identity's leftover state.
+        let explicitChoice = binding.boundToOther ? nil : localChoice
+        if let explicitChoice, shouldWrite(explicitChoice, outcome: outcome, binding: binding) {
+            setUserIdentifier(
+                identifier,
+                apiKey: apiKey,
+                preferences: explicitChoice,
+                getSignature: getSignature,
+                completion: bindingCompletion
+            )
+            return
+        }
+        // No write. On a LOGIN, stored state the record did not replace (a miss over another
+        // identity's state, or a found record carrying no choice) is dropped to neutral.
+        // Nothing stored means nothing to drop: no rewrite, so no listener.
+        if !binding.isResync, outcome.raw == nil, localChoice != nil {
+            returnToNeutral()
+            if let effective = getCategories() {
+                onRehydrated?(effective)
+            }
+        }
+        bindingCompletion(.success(()))
     }
 
     /// The persisted-binding facts ``syncUserIdentifier`` branches on, captured before the read.
@@ -700,6 +774,7 @@ extension ConsentManager {
     /// - Returns: The now-effective (default) preferences, or `nil` when no config is loaded.
     @discardableResult
     public func clearUserIdentifier() -> ConsentPreferences? {
+        invalidatePendingIdentitySync()
         storage.clearBoundUserHash()
         returnToNeutral()
         return getCategories()
