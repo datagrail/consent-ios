@@ -9,12 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `clearUserIdentifier()` — logout / return-to-neutral for Universal Consent (TRUST-2902). Clears the device's identity binding and returns local consent to the config default (banner shows again) and fires the consent-changed listener. Non-destructive, unlike `reset()`: no network call, the server-side record is untouched, and the unique id, config cache, version, locale and pending queue are kept. The SDK cannot detect a logout it is not told about, so hosts must call this on logout.
-- `setUserIdentifier(..., attachAnonymousConsent: Bool = false)` — opt-in to attributing a pre-login local choice to the logging-in identity.
+- `clearUserIdentifier()` — logout / return-to-neutral for Universal Consent (TRUST-2902). Clears the device's identity binding, returns local consent to the config default (banner shows again) and fires the consent-changed listener. Non-destructive, unlike `reset()`: no network call, the server-side record is untouched, and the unique id, config cache, version, locale and pending queue are kept. The SDK cannot detect a logout it is not told about, so hosts must call this on logout.
 
 ### Changed
 
-- `setUserIdentifier` no longer attributes pre-login anonymous consent to a new identity (TRUST-2902). When no record is stored for the identifier and the device is not already bound to it, an existing local choice is not written to the record; local state returns to neutral instead. The SDK cannot tell whether that choice was made by the person logging in or by a previous user of a shared device, and does no shared-device/shared-account detection; pass `attachAnonymousConsent: true` only when your app knows the choice and the login happened in one session. Found-record behavior is unchanged. The device persists only the user hash of the bound identity (cleared by `reset()` and `clearUserIdentifier()`).
+- `setUserIdentifier` login rule (TRUST-2902). The device now persists the user hash (never the raw identifier) of the identity it is bound to, cleared by `reset()` and `clearUserIdentifier()`. On a login (device unbound or bound to a different identity): if a record is stored it is adopted locally and nothing from the device is written, even when a pre-login choice exists; if no record is stored, an explicit local choice (one the user saved on this device while it was not bound to a different identity) seeds the new record, and config defaults are never written. State left by a different bound identity is not written and local state returns to neutral. Once bound, local changes sync as before.
+- `setUserIdentifier` with nothing to write now succeeds without writing, instead of failing with "No consent preferences to sync". The lower-level `ConsentManager.setUserIdentifier(_:apiKey:preferences:...)` write keeps that validation.
+- Limitations: the SDK cannot tell whether a pre-login choice was made by the person logging in or by a previous user of a shared device (on a no-record login it attaches an explicit unbound choice by design), does no heuristic shared-device/shared-account detection, and cannot detect two people sharing one account.
 
 ## [1.7.0] - 2026-08-25
 

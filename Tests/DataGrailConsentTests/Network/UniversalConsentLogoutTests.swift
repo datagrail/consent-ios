@@ -3,9 +3,9 @@ import XCTest
 
 /// Shared-device login/logout for Universal Consent (TRUST-2902).
 ///
-/// Covers the logout-to-neutral API (`clearUserIdentifier`) and the rule that a genuine-miss
-/// login transition does not attribute pre-login anonymous consent to the new identity unless
-/// the host opts in with `attachAnonymousConsent`.
+/// Covers the logout-to-neutral API (`clearUserIdentifier`) and the login rule: a found record
+/// wins with no write; with no record only an explicit, unbound local choice is written; state
+/// left by a different bound identity is never written and returns to neutral.
 @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
 final class UniversalConsentLogoutTests: XCTestCase {
     private var storage: ConsentStorage!
@@ -92,97 +92,120 @@ final class UniversalConsentLogoutTests: XCTestCase {
         XCTAssertNil(storage.loadBoundUserHash())
     }
 
-    // MARK: - Genuine miss: no anonymous-history attribution
+    // MARK: - Login (device unbound): the four required cases
 
-    func testFirstLoginMissWithLocalChoiceDoesNotWriteAndReturnsToNeutral() throws {
-        try storage.savePreferences(marketingChoice(true))
-        network.getResult = .success(notFound)
+    func testLoginWithRecordAndExplicitLocalChoiceAdoptsTheRecordWithoutWriting() throws {
+        try storage.savePreferences(marketingChoice(false))
+        network.getResult = .success(foundRecordJSON(marketing: true))
 
         var rehydrated: ConsentPreferences?
         let result = sync(userA) { rehydrated = $0 }
 
-        XCTAssertNoThrow(try result.get(), "a suppressed attribution is not an error")
-        XCTAssertEqual(network.methods, [.get], "pre-login choice is not POSTed to the new identity")
-        XCTAssertNil(storage.loadPreferences())
-        XCTAssertTrue(sut.shouldDisplayBanner())
-        XCTAssertEqual(rehydrated, sut.getDefaultPreferences(), "listener gets the neutral default")
+        XCTAssertNoThrow(try result.get())
+        XCTAssertEqual(network.methods, [.get], "the record wins; the pre-login choice is not written")
+        XCTAssertTrue(sut.isCategoryEnabled("dg-category-marketing"), "record adopted locally")
+        XCTAssertNotNil(rehydrated, "listener fired with the adopted state")
         XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
     }
 
-    func testFirstLoginMissWithOptInSeedsTheRecordFromTheLocalChoice() throws {
+    func testLoginWithRecordAndNoLocalChoiceAdoptsTheRecordWithoutWriting() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+
+        let result = sync(userA)
+
+        XCTAssertNoThrow(try result.get())
+        XCTAssertEqual(network.methods, [.get])
+        XCTAssertTrue(sut.isCategoryEnabled("dg-category-marketing"))
+        XCTAssertFalse(sut.shouldDisplayBanner())
+        XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
+    }
+
+    func testLoginWithNoRecordWritesTheExplicitLocalChoice() throws {
         try storage.savePreferences(marketingChoice(true))
         network.getResult = .success(notFound)
 
-        let result = sync(userA, attachAnonymousConsent: true)
+        let result = sync(userA)
 
         XCTAssertNoThrow(try result.get())
-        XCTAssertEqual(network.methods, [.get, .post])
+        XCTAssertEqual(network.methods, [.get, .post], "an explicit unbound choice is attached")
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "the RAW local choice")
         XCTAssertEqual(storage.loadPreferences(), marketingChoice(true), "local choice kept")
         XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
     }
 
-    func testAlreadyBoundMissWithLocalChoiceStillSyncs() throws {
-        storage.saveBoundUserHash(try hash(userA))
-        try storage.savePreferences(marketingChoice(false))
+    func testLoginWithNoRecordAndDefaultsOnlyWritesNothingAndSucceeds() throws {
         network.getResult = .success(notFound)
 
         let result = sync(userA)
 
+        // Formerly the "No consent preferences to sync" failure; now a successful no-write.
         XCTAssertNoThrow(try result.get())
-        XCTAssertEqual(network.methods, [.get, .post], "sync-on-change still works while logged in")
+        XCTAssertEqual(network.methods, [.get], "config defaults are never written")
+        XCTAssertNil(storage.loadPreferences(), "local unchanged")
+        XCTAssertTrue(sut.shouldDisplayBanner())
         XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
     }
 
-    func testSwitchingUsersOnASharedDeviceDoesNotWriteThePreviousUsersChoice() throws {
+    // MARK: - Shared-device switch and re-sync
+
+    func testSwitchingUsersOnASharedDeviceDoesNotWriteThePreviousUsersState() throws {
         storage.saveBoundUserHash(try hash(userA))
         try storage.savePreferences(marketingChoice(true))
         network.getResult = .success(notFound)
 
-        let result = sync(userB)
+        var rehydrated: ConsentPreferences?
+        let result = sync(userB) { rehydrated = $0 }
 
         XCTAssertNoThrow(try result.get())
-        XCTAssertEqual(network.methods, [.get], "user A's choice is not written to user B's record")
-        XCTAssertNil(storage.loadPreferences())
+        XCTAssertEqual(network.methods, [.get], "user A's state is not written to user B's record")
+        XCTAssertNil(storage.loadPreferences(), "A's state does not linger for B")
+        XCTAssertTrue(sut.shouldDisplayBanner())
+        XCTAssertEqual(rehydrated, sut.getDefaultPreferences(), "listener gets the neutral default")
         XCTAssertEqual(storage.loadBoundUserHash(), try hash(userB))
     }
 
-    func testMissWithoutLocalChoiceKeepsExistingBehaviorAndBinds() throws {
-        network.getResult = .success(notFound)
+    func testResyncWithRecordWritesThroughAGenuineLocalChange() throws {
+        storage.saveBoundUserHash(try hash(userA))
+        try storage.savePreferences(marketingChoice(false))
+        network.getResult = .success(foundRecordJSON(marketing: true))
 
         let result = sync(userA)
 
-        // Unchanged: nothing to sync, no fabricated default is written.
-        guard case .failure(.invalidConfiguration) = result else {
-            return XCTFail("Expected the existing nothing-to-sync failure, got \(result)")
-        }
+        XCTAssertNoThrow(try result.get())
+        XCTAssertEqual(network.methods, [.get, .post], "sync-on-change while logged in, unchanged")
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false)
+    }
+
+    func testResyncWithRecordEqualToLocalChoiceDoesNotRewrite() throws {
+        storage.saveBoundUserHash(try hash(userA))
+        try storage.savePreferences(marketingChoice(true))
+        network.getResult = .success(foundRecordJSON(marketing: true))
+
+        XCTAssertNoThrow(try sync(userA).get())
         XCTAssertEqual(network.methods, [.get])
-        // Bound, so the user's first in-app choice syncs on the next call instead of being
-        // mistaken for anonymous history.
+    }
+
+    func testResyncWithNoRecordWritesTheExplicitLocalChoice() throws {
+        storage.saveBoundUserHash(try hash(userA))
+        try storage.savePreferences(marketingChoice(false))
+        network.getResult = .success(notFound)
+
+        XCTAssertNoThrow(try sync(userA).get())
+        XCTAssertEqual(network.methods, [.get, .post])
         XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
     }
+
+    // MARK: - Failures never bind or write
 
     func testFailedSeedWriteDoesNotBind() throws {
         try storage.savePreferences(marketingChoice(true))
         network.getResult = .success(notFound)
         network.postResult = .failure(.httpError(statusCode: 500, message: "boom"))
 
-        let result = sync(userA, attachAnonymousConsent: true)
-
-        guard case .failure = result else { return XCTFail("Expected the write failure") }
-        XCTAssertNil(storage.loadBoundUserHash(), "a retry must still be recognised as a transition")
-    }
-
-    // MARK: - Found record and read failure
-
-    func testFoundRecordBindsAndIsOtherwiseUnchanged() throws {
-        network.getResult = .success(foundRecordJSON(marketing: true))
-
         let result = sync(userA)
 
-        XCTAssertNoThrow(try result.get())
-        XCTAssertEqual(network.methods, [.get], "adopt-without-POST, as before")
-        XCTAssertTrue(sut.isCategoryEnabled("dg-category-marketing"))
-        XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
+        guard case .failure = result else { return XCTFail("Expected the write failure") }
+        XCTAssertNil(storage.loadBoundUserHash(), "a retry must still be recognised as a login")
     }
 
     func testReadFailureLeavesTheBindingUnchanged() throws {
@@ -204,7 +227,6 @@ final class UniversalConsentLogoutTests: XCTestCase {
 
     private func sync(
         _ identifier: String,
-        attachAnonymousConsent: Bool = false,
         onRehydrated: ((ConsentPreferences) -> Void)? = nil
     ) -> Result<Void, ConsentError> {
         let expectation = expectation(description: "sync \(identifier)")
@@ -213,7 +235,6 @@ final class UniversalConsentLogoutTests: XCTestCase {
             identifier,
             apiKey: testApiKey,
             trackingSignal: .authorized,
-            attachAnonymousConsent: attachAnonymousConsent,
             onRehydrated: onRehydrated
         ) { result in
             outcome = result
@@ -221,6 +242,14 @@ final class UniversalConsentLogoutTests: XCTestCase {
         }
         waitForExpectations(timeout: 1.0)
         return outcome
+    }
+
+    private func writtenCookieOptions() -> [String: Bool]? {
+        guard let body = network.lastPostBody,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let prefs = json["consent_preferences"] as? [String: Any]
+        else { return nil }
+        return prefs["cookieOptions"] as? [String: Bool]
     }
 
     private func hash(_ identifier: String) throws -> String {
@@ -281,15 +310,17 @@ final class MethodAwareMockNetworkClient: NetworkClient {
     var getResult: Result<Data, ConsentError> = .success(Data())
     var postResult: Result<Data, ConsentError> = .success(Data(#"{"status":"ok"}"#.utf8))
     var methods: [HTTPMethod] = []
+    var lastPostBody: Data?
 
     override func request(
         url _: URL,
         method: HTTPMethod = .get,
-        body _: Data? = nil,
+        body: Data? = nil,
         headers _: [String: String]? = nil,
         completion: @escaping (Result<Data, ConsentError>) -> Void
     ) {
         methods.append(method)
+        if method == .post { lastPostBody = body }
         completion(method == .get ? getResult : postResult)
     }
 
