@@ -199,6 +199,36 @@ final class UniversalConsentLogoutTests: XCTestCase {
         XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
     }
 
+    /// TRUST-2961 regression: a found record whose `consent_preferences` block is PRESENT but
+    /// carries an empty `cookieOptions` map is an ANSWERED essential-only choice on a login — the
+    /// user accepted only always-on categories. It is ADOPTED (local state replaced, the banner
+    /// suppressed), never dropped to neutral like a signal-only record whose `consent_preferences`
+    /// is ABSENT (see the two tests above). iOS already distinguishes the two by a nil check rather
+    /// than an emptiness check; this locks that in and keeps iOS aligned with Android, React
+    /// Native and web.
+    func testLoginWithPresentButEmptyRecordAdoptsEssentialOnlyChoice() throws {
+        try storage.savePreferences(marketingChoice(true))
+        network.getResult = .success(
+            Data(#"{"status":"found","consent_preferences":{"isCustomised":true,"cookieOptions":{}}}"#.utf8)
+        )
+
+        var rehydrated: ConsentPreferences?
+        XCTAssertNoThrow(try sync(userA) { rehydrated = $0 }.get())
+
+        XCTAssertEqual(network.methods, [.get], "the record wins as-is: adopted, never written")
+        // The answered choice is PERSISTED — contrast the signal-only case, which returns to neutral.
+        let stored = try XCTUnwrap(storage.loadPreferences(), "an answered choice must persist")
+        XCTAssertTrue(stored.isCustomised)
+        XCTAssertFalse(sut.shouldDisplayBanner(), "an answered essential-only choice stops the re-prompt")
+        XCTAssertTrue(sut.isCategoryEnabled("dg-category-essential"), "essential stays on")
+        XCTAssertFalse(
+            sut.isCategoryEnabled("dg-category-marketing"),
+            "the empty map consented to nothing beyond essential"
+        )
+        XCTAssertNotNil(rehydrated, "listener fires with the adopted choice")
+        XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
+    }
+
     // MARK: - Shared-device switch and re-sync
 
     func testSwitchingUsersOnASharedDeviceDoesNotWriteThePreviousUsersState() throws {
