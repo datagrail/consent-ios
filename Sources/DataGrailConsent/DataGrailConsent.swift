@@ -355,6 +355,12 @@ public class DataGrailConsent {
 // `onConsentChangedCallback`, which are private and therefore file-scoped.
 public extension DataGrailConsent {
 
+    /// Binds the live config so the public Universal Consent calls can resolve the API key; see
+    /// ``ConsentManager/resolveUniversalConsentApiKey(explicit:in:)`` for the precedence rules.
+    private func resolvedUniversalConsentApiKey(_ explicit: String?) -> String? {
+        ConsentManager.resolveUniversalConsentApiKey(explicit: explicit, in: manager?.config)
+    }
+
     /// Register a user identifier and sync their consent across devices via the
     /// Universal Consent API.
     ///
@@ -411,14 +417,6 @@ public extension DataGrailConsent {
     ///   - getSignature: Customer-provided signature provider (calls their backend). `nil`
     ///     selects limited (API-key-only) mode.
     ///   - completion: Completion handler with result.
-    /// Resolve the edge API key for a Universal Consent call (TRUST-2603): an explicit value
-    /// passed by the host wins (existing integrations behave exactly as before); otherwise fall
-    /// back to `universalConsent.apiKey` from config.json, which lets the key rotate server-side
-    /// with no client release. `nil` when neither is present, in which case the caller fails fast.
-    private func resolvedUniversalConsentApiKey(_ explicit: String?) -> String? {
-        ConsentManager.resolveUniversalConsentApiKey(explicit: explicit, in: manager?.config)
-    }
-
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setUserIdentifier(
         _ identifier: String,
@@ -527,7 +525,7 @@ public extension DataGrailConsent {
     /// - Parameters:
     ///   - identifier: The user identifier. Normalized (NFC → trim → lowercase) before hashing.
     ///   - apiKey: Customer API key, sent as `X-DG-Api-Key`. Optional (TRUST-2603): falls
-///     back to `universalConsent.apiKey` from config.json when omitted; explicit wins.
+    ///     back to `universalConsent.apiKey` from config.json when omitted; explicit wins.
     ///   - trackingSignal: This device's live signal. Defaults to the current ATT status.
     ///   - completion: Receives the reconciled record, or `nil` when no record is stored for
     ///     this user. `nil` means "no signal" — it is NOT an opt-out.
