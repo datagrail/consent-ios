@@ -274,6 +274,37 @@ final class UniversalConsentLogoutTests: XCTestCase {
         XCTAssertEqual(storage.loadPreferences(), marketingChoice(true), "local state untouched")
     }
 
+    // MARK: - Logout wins over an in-flight login
+
+    func testLogoutDuringAnInFlightLoginDoesNotRebindOrWrite() throws {
+        // An explicit local choice would otherwise be seed-written on this no-record login.
+        try storage.savePreferences(marketingChoice(true))
+        network.getResult = .success(notFound)
+        network.deferGet = true
+
+        var outcome: Result<Void, ConsentError>?
+        sut.syncUserIdentifier(
+            userA,
+            apiKey: testApiKey,
+            trackingSignal: .authorized
+        ) { outcome = $0 }
+        XCTAssertNil(outcome, "the read is still in flight")
+
+        // The host logs out while the read is outstanding.
+        sut.clearUserIdentifier()
+        XCTAssertNil(storage.loadBoundUserHash())
+
+        // The in-flight read now resolves; its completion must honor the logout.
+        try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
+
+        XCTAssertEqual(network.methods, [.get], "the superseded login never POSTs the old choice")
+        XCTAssertNil(storage.loadBoundUserHash(), "the in-flight login does not rebind after logout")
+        XCTAssertNil(storage.loadPreferences(), "state stays neutral")
+        guard case .failure = try XCTUnwrap(outcome) else {
+            return XCTFail("a login superseded by logout reports failure, not success")
+        }
+    }
+
     // MARK: - Helpers
 
     private let notFound = Data(#"{"status":"not_found"}"#.utf8)
@@ -365,6 +396,10 @@ final class MethodAwareMockNetworkClient: NetworkClient {
     var postResult: Result<Data, ConsentError> = .success(Data(#"{"status":"ok"}"#.utf8))
     var methods: [HTTPMethod] = []
     var lastPostBody: Data?
+    /// When set, a GET records its method but holds its completion in `pendingGetCompletion`
+    /// instead of answering, so a test can interleave work (e.g. a logout) before it resolves.
+    var deferGet = false
+    var pendingGetCompletion: ((Result<Data, ConsentError>) -> Void)?
 
     override func request(
         url _: URL,
@@ -375,6 +410,10 @@ final class MethodAwareMockNetworkClient: NetworkClient {
     ) {
         methods.append(method)
         if method == .post { lastPostBody = body }
+        if method == .get, deferGet {
+            pendingGetCompletion = completion
+            return
+        }
         completion(method == .get ? getResult : postResult)
     }
 
