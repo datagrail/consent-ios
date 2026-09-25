@@ -127,6 +127,15 @@ These methods throw `ConsentError.notInitialized` if called before `initialize` 
 | `rejectAll(completion:)` | Reject all non-essential categories |
 | `reset()` | Clear all stored consent data |
 
+### CCPA "Do Not Sell or Share"
+
+| Method | Description |
+|--------|-------------|
+| `setCcpaOptout(_:completion:)` | Record the user's explicit CCPA/CPRA "Do Not Sell or Share My Personal Information" choice. iOS has no native DNSMPI signal, so call this from your app's own control. Stored on the device and changes no category. Written to the Universal Consent record as `ccpa_optout` when `universalConsent.sync_optout` is on and the user is signed in via `setUserIdentifier`. |
+| `getCcpaOptout()` | The stored choice (`false` when never set). A login that finds a stored record takes the record's value; `clearUserIdentifier()` resets it to `false`. |
+
+The SDK never derives `ccpa_optout` from a consent category, ATT or any other signal.
+
 ### Banner Display
 
 | Method | Description |

@@ -14,6 +14,7 @@ public class ConsentStorage {
         static let configCache = "datagrail_consent_config_cache"
         static let pendingEvents = "datagrail_consent_pending_events"
         static let boundUserHash = "datagrail_consent_bound_user_hash"
+        static let ccpaOptout = "datagrail_consent_ccpa_optout"
     }
 
     public init(userDefaults: UserDefaults = .standard) {
@@ -66,6 +67,18 @@ public class ConsentStorage {
     /// Clear the Universal Consent identity binding.
     public func clearBoundUserHash() {
         userDefaults.removeObject(forKey: Keys.boundUserHash)
+    }
+
+    // MARK: - CCPA opt-out
+
+    /// Persist the user's explicit CCPA/CPRA "Do Not Sell or Share" choice (TRUST-2591).
+    public func saveCcpaOptout(_ optedOut: Bool) {
+        userDefaults.set(optedOut, forKey: Keys.ccpaOptout)
+    }
+
+    /// Load the user's explicit CCPA/CPRA "Do Not Sell or Share" choice; `false` when never set.
+    public func loadCcpaOptout() -> Bool {
+        userDefaults.bool(forKey: Keys.ccpaOptout)
     }
 
     // MARK: - Unique ID
@@ -169,6 +182,7 @@ public class ConsentStorage {
             Keys.configCache,
             Keys.pendingEvents,
             Keys.boundUserHash,
+            Keys.ccpaOptout,
         ]
         keys.forEach { userDefaults.removeObject(forKey: $0) }
     }
