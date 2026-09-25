@@ -112,7 +112,7 @@ public class DataGrailConsent {
                 }
                 DispatchQueue.main.async { completion(.success(())) }
             case let .failure(error):
-                Logger.error("DataGrailConsent initialization failed: \(error.localizedDescription)")
+                Logger.error("DataGrailConsent initialization failed: \(error.logSafeDescription)")
                 DispatchQueue.main.async { completion(.failure(error)) }
             }
         }

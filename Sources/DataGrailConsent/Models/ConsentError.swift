@@ -60,6 +60,36 @@ public enum ConsentError: LocalizedError {
         }
     }
 
+    /// A description safe to log through a `%{public}@` sink: it names the failure by kind and
+    /// includes only non-sensitive scalars (the HTTP status), never the associated `message`.
+    /// The `message` on `parseError`/`httpError`/`networkError` can embed a preview of the fetched
+    /// response body (see `ConfigService`), which may carry customer or config data, so it must not
+    /// reach a public log.
+    public var logSafeDescription: String {
+        switch self {
+        case .notInitialized:
+            return "notInitialized"
+        case .invalidConfiguration:
+            return "invalidConfiguration"
+        case .invalidConfigUrl:
+            return "invalidConfigUrl"
+        case .networkError:
+            return "networkError"
+        case let .httpError(statusCode, _):
+            return "httpError(\(statusCode))"
+        case let .configNotPublished(statusCode):
+            return "configNotPublished(\(statusCode.map(String.init) ?? "nil"))"
+        case .parseError:
+            return "parseError"
+        case .storageError:
+            return "storageError"
+        case .validationError:
+            return "validationError"
+        case .signatureTimeout:
+            return "signatureTimeout"
+        }
+    }
+
     /// A definitive 4xx response — the server rejected the request as bad (malformed payload,
     /// rejected signature/key, 422). Retrying the identical request cannot succeed, so operations
     /// that re-invoke an external service per attempt (e.g. a customer's signing backend) must
