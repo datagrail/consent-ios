@@ -81,11 +81,12 @@ public class ConsentService {
     /// `SDKVersionSyncTests` fails the build if this drifts from the podspec.
     static let sdkVersion = "1.7.0"
 
-    /// Wire schema version this SDK's models are written against. This SDK mirrors the v1
-    /// (byte-equivalent legacy) wire format and doesn't consume consent-schema's generated
-    /// types, so there's no runtime value to read this from — bump manually if/when this SDK
-    /// migrates to a newer schema.
-    private static let schemaVersion = "v1"
+    /// Wire schema version this SDK's models are written against: the `package` version of the
+    /// dgapp consent_schema `config.proto` vendored under `consent_schema/` (provenance in
+    /// `consent_schema/SOURCE`). `SchemaVersionSyncTests` fails if the two drift; bump them together.
+    /// No build-time injection exists for SPM/CocoaPods (same as `sdkVersion`), and this SDK doesn't
+    /// consume consent-schema's generated types, so this is a pinned literal.
+    static let schemaVersion = "v1"
 
     /// Maximum time to wait for the customer-provided `getSignature` callback before failing a
     /// Universal Consent write with ``ConsentError/signatureTimeout``. The callback calls the
