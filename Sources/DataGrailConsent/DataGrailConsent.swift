@@ -34,7 +34,8 @@ public class DataGrailConsent {
         }
     }
 
-    private init() {}
+    /// Internal (not private) so tests can exercise `initialize` on an instance other than `shared`.
+    init() {}
 
     // MARK: - Initialization
 
@@ -44,6 +45,20 @@ public class DataGrailConsent {
     ///   - completion: Completion handler with result
     public func initialize(
         configUrl: URL,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
+        initialize(
+            configUrl: configUrl,
+            networkClient: NetworkClient(),
+            storage: ConsentStorage(),
+            completion: completion
+        )
+    }
+
+    func initialize(
+        configUrl: URL,
+        networkClient: NetworkClient,
+        storage: ConsentStorage,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         // Validate URL scheme
@@ -65,8 +80,6 @@ public class DataGrailConsent {
 
         self.configUrl = configUrl
 
-        let storage = ConsentStorage()
-        let networkClient = NetworkClient()
         let configService = ConfigService(
             networkClient: networkClient,
             storage: storage
@@ -97,9 +110,10 @@ public class DataGrailConsent {
                 manager.retryPendingRequests { _, _ in
                     // Silent retry, don't block initialization
                 }
-                completion(.success(()))
+                DispatchQueue.main.async { completion(.success(())) }
             case let .failure(error):
-                completion(.failure(error))
+                Logger.error("DataGrailConsent initialization failed: \(error.logSafeDescription)")
+                DispatchQueue.main.async { completion(.failure(error)) }
             }
         }
     }

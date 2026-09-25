@@ -15,6 +15,15 @@ public enum ConsentError: LocalizedError {
     /// exhaustively over `ConsentError` — add a case for `.httpError` (or an `@unknown default`).
     /// Intentional and release-noted; see the PR's `breaking-change` label.
     case httpError(statusCode: Int, message: String)
+    /// The consent configuration is not published at the config URL: the config fetch was rejected with a
+    /// definitive 4xx (see ``isClientError``; S3/CloudFront returns 403 for a missing key, not only 404) and no
+    /// cached configuration was available. `statusCode` is nil when raised for a reason other than an HTTP
+    /// status. Not retried. Same condition as Android `ConsentException.ConfigNotPublished` and React
+    /// `CONFIG_NOT_PUBLISHED`.
+    ///
+    /// NOTE: New in the next release. Source-breaking for host apps that switch exhaustively over
+    /// `ConsentError`: add a case for `.configNotPublished` (or an `@unknown default`).
+    case configNotPublished(statusCode: Int?)
     case parseError(String)
     case storageError(String)
     case validationError(String)
@@ -37,6 +46,9 @@ public enum ConsentError: LocalizedError {
             return "Network error: \(message)"
         case let .httpError(statusCode, message):
             return "HTTP \(statusCode): \(message)"
+        case let .configNotPublished(statusCode):
+            let status = statusCode.map { " (HTTP \($0))" } ?? ""
+            return "Configuration not published\(status). Publish the consent configuration or check the config URL."
         case let .parseError(message):
             return "Failed to parse configuration: \(message)"
         case let .storageError(message):
@@ -45,6 +57,36 @@ public enum ConsentError: LocalizedError {
             return "Validation error: \(message)"
         case .signatureTimeout:
             return "Signature request timed out: the getSignature callback did not return in time."
+        }
+    }
+
+    /// A description safe to log through a `%{public}@` sink: it names the failure by kind and
+    /// includes only non-sensitive scalars (the HTTP status), never the associated `message`.
+    /// The `message` on `parseError`/`httpError`/`networkError` can embed a preview of the fetched
+    /// response body (see `ConfigService`), which may carry customer or config data, so it must not
+    /// reach a public log.
+    public var logSafeDescription: String {
+        switch self {
+        case .notInitialized:
+            return "notInitialized"
+        case .invalidConfiguration:
+            return "invalidConfiguration"
+        case .invalidConfigUrl:
+            return "invalidConfigUrl"
+        case .networkError:
+            return "networkError"
+        case let .httpError(statusCode, _):
+            return "httpError(\(statusCode))"
+        case let .configNotPublished(statusCode):
+            return "configNotPublished(\(statusCode.map(String.init) ?? "nil"))"
+        case .parseError:
+            return "parseError"
+        case .storageError:
+            return "storageError"
+        case .validationError:
+            return "validationError"
+        case .signatureTimeout:
+            return "signatureTimeout"
         }
     }
 
@@ -58,11 +100,16 @@ public enum ConsentError: LocalizedError {
     /// time, so both must remain retryable (with backoff). This mirrors the web SDK's
     /// `isRetryableStatus` (`status === 408 || status === 429`). Treating either as a client error
     /// would make a timed-out or rate-limited UC read/write give up after a single attempt.
+    /// ``configNotPublished`` is always a client error, so the shared retry predicate never retries it.
     public var isClientError: Bool {
-        if case let .httpError(statusCode, _) = self {
+        switch self {
+        case let .httpError(statusCode, _):
             return (400 ..< 500).contains(statusCode) && statusCode != 429 && statusCode != 408
+        case .configNotPublished:
+            return true
+        default:
+            return false
         }
-        return false
     }
 
     /// The default retry-eligibility policy for ``NetworkClient/retryWithBackoff(maxAttempts:baseDelay:shouldRetry:operation:completion:)``:

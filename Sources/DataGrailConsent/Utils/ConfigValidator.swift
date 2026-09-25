@@ -62,6 +62,7 @@ public enum ConfigValidator {
             "ConsentLayerCategoryElement",
             "ConsentLayerTrackingDetailsElement",
             "ConsentLayerBrowserSignalNoticeElement",
+            "ConsentLayerLanguagePickerElement",
         ]
 
         for layer in config.layout.consentLayers.values {
@@ -86,12 +87,26 @@ public enum ConfigValidator {
                     }
                 }
 
-                // Validate translations exist
-                if element.type != "ConsentLayerCategoryElement" {
-                    guard let translations = element.translations, !translations.isEmpty else {
-                        throw ConsentError.validationError("Element '\(element.id)' has no translations")
-                    }
-                }
+                try validateTranslations(element)
+            }
+        }
+    }
+
+    private static func validateTranslations(_ element: ConsentLayerElement) throws {
+        switch element.type {
+        case "ConsentLayerLinkElement":
+            guard let links = element.links, !links.isEmpty else {
+                throw ConsentError.validationError("Link element '\(element.id)' has no links")
+            }
+            for link in links where link.translations.isEmpty {
+                throw ConsentError.validationError("Link '\(link.id)' in element '\(element.id)' has no translations")
+            }
+        case "ConsentLayerCategoryElement", "ConsentLayerLanguagePickerElement",
+             "ConsentLayerTrackingDetailsElement", "ConsentLayerBrowserSignalNoticeElement":
+            break // these carry their text in type-specific fields, not `translations`
+        default:
+            guard let translations = element.translations, !translations.isEmpty else {
+                throw ConsentError.validationError("Element '\(element.id)' has no translations")
             }
         }
     }
