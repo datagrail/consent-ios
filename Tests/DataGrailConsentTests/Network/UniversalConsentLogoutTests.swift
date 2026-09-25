@@ -146,6 +146,59 @@ final class UniversalConsentLogoutTests: XCTestCase {
         XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
     }
 
+    // MARK: - Login with a found record REPLACES local state (REVISION 2.1)
+
+    func testLoginWithSubsetRecordSetsOmittedCategoryToConfigDefaultNotPriorLocal() throws {
+        // analytics is configured (default ON); the record only covers essential + marketing.
+        loadUniversalConsentConfig(initialCategories: ["dg-category-essential", "dg-category-analytics"])
+        network.methods = []
+        try storage.savePreferences(ConsentPreferences(
+            isCustomised: true,
+            cookieOptions: [
+                CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
+                CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: false),
+                CategoryConsent(gtmKey: "dg-category-analytics", isEnabled: false),
+            ]
+        ))
+        network.getResult = .success(foundRecordJSON(marketing: true))
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get], "login + found record writes nothing")
+        XCTAssertTrue(sut.isCategoryEnabled("dg-category-marketing"), "record value")
+        XCTAssertTrue(
+            sut.isCategoryEnabled("dg-category-analytics"),
+            "omitted category takes its config default, not the prior local OFF"
+        )
+        XCTAssertTrue(sut.isCategoryEnabled("dg-category-essential"))
+    }
+
+    func testLoginWithSignalOnlyRecordDropsExplicitLocalChoiceToNeutral() throws {
+        try storage.savePreferences(marketingChoice(true))
+        network.getResult = .success(Data(#"{"status":"found","gpc":true}"#.utf8))
+
+        var rehydrated: ConsentPreferences?
+        XCTAssertNoThrow(try sync(userA) { rehydrated = $0 }.get())
+
+        XCTAssertEqual(network.methods, [.get], "no write")
+        XCTAssertNil(storage.loadPreferences(), "local returned to neutral")
+        XCTAssertTrue(sut.shouldDisplayBanner())
+        XCTAssertEqual(rehydrated, sut.getDefaultPreferences(), "listener fired with the neutral default")
+        XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
+    }
+
+    func testLoginWithSignalOnlyRecordAndNothingStoredIsANoOp() throws {
+        network.getResult = .success(Data(#"{"status":"found","gpc":true}"#.utf8))
+
+        var listenerFired = false
+        XCTAssertNoThrow(try sync(userA) { _ in listenerFired = true }.get())
+
+        XCTAssertEqual(network.methods, [.get])
+        XCTAssertNil(storage.loadPreferences())
+        XCTAssertFalse(listenerFired, "no rewrite, no listener")
+        XCTAssertEqual(storage.loadBoundUserHash(), try hash(userA))
+    }
+
     // MARK: - Shared-device switch and re-sync
 
     func testSwitchingUsersOnASharedDeviceDoesNotWriteThePreviousUsersState() throws {
@@ -266,8 +319,9 @@ final class UniversalConsentLogoutTests: XCTestCase {
         )
     }
 
-    private func loadUniversalConsentConfig() {
-        guard let data = try? JSONEncoder().encode(UCFixtures.makeConfig(privacyDomain: privacyDomain)),
+    private func loadUniversalConsentConfig(initialCategories: [String] = ["dg-category-essential"]) {
+        let config = UCFixtures.makeConfig(privacyDomain: privacyDomain, initialCategories: initialCategories)
+        guard let data = try? JSONEncoder().encode(config),
               let url = URL(string: "https://\(privacyDomain)/config.json")
         else {
             XCTFail("Failed to encode UC config fixture")
