@@ -85,7 +85,7 @@ public class ConsentService {
     /// (byte-equivalent legacy) wire format and doesn't consume consent-schema's generated
     /// types, so there's no runtime value to read this from — bump manually if/when this SDK
     /// migrates to a newer schema.
-    private static let schemaVersion = "v1"
+    static let schemaVersion = "v1"
 
     /// Maximum time to wait for the customer-provided `getSignature` callback before failing a
     /// Universal Consent write with ``ConsentError/signatureTimeout``. The callback calls the
