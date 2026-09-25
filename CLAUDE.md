@@ -77,3 +77,4 @@ PR checks run 4 jobs: build & test (`swift test`), SwiftLint (`--strict`), UIKit
 - Version is tracked in `DataGrailConsent.podspec` (currently 1.1.0)
 - `#if canImport(UIKit)` guards around UI code for cross-platform compilation
 - Config JSON uses `snake_case` keys mapped via `CodingKeys` to Swift `camelCase`
+- Universal Consent `ccpa_optout` invariant (TRUST-2591, identical in the web/Android/React Native SDKs): it is the user's EXPLICIT DNSMPI choice, set only by `setCcpaOptout` (the host app is the source of truth; there is no native signal) or by adopting a found record. It is never derived from a category, ATT or any signal. The wire value is `sync_optout && localFlag`, always the raw flag; `universalConsent.sync_optout` is only the per-customer gate. A found record's value replaces the local flag on login (and on re-sync only with the gate on); `clearUserIdentifier()` resets it to false
