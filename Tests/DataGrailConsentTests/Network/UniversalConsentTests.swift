@@ -121,19 +121,66 @@ final class UniversalConsentTests: XCTestCase {
             XCTAssertEqual(headers["X-DG-Nonce"], payload.nonce)
             XCTAssertEqual(headers["X-DG-Timestamp"], String(payload.timestamp))
 
-            // Golden: the signer receives exactly "{customerId}:{userHash}:{timestamp}:{nonce}".
+            // Golden: the signer receives exactly
+            // "{customerId}:{userHash}:{timestamp}:{nonce}:{provDigest}". The SDK sends no
+            // provenance today, so provDigest is the SHA-256 of the resolved-default triple
+            // (is_explicit=true, decision_ts=this write's timestamp, actor_id="").
             let expectedUserHash = "1fee132c298d615098190e3e75f9c7e05db20d6cff6398f686fcebc67d1d87a4"
             let expectedCustomerId = "ac46d8ad-a67a-431f-a5d5-9e3eb922dae7"
+            let expectedProvDigest = ConsentService.provenanceDigest(
+                isExplicit: true,
+                decisionTimestamp: payload.timestamp,
+                actorId: ""
+            )
             XCTAssertEqual(payload.customerId, expectedCustomerId)
             XCTAssertEqual(payload.userHash, expectedUserHash)
             XCTAssertEqual(
                 payload.stringToSign,
-                "\(expectedCustomerId):\(expectedUserHash):\(payload.timestamp):\(payload.nonce)"
+                "\(expectedCustomerId):\(expectedUserHash):\(payload.timestamp):\(payload.nonce):\(expectedProvDigest)"
             )
             expectation.fulfill()
         }
 
         waitForExpectations(timeout: 1.0)
+    }
+
+    /// Contract vector (TRUST-2971): the SDK must build byte-identical `stringToSign` bytes to
+    /// the authoritative signing corpus for a no-provenance write. These constants are the
+    /// `single[]` "plain-email" vector (`input.provenance == null`) from consent-backend
+    /// `server-sdks/node/fixtures/signing-vectors.json`; the edge and every SDK sign the same
+    /// resolved-default provenance triple (is_explicit=true, decision_ts=X-DG-Timestamp,
+    /// actor_id=""). If the corpus and this test disagree, the corpus wins — update this test.
+    func testStringToSignMatchesNoProvenanceCorpusVector() {
+        // input.*
+        let customerId = "cust_abc123"
+        let projectId = "proj_web_01"
+        let identifier = "user@example.com"
+        let timestamp: Int64 = 1_760_000_000
+        let nonce = "00112233445566778899aabbccddeeff"
+        // expected.*
+        let expectedUserHash = "28b7d3a022d86efa0f672aac75cfa7cf782a04c88046fb4f2fc5c724d7fbd8b5"
+        let expectedProvDigest = "4de0e6fe888081209009953420b400306063e95f4b2738b53204fb36a88cedb9"
+        let expectedStringToSign =
+            "cust_abc123:28b7d3a022d86efa0f672aac75cfa7cf782a04c88046fb4f2fc5c724d7fbd8b5:1760000000:00112233445566778899aabbccddeeff:4de0e6fe888081209009953420b400306063e95f4b2738b53204fb36a88cedb9"
+
+        // The SDK's own building blocks must reproduce the corpus values exactly.
+        let userHash = ConsentService.userHash(
+            dgCustomerId: customerId,
+            consentProjectId: projectId,
+            identifier: identifier
+        )
+        XCTAssertEqual(userHash, expectedUserHash)
+
+        let provDigest = ConsentService.provenanceDigest(
+            isExplicit: true,
+            decisionTimestamp: timestamp,
+            actorId: ""
+        )
+        XCTAssertEqual(provDigest, expectedProvDigest)
+
+        // Assemble the string exactly as performSignedWrite does.
+        let stringToSign = "\(customerId):\(userHash):\(timestamp):\(nonce):\(provDigest)"
+        XCTAssertEqual(stringToSign, expectedStringToSign)
     }
 
     /// Limited mode: with no signer, the write carries only X-DG-Api-Key — no signature,

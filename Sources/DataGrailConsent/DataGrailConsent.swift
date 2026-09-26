@@ -359,7 +359,7 @@ public extension DataGrailConsent {
     /// Universal Consent API.
     ///
     /// The SDK computes the user hash (`SHA-256(customerId:projectId:identifier)`), mints the
-    /// timestamp and nonce, builds `stringToSign = "{customerId}:{userHash}:{timestamp}:{nonce}"`,
+    /// timestamp and nonce, builds `stringToSign = "{customerId}:{userHash}:{timestamp}:{nonce}:{provDigest}"`,
     /// and reconciles the device's live tracking signal on-device — but does NOT compute the
     /// HMAC. It invokes the customer-provided `getSignature` closure — which calls the
     /// customer's own backend — with that payload to obtain `{ signature, keyId }`, then
