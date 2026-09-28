@@ -2,6 +2,7 @@
 import XCTest
 
 @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+// swiftlint:disable type_body_length
 final class UniversalConsentTests: XCTestCase {
     var mockNetworkClient: UCMockNetworkClient!
     var mockStorage: UCMockConsentStorage!
@@ -161,7 +162,9 @@ final class UniversalConsentTests: XCTestCase {
         let expectedUserHash = "28b7d3a022d86efa0f672aac75cfa7cf782a04c88046fb4f2fc5c724d7fbd8b5"
         let expectedProvDigest = "4de0e6fe888081209009953420b400306063e95f4b2738b53204fb36a88cedb9"
         let expectedStringToSign =
-            "cust_abc123:28b7d3a022d86efa0f672aac75cfa7cf782a04c88046fb4f2fc5c724d7fbd8b5:1760000000:00112233445566778899aabbccddeeff:4de0e6fe888081209009953420b400306063e95f4b2738b53204fb36a88cedb9"
+            "cust_abc123:28b7d3a022d86efa0f672aac75cfa7cf782a04c88046fb4f2fc5c724d7fbd8b5:" +
+            "1760000000:00112233445566778899aabbccddeeff:" +
+            "4de0e6fe888081209009953420b400306063e95f4b2738b53204fb36a88cedb9"
 
         // The SDK's own building blocks must reproduce the corpus values exactly.
         let userHash = ConsentService.userHash(
