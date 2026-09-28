@@ -7,6 +7,7 @@ import XCTest
 /// wins with no write; with no record only an explicit, unbound local choice is written; state
 /// left by a different bound identity is never written and returns to neutral.
 @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+// swiftlint:disable type_body_length
 final class UniversalConsentLogoutTests: XCTestCase {
     private var storage: ConsentStorage!
     private var network: MethodAwareMockNetworkClient!
