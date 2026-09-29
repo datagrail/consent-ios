@@ -96,6 +96,23 @@ if (try? DataGrailConsent.shared.isCategoryEnabled("dg-category-marketing")) == 
   pre-commit install
   ```
 
+## Schema Compatibility
+
+Each SDK release consumes exactly one version of the consent configuration schema:
+
+| SDK release                      | Config schema version |
+| -------------------------------- | --------------------- |
+| 1.x (all releases through 1.7.x) | v1                    |
+
+Newer schema versions (v2+) require a newer SDK release, which will be listed here when shipped.
+
+The SDK only reads its own schema version. If DataGrail stops publishing that version after its end of life,
+the last published configuration keeps being served and the SDK keeps working; it just stops receiving banner
+changes until the app upgrades. If a fetched configuration fails to load or validate, the SDK falls back to the
+last cached configuration.
+
+To see configuration-load failures in the console, set `DataGrailConsent.logLevel = .error` (or higher).
+
 ## API Reference
 
 ### Initialization
@@ -181,9 +198,12 @@ public enum ConsentError: LocalizedError {
     case invalidConfiguration(String)
     case invalidConfigUrl(String)
     case networkError(String)
+    case httpError(statusCode: Int, message: String)
+    case configNotPublished(statusCode: Int?)  // definite 4xx (not 408/429) on config fetch, nothing cached
     case parseError(String)
     case storageError(String)
     case validationError(String)
+    case signatureTimeout
 }
 ```
 

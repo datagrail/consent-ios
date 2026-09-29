@@ -25,46 +25,100 @@ public class ConfigService {
 
             switch result {
             case let .success(data):
-                let dataSize = data.count
-
-                // If data is empty (304 Not Modified), use cached config
-                if data.isEmpty {
-                    if let cachedConfig = self.storage.loadConfigCache() {
-                        completion(.success(cachedConfig))
-                    } else {
-                        let msg = "304 Not Modified but no cached config. Size: \(dataSize)"
-                        completion(.failure(.parseError(msg)))
-                    }
-                    return
-                }
-
-                do {
-                    let config = try JSONDecoder().decode(ConsentConfig.self, from: data)
-
-                    // Cache the configuration
-                    try self.storage.saveConfigCache(config)
-
-                    completion(.success(config))
-                } catch {
-                    let preview = String(decoding: data.prefix(200), as: UTF8.self)
-                    let detailedError = "Parse failed (\(dataSize) bytes): \(preview)"
-                    // If parse fails, try cached config
-                    if let cachedConfig = self.storage.loadConfigCache() {
-                        completion(.success(cachedConfig))
-                    } else {
-                        completion(.failure(.parseError(detailedError)))
-                    }
-                }
+                self.handleConfigData(data, completion: completion)
 
             case let .failure(error):
-                // If network fails, try cached config
-                if let cachedConfig = self.storage.loadConfigCache() {
-                    completion(.success(cachedConfig))
+                let failure: ConsentError
+                if error.isClientError, case let .httpError(statusCode, _) = error {
+                    failure = .configNotPublished(statusCode: statusCode)
                 } else {
-                    completion(.failure(error))
+                    failure = error
                 }
+                self.completeWithCachedConfig(
+                    orFailWith: failure,
+                    reason: "Config fetch failed: \(error.localizedDescription)",
+                    completion: completion
+                )
             }
         }
+    }
+
+    private func handleConfigData(
+        _ data: Data, completion: @escaping (Result<ConsentConfig, ConsentError>) -> Void
+    ) {
+        let dataSize = data.count
+
+        // If data is empty (304 Not Modified), use cached config
+        if data.isEmpty {
+            if let cachedConfig = storage.loadConfigCache() {
+                completion(.success(cachedConfig))
+            } else {
+                Logger.error("Config returned 304 Not Modified but no cached config exists")
+                let msg = "304 Not Modified but no cached config. Size: \(dataSize)"
+                completion(.failure(.parseError(msg)))
+            }
+            return
+        }
+
+        let config: ConsentConfig
+        do {
+            config = try JSONDecoder().decode(ConsentConfig.self, from: data)
+        } catch {
+            let preview = String(decoding: data.prefix(200), as: UTF8.self)
+            let detailedError = "Parse failed (\(dataSize) bytes): \(preview)"
+            completeWithCachedConfig(
+                orFailWith: .parseError(detailedError),
+                reason: "Config parse failed (\(dataSize) bytes): \(error)",
+                completion: completion
+            )
+            return
+        }
+
+        do {
+            try ConfigValidator.validate(config)
+        } catch let error as ConsentError {
+            completeWithCachedConfig(
+                orFailWith: error,
+                reason: "Config validation failed: \(error.localizedDescription)",
+                completion: completion
+            )
+            return
+        } catch {
+            completeWithCachedConfig(
+                orFailWith: .validationError(String(describing: error)),
+                reason: "Config validation failed: \(error)",
+                completion: completion
+            )
+            return
+        }
+
+        do {
+            try storage.saveConfigCache(config)
+        } catch {
+            Logger.error("Failed to cache config: \(error)")
+        }
+        completion(.success(config))
+    }
+
+    private func completeWithCachedConfig(
+        orFailWith error: ConsentError,
+        reason: String,
+        completion: @escaping (Result<ConsentConfig, ConsentError>) -> Void
+    ) {
+        if let cachedConfig = storage.loadConfigCache() {
+            Logger.error("\(reason); using cached config")
+            completion(.success(cachedConfig))
+        } else {
+            Logger.error("\(reason); no cached config available")
+            completion(.failure(error))
+        }
+    }
+
+    /// Config-fetch retry policy: the shared ``ConsentError/isRetryable(_:)`` rule, plus never
+    /// retrying a validation failure (the same bytes would fail the same way).
+    static func shouldRetryConfigFetch(_ error: ConsentError) -> Bool {
+        if case .validationError = error { return false }
+        return ConsentError.isRetryable(error)
     }
 
     /// Fetch configuration with retry logic
@@ -75,9 +129,9 @@ public class ConfigService {
         from url: URL, completion: @escaping (Result<ConsentConfig, ConsentError>) -> Void
     ) {
         networkClient.retryWithBackoff(
-            // Shared policy: a definite 4xx (e.g. a bad config URL) gives up, 5xx/transport
-            // retry (429 still retries). See ConsentError.isRetryable.
-            shouldRetry: ConsentError.isRetryable,
+            // A definite 4xx (surfaced as .configNotPublished when uncached) or an invalid config
+            // gives up; 5xx/transport/parse retry (408/429 still retry). See shouldRetryConfigFetch.
+            shouldRetry: Self.shouldRetryConfigFetch,
             operation: { operationCompletion in
                 self.fetchConfig(from: url, completion: operationCompletion)
             },
