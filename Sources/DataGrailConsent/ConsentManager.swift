@@ -440,7 +440,7 @@ extension ConsentManager {
         apiKey: String,
         trackingSignal: TrackingSignal,
         replacesLocal: Bool = false,
-        generation: Int? = nil,
+        snapshot: IdentityGate.Snapshot? = nil,
         completion: @escaping (Result<RehydrateOutcome, ConsentError>) -> Void
     ) {
         guard let config = currentConfig else {
@@ -514,9 +514,9 @@ extension ConsentManager {
                 )
 
                 do {
-                    // With a `generation` (a login), persist only if no logout landed mid-read:
+                    // With a `snapshot` (a login), persist only if no logout landed mid-read:
                     // the check and the write are one critical section against the logout.
-                    let persisted = try identityGate.ifCurrent(generation) {
+                    let persisted = try identityGate.ifCurrent(snapshot?.generation) {
                         try storage.savePreferences(effective)
                         // Stamp the CURRENT config version, not the record's. This marks the
                         // rehydrated consent as current for the config the app is running, which
@@ -525,7 +525,8 @@ extension ConsentManager {
                         storage.saveConfigVersion(currentVersion)
                         // The record is authoritative for the stored CCPA choice (an absent field
                         // decodes to false). Not derived from anything: the user's recorded DNSMPI choice.
-                        if adoptsCcpaOptout {
+                        // A setter call that landed mid-read is newer than the record, so it stays.
+                        if adoptsCcpaOptout, !identityGate.ccpaChanged(since: snapshot) {
                             storage.saveCcpaOptout(record.ccpaOptout)
                         }
                     }
@@ -632,7 +633,9 @@ extension ConsentManager {
         // Snapshot before the async read. A logout (clearUserIdentifier/reset) that lands while
         // the read is in flight bumps the generation; every later step then bails without
         // persisting, notifying, writing, or rebinding, so an in-flight login can't undo it.
-        let generation = identityGate.generation
+        // The snapshot also records the setCcpaOptout revision, so a setter call made mid-flight
+        // is recognized as newer than both the record and this pre-read capture (TRUST-2591).
+        let snapshot = identityGate.snapshot
         // The RAW local CCPA flag, captured for the same reason: the rehydrate may adopt the
         // record's value (TRUST-2591).
         let localCcpaOptout = storage.loadCcpaOptout()
@@ -643,7 +646,7 @@ extension ConsentManager {
             trackingSignal: trackingSignal,
             // A LOGIN replaces local state with the record, the CCPA flag included.
             replacesLocal: !binding.isResync,
-            generation: generation
+            snapshot: snapshot
         ) { [weak self] result in
             guard let self else {
                 completion(.failure(.notInitialized))
@@ -662,7 +665,7 @@ extension ConsentManager {
                     localCcpaOptout: localCcpaOptout,
                     userHash: userHash,
                     binding: binding,
-                    generation: generation,
+                    snapshot: snapshot,
                     onRehydrated: onRehydrated,
                     completion: completion
                 )
@@ -675,7 +678,7 @@ extension ConsentManager {
     /// ``syncUserIdentifier`` for readability and to keep each body within SwiftLint's limits.
     ///
     /// Guards against a logout that landed while the read (or a subsequent seed-write) was in
-    /// flight: `generation` is the identity generation captured before the read, and any change
+    /// flight: `snapshot` holds the identity generation captured before the read, and any change
     /// means a ``clearUserIdentifier()``/``reset()`` superseded this login, so it must not rebind
     /// or mutate storage.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
@@ -688,7 +691,7 @@ extension ConsentManager {
         localCcpaOptout: Bool,
         userHash: String?,
         binding: LoginBinding,
-        generation: Int,
+        snapshot: IdentityGate.Snapshot,
         onRehydrated: ((ConsentPreferences) -> Void)?,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
@@ -696,7 +699,7 @@ extension ConsentManager {
         // seed-write adds a second async hop a logout can land in.
         let bindingCompletion: (Result<Void, ConsentError>) -> Void = { [weak self] writeResult in
             guard let self else { return completion(writeResult) }
-            let current = self.identityGate.ifCurrent(generation) {
+            let current = self.identityGate.ifCurrent(snapshot.generation) {
                 if case .success = writeResult, let userHash {
                     self.storage.saveBoundUserHash(userHash)
                     self.universalConsentSession = UniversalConsentSession(
@@ -709,13 +712,18 @@ extension ConsentManager {
         // Every local mutation, notification, and the decision to write run in one critical
         // section with the logout check, so a concurrent logout either fully precedes this (and
         // nothing happens) or fully follows it (and its own return-to-neutral wins).
-        let current = identityGate.ifCurrent(generation) {
+        let current = identityGate.ifCurrent(snapshot.generation) {
+            // A setCcpaOptout call that landed while the read was in flight is the newest choice:
+            // it is already stored, nothing below overwrites it, and a write here carries it.
+            let keepsStoredCcpa = identityGate.ccpaChanged(since: snapshot)
             completeAdopt(outcome: outcome, binding: binding, onRehydrated: onRehydrated)
             // The choice this call may write: never another bound identity's leftover state.
             let explicitChoice = binding.boundToOther ? nil : localChoice
             if let explicitChoice, shouldWrite(explicitChoice, outcome: outcome, binding: binding) {
                 // The write carries the user's own CCPA flag, not a value the rehydrate adopted.
-                storage.saveCcpaOptout(localCcpaOptout)
+                if !keepsStoredCcpa {
+                    storage.saveCcpaOptout(localCcpaOptout)
+                }
                 setUserIdentifier(
                     identifier,
                     apiKey: apiKey,
@@ -729,6 +737,7 @@ extension ConsentManager {
                 outcome: outcome,
                 binding: binding,
                 hadLocalChoice: localChoice != nil,
+                keepsStoredCcpa: keepsStoredCcpa,
                 onRehydrated: onRehydrated
             )
             bindingCompletion(.success(()))
@@ -757,26 +766,43 @@ extension ConsentManager {
     /// The no-write tail of ``syncUserIdentifier``. On a LOGIN, stored state the record did not
     /// replace (a miss over another identity's state, or a found record carrying no choice) is
     /// dropped to neutral; nothing stored means nothing to drop, so no rewrite and no listener.
-    /// The CCPA flag follows the same rule (TRUST-2591): another identity's value never lingers,
-    /// and a found signal-only record is still authoritative for it.
+    /// The CCPA flag is resolved separately by ``loginCcpaOptout(outcome:binding:dropsChoice:)``.
     private func dropUnreplacedLoginState(
         outcome: RehydrateOutcome,
         binding: LoginBinding,
         hadLocalChoice: Bool,
+        keepsStoredCcpa: Bool,
         onRehydrated: ((ConsentPreferences) -> Void)?
     ) {
         guard !binding.isResync else { return }
-        if outcome.raw == nil, hadLocalChoice {
-            returnToNeutral()
-            if let effective = getCategories() {
-                onRehydrated?(effective)
-            }
-        } else if binding.boundToOther, !outcome.found {
-            storage.saveCcpaOptout(false)
+        let dropsChoice = outcome.raw == nil && hadLocalChoice
+        if dropsChoice {
+            storage.removePreferences()
         }
-        if outcome.found, outcome.raw == nil {
-            storage.saveCcpaOptout(outcome.ccpaOptout)
+        let resolvedCcpa = Self.loginCcpaOptout(
+            outcome: outcome,
+            dropsChoice: dropsChoice,
+            boundToOther: binding.boundToOther
+        )
+        if !keepsStoredCcpa, let resolvedCcpa {
+            storage.saveCcpaOptout(resolvedCcpa)
         }
+        if dropsChoice, let effective = getCategories() {
+            onRehydrated?(effective)
+        }
+    }
+
+    /// The CCPA flag a no-write LOGIN leaves stored (TRUST-2591), or `nil` to leave it as it is.
+    ///
+    /// - Found record: it is authoritative for the flag. A record carrying a choice already had
+    ///   its flag adopted by the rehydrate (`nil` here); a signal-only record sets it here.
+    /// - Miss: the flag returns to neutral (`false`) whenever the stored state is dropped or
+    ///   belongs to another bound identity, so another identity's value never lingers.
+    static func loginCcpaOptout(outcome: RehydrateOutcome, dropsChoice: Bool, boundToOther: Bool) -> Bool? {
+        if outcome.found {
+            return outcome.raw == nil ? outcome.ccpaOptout : nil
+        }
+        return dropsChoice || boundToOther ? false : nil
     }
 
     /// What ``rehydrateReportingFound`` reports: whether a record exists, its RAW choice (`nil` on a
@@ -790,6 +816,10 @@ extension ConsentManager {
     /// The identity and credentials of the last successful ``syncUserIdentifier``. Memory only:
     /// the signature provider cannot be persisted, so after a relaunch ``setCcpaOptout(_:completion:)``
     /// stays local until the host calls `setUserIdentifier` again.
+    ///
+    /// Holding `getSignature` is what lets a later ``setCcpaOptout(_:completion:)`` sign its
+    /// write-through, so the closure is retained until ``clearUserIdentifier()``, ``reset()`` or
+    /// the next successful bind replaces it. The public API documents this so hosts capture weakly.
     struct UniversalConsentSession {
         let userHash: String
         let identifier: String
@@ -858,23 +888,31 @@ extension ConsentManager {
     /// never seeded). Otherwise it stays local and rides the next Universal Consent write.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     public func setCcpaOptout(_ optedOut: Bool, completion: @escaping (Result<Void, ConsentError>) -> Void) {
-        storage.saveCcpaOptout(optedOut)
-        guard let universalConsent = currentConfig?.universalConsent,
-              universalConsent.enabled, universalConsent.syncOptout,
-              let session = universalConsentSession,
-              session.userHash == storage.loadBoundUserHash(),
-              let localChoice = storage.loadPreferences()
-        else {
-            completion(.success(()))
-            return
+        // Storing the flag, checking the session, and dispatching the write run in one critical
+        // section against logout/reset and an in-flight sync: a logout either precedes it (the
+        // flag stays local) or follows it (the write for the still-bound identity is already in
+        // flight, and the logout's return-to-neutral resets the local flag).
+        var dispatched = false
+        identityGate.recordCcpaChoice {
+            storage.saveCcpaOptout(optedOut)
+            guard let universalConsent = currentConfig?.universalConsent,
+                  universalConsent.enabled, universalConsent.syncOptout,
+                  let session = universalConsentSession,
+                  session.userHash == storage.loadBoundUserHash(),
+                  let localChoice = storage.loadPreferences()
+            else { return }
+            dispatched = true
+            setUserIdentifier(
+                session.identifier,
+                apiKey: session.apiKey,
+                preferences: localChoice,
+                getSignature: session.getSignature,
+                completion: completion
+            )
         }
-        setUserIdentifier(
-            session.identifier,
-            apiKey: session.apiKey,
-            preferences: localChoice,
-            getSignature: session.getSignature,
-            completion: completion
-        )
+        if !dispatched {
+            completion(.success(()))
+        }
     }
 
     /// The user's explicit CCPA/CPRA "Do Not Sell or Share" choice as stored on this device;
@@ -912,7 +950,7 @@ extension ConsentManager {
 
     /// Remove the stored explicit choice so reads fall through to the config default via the
     /// existing ``getCategories()`` / ``shouldDisplayBanner()`` no-choice path — exactly what a
-    /// fresh install sees. Shared by logout and a login over another bound identity's state.
+    /// fresh install sees. Used by logout; a login drops state via ``dropUnreplacedLoginState``.
     private func returnToNeutral() {
         storage.removePreferences()
         // Neutral includes "not opted out": the CCPA choice belongs to the identity being dropped.
@@ -953,13 +991,37 @@ extension ConsentManager {
 final class IdentityGate {
     static let superseded = ConsentError.validationError("User identifier sync superseded by logout")
 
+    /// What a sync captures before its read: the identity generation, and the revision of the
+    /// host's ``ConsentManager/setCcpaOptout(_:completion:)`` calls (TRUST-2591).
+    struct Snapshot {
+        let generation: Int
+        let ccpaRevision: Int
+    }
+
     private let lock = NSRecursiveLock()
     private var current = 0
+    private var ccpaRevision = 0
 
-    var generation: Int {
+    var snapshot: Snapshot {
         lock.lock()
         defer { lock.unlock() }
-        return current
+        return Snapshot(generation: current, ccpaRevision: ccpaRevision)
+    }
+
+    /// Bump the CCPA revision and run `body` (the setter's own work) in the same critical section.
+    func recordCcpaChoice(_ body: () -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        ccpaRevision &+= 1
+        body()
+    }
+
+    /// Whether a setter call landed since `snapshot` was taken; `false` for a `nil` snapshot.
+    func ccpaChanged(since snapshot: Snapshot?) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let snapshot else { return false }
+        return snapshot.ccpaRevision != ccpaRevision
     }
 
     /// Bump the generation and run `body` (the logout's own mutations) in the same critical section.

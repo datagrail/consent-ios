@@ -211,6 +211,57 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
         XCTAssertFalse(sut.getCcpaOptout())
     }
 
+    // MARK: - Interleaving with an in-flight sync / logout
+
+    func testSetterDuringAnInFlightResyncWriteIsNotReverted() throws {
+        storage.saveBoundUserHash(try hash(userA))
+        try storage.savePreferences(marketingChoice(true))
+        network.getResult = .success(foundRecordJSON(marketing: false, ccpaOptout: false))
+        network.deferGet = true
+        var outcome: Result<Void, ConsentError>?
+        sut.syncUserIdentifier(userA, apiKey: testApiKey, trackingSignal: .authorized) { outcome = $0 }
+
+        // The user flips the DNSMPI switch while the re-sync's read is outstanding.
+        sut.setCcpaOptout(true) { _ in }
+        try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
+
+        XCTAssertNoThrow(try XCTUnwrap(outcome).get())
+        XCTAssertEqual(network.methods, [.get, .post], "the genuine category change is written through")
+        XCTAssertTrue(sut.getCcpaOptout(), "the newer setter value survives the sync")
+        XCTAssertEqual(writtenCcpaOptout(), true, "and the sync's write carries it, not the pre-read value")
+    }
+
+    func testSetterDuringAnInFlightResyncAdoptIsNotReverted() throws {
+        storage.saveBoundUserHash(try hash(userA))
+        try storage.savePreferences(marketingChoice(true))
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        network.deferGet = true
+        sut.syncUserIdentifier(userA, apiKey: testApiKey, trackingSignal: .authorized) { _ in }
+
+        sut.setCcpaOptout(true) { _ in }
+        try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
+
+        XCTAssertEqual(network.methods, [.get], "an unchanged choice is not re-written")
+        XCTAssertTrue(sut.getCcpaOptout(), "adopting the record does not overwrite the newer setter value")
+    }
+
+    func testLogoutDuringASetterWriteThroughLeavesTheDeviceNeutral() throws {
+        try storage.savePreferences(marketingChoice(true))
+        network.getResult = .success(notFound)
+        XCTAssertNoThrow(try sync(userA).get())
+        network.deferPost = true
+        var outcome: Result<Void, ConsentError>?
+        sut.setCcpaOptout(true) { outcome = $0 }
+        XCTAssertNil(outcome, "the write-through is in flight")
+
+        sut.clearUserIdentifier()
+        try XCTUnwrap(network.pendingPostCompletion)(network.postResult)
+
+        XCTAssertFalse(sut.getCcpaOptout(), "the logout resets the flag the setter stored")
+        XCTAssertNil(storage.loadBoundUserHash())
+        XCTAssertNil(sut.universalConsentSession)
+    }
+
     // MARK: - Neutral / reset
 
     func testClearUserIdentifierResetsTheFlag() throws {

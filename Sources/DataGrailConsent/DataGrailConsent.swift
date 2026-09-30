@@ -421,7 +421,10 @@ public extension DataGrailConsent {
     ///     `notDetermined` leave it untouched. A signal never enables a category, and
     ///     never affects what is written to the cross-device store.
     ///   - getSignature: Customer-provided signature provider (calls their backend). `nil`
-    ///     selects limited (API-key-only) mode.
+    ///     selects limited (API-key-only) mode. On success the SDK keeps it in memory so
+    ///     ``setCcpaOptout(_:completion:)`` can sign its write-through, until
+    ///     ``clearUserIdentifier()``, ``reset()`` or the next successful call replaces it. Capture
+    ///     view controllers or other short-lived objects weakly (`[weak self]`) in this closure.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setUserIdentifier(

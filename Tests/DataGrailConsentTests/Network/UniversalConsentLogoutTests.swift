@@ -431,6 +431,9 @@ final class MethodAwareMockNetworkClient: NetworkClient {
     /// instead of answering, so a test can interleave work (e.g. a logout) before it resolves.
     var deferGet = false
     var pendingGetCompletion: ((Result<Data, ConsentError>) -> Void)?
+    /// The same for POSTs, so a test can interleave work while a write is in flight.
+    var deferPost = false
+    var pendingPostCompletion: ((Result<Data, ConsentError>) -> Void)?
 
     override func request(
         url _: URL,
@@ -443,6 +446,10 @@ final class MethodAwareMockNetworkClient: NetworkClient {
         if method == .post { lastPostBody = body }
         if method == .get, deferGet {
             pendingGetCompletion = completion
+            return
+        }
+        if method == .post, deferPost {
+            pendingPostCompletion = completion
             return
         }
         completion(method == .get ? getResult : postResult)
