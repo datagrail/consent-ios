@@ -1,6 +1,8 @@
 @testable import DataGrailConsent
 import XCTest
 
+// swiftlint:disable type_body_length
+
 /// Shared-device login/logout for Universal Consent (TRUST-2902).
 ///
 /// Covers the logout-to-neutral API (`clearUserIdentifier`) and the login rule: a found record
@@ -305,6 +307,33 @@ final class UniversalConsentLogoutTests: XCTestCase {
         }
     }
 
+    func testLogoutDuringAnInFlightLoginDoesNotAdoptTheFoundRecord() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        network.deferGet = true
+
+        var outcome: Result<Void, ConsentError>?
+        var rehydrated: [ConsentPreferences] = []
+        sut.syncUserIdentifier(
+            userA,
+            apiKey: testApiKey,
+            trackingSignal: .authorized,
+            onRehydrated: { rehydrated.append($0) },
+            completion: { outcome = $0 }
+        )
+
+        // The host logs out while the read is outstanding, then the read resolves with a record.
+        sut.clearUserIdentifier()
+        try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
+
+        XCTAssertNil(storage.loadPreferences(), "the superseded login's record is not persisted after logout")
+        XCTAssertNil(storage.loadBoundUserHash())
+        XCTAssertTrue(rehydrated.isEmpty, "no consent-changed notification for a superseded login")
+        XCTAssertEqual(network.methods, [.get])
+        guard case .failure = try XCTUnwrap(outcome) else {
+            return XCTFail("a login superseded by logout reports failure, not success")
+        }
+    }
+
     // MARK: - Helpers
 
     private let notFound = Data(#"{"status":"not_found"}"#.utf8)
@@ -388,6 +417,8 @@ final class UniversalConsentLogoutTests: XCTestCase {
         """.utf8)
     }
 }
+
+// swiftlint:enable type_body_length
 
 /// Answers GETs and POSTs independently and records every method, so a test can assert that a
 /// read happened with no write after it (the shared UC mock only keeps the last request).

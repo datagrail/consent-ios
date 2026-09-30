@@ -7,12 +7,9 @@ public class ConsentManager {
     private let consentService: ConsentService
     private var currentConfig: ConsentConfig?
 
-    /// Monotonic token bumped whenever the identity binding is invalidated (logout or reset).
-    /// ``syncUserIdentifier`` captures it before its async read and rechecks it before mutating,
-    /// so a login whose network round-trip outlives a logout cannot rebind or write after it.
-    /// See the ``invalidatePendingIdentitySync()`` helpers in the coordination extension.
-    fileprivate let identityLock = NSLock()
-    fileprivate var identityGeneration = 0
+    /// Serializes logout/reset against an in-flight ``syncUserIdentifier`` so a login whose
+    /// network round-trip outlives a logout cannot persist, notify, write, or rebind after it.
+    fileprivate let identityGate = IdentityGate()
 
     /// Current loaded configuration (read-only)
     public var config: ConsentConfig? {
@@ -406,6 +403,7 @@ public class ConsentManager {
         _ identifier: String,
         apiKey: String,
         trackingSignal: TrackingSignal,
+        generation: Int? = nil,
         completion: @escaping (Result<(found: Bool, raw: ConsentPreferences?), ConsentError>) -> Void
     ) {
         guard let config = currentConfig else {
@@ -419,6 +417,7 @@ public class ConsentManager {
         // persisting or fall through to unreconciled state — the same hazard fetchUniversalConsent
         // was rewritten to avoid.
         let storage = self.storage
+        let identityGate = self.identityGate
         let essentialCategoryKeys = Set(getEssentialCategories())
         let currentVersion = config.version
 
@@ -477,13 +476,17 @@ public class ConsentManager {
                 )
 
                 do {
-                    try storage.savePreferences(effective)
-                    // Stamp the CURRENT config version, not the record's. This marks the
-                    // rehydrated consent as current for the config the app is running, which
-                    // is what shouldDisplayBanner() compares against; carrying over a stale
-                    // version from the writing device would re-prompt immediately.
-                    storage.saveConfigVersion(currentVersion)
-                    completion(.success((found: true, raw: raw)))
+                    // With a `generation` (a login), persist only if no logout landed mid-read:
+                    // the check and the write are one critical section against the logout.
+                    let persisted = try identityGate.ifCurrent(generation) {
+                        try storage.savePreferences(effective)
+                        // Stamp the CURRENT config version, not the record's. This marks the
+                        // rehydrated consent as current for the config the app is running, which
+                        // is what shouldDisplayBanner() compares against; carrying over a stale
+                        // version from the writing device would re-prompt immediately.
+                        storage.saveConfigVersion(currentVersion)
+                    }
+                    completion(persisted ? .success((found: true, raw: raw)) : .failure(IdentityGate.superseded))
                 } catch let error as ConsentError {
                     completion(.failure(error))
                 } catch {
@@ -507,9 +510,10 @@ public class ConsentManager {
 
     /// Clear all consent data
     public func reset() {
-        invalidatePendingIdentitySync()
-        storage.clearAll()
-        currentConfig = nil
+        identityGate.invalidate {
+            storage.clearAll()
+            currentConfig = nil
+        }
     }
 }
 
@@ -518,28 +522,6 @@ public class ConsentManager {
 // In an extension (not the class body) so the coordinator stays within SwiftLint's
 // type_body_length limit, matching how the public adapter splits its own UC surface.
 extension ConsentManager {
-
-    fileprivate var currentIdentityGeneration: Int {
-        identityLock.lock()
-        defer { identityLock.unlock() }
-        return identityGeneration
-    }
-
-    /// Invalidate any in-flight ``syncUserIdentifier`` so its completion cannot mutate storage.
-    /// Called by every path that clears the binding (logout and reset).
-    fileprivate func invalidatePendingIdentitySync() {
-        identityLock.lock()
-        identityGeneration &+= 1
-        identityLock.unlock()
-    }
-
-    /// The failure a sync completion returns when a logout bumped the generation mid-flight;
-    /// `nil` when the login is still current and may proceed to mutate storage.
-    fileprivate func logoutSupersededError(since generation: Int) -> ConsentError? {
-        currentIdentityGeneration == generation
-            ? nil
-            : .validationError("User identifier sync superseded by logout")
-    }
 
     /// Rehydrate, and hand back the RAW stored preferences from the record.
     ///
@@ -629,14 +611,15 @@ extension ConsentManager {
             boundToOther: bound != nil && bound != userHash
         )
         // Snapshot before the async read. A logout (clearUserIdentifier/reset) that lands while
-        // the read is in flight bumps the generation; the completion below then bails without
-        // rebinding, adopting, or writing, so an in-flight login can't undo the logout.
-        let generation = self.currentIdentityGeneration
+        // the read is in flight bumps the generation; every later step then bails without
+        // persisting, notifying, writing, or rebinding, so an in-flight login can't undo it.
+        let generation = identityGate.generation
 
         rehydrateReportingFound(
             identifier,
             apiKey: apiKey,
-            trackingSignal: trackingSignal
+            trackingSignal: trackingSignal,
+            generation: generation
         ) { [weak self] result in
             guard let self else {
                 completion(.failure(.notInitialized))
@@ -683,53 +666,56 @@ extension ConsentManager {
         onRehydrated: ((ConsentPreferences) -> Void)?,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
-        // A logout raced in during the read: honor it, don't rebind or mutate storage.
-        if let superseded = logoutSupersededError(since: generation) {
-            return completion(.failure(superseded))
-        }
-        // Bind only after the call succeeds, so a failed write never binds.
+        // Bind only after the call succeeds, so a failed write never binds. Rechecked because a
+        // seed-write adds a second async hop a logout can land in.
         let bindingCompletion: (Result<Void, ConsentError>) -> Void = { [weak self] writeResult in
-            // Recheck: a seed-write adds a second async hop, so a logout could still have landed
-            // after the read guard passed. Don't rebind if it did.
-            if let superseded = self?.logoutSupersededError(since: generation) {
-                return completion(.failure(superseded))
+            guard let self else { return completion(writeResult) }
+            let current = self.identityGate.ifCurrent(generation) {
+                if case .success = writeResult, let userHash {
+                    self.storage.saveBoundUserHash(userHash)
+                }
             }
-            if case .success = writeResult, let userHash {
-                self?.storage.saveBoundUserHash(userHash)
-            }
-            completion(writeResult)
+            completion(current ? writeResult : .failure(IdentityGate.superseded))
         }
-        if outcome.raw != nil {
-            // A LOGIN replaces local state with the record; it never merges with it.
-            if !binding.isResync {
-                fillOmittedCategoriesWithNeutral()
+        // Every local mutation, notification, and the decision to write run in one critical
+        // section with the logout check, so a concurrent logout either fully precedes this (and
+        // nothing happens) or fully follows it (and its own return-to-neutral wins).
+        let current = identityGate.ifCurrent(generation) {
+            if outcome.raw != nil {
+                // A LOGIN replaces local state with the record; it never merges with it.
+                if !binding.isResync {
+                    fillOmittedCategoriesWithNeutral()
+                }
+                if let effective = getCategories() {
+                    onRehydrated?(effective)
+                }
             }
-            if let effective = getCategories() {
-                onRehydrated?(effective)
+            // The choice this call may write: never another bound identity's leftover state.
+            let explicitChoice = binding.boundToOther ? nil : localChoice
+            if let explicitChoice, shouldWrite(explicitChoice, outcome: outcome, binding: binding) {
+                setUserIdentifier(
+                    identifier,
+                    apiKey: apiKey,
+                    preferences: explicitChoice,
+                    getSignature: getSignature,
+                    completion: bindingCompletion
+                )
+                return
             }
-        }
-        // The choice this call may write: never another bound identity's leftover state.
-        let explicitChoice = binding.boundToOther ? nil : localChoice
-        if let explicitChoice, shouldWrite(explicitChoice, outcome: outcome, binding: binding) {
-            setUserIdentifier(
-                identifier,
-                apiKey: apiKey,
-                preferences: explicitChoice,
-                getSignature: getSignature,
-                completion: bindingCompletion
-            )
-            return
-        }
-        // No write. On a LOGIN, stored state the record did not replace (a miss over another
-        // identity's state, or a found record carrying no choice) is dropped to neutral.
-        // Nothing stored means nothing to drop: no rewrite, so no listener.
-        if !binding.isResync, outcome.raw == nil, localChoice != nil {
-            returnToNeutral()
-            if let effective = getCategories() {
-                onRehydrated?(effective)
+            // No write. On a LOGIN, stored state the record did not replace (a miss over another
+            // identity's state, or a found record carrying no choice) is dropped to neutral.
+            // Nothing stored means nothing to drop: no rewrite, so no listener.
+            if !binding.isResync, outcome.raw == nil, localChoice != nil {
+                returnToNeutral()
+                if let effective = getCategories() {
+                    onRehydrated?(effective)
+                }
             }
+            bindingCompletion(.success(()))
         }
-        bindingCompletion(.success(()))
+        if !current {
+            completion(.failure(IdentityGate.superseded))
+        }
     }
 
     /// The persisted-binding facts ``syncUserIdentifier`` branches on, captured before the read.
@@ -774,9 +760,10 @@ extension ConsentManager {
     /// - Returns: The now-effective (default) preferences, or `nil` when no config is loaded.
     @discardableResult
     public func clearUserIdentifier() -> ConsentPreferences? {
-        invalidatePendingIdentitySync()
-        storage.clearBoundUserHash()
-        returnToNeutral()
+        identityGate.invalidate {
+            storage.clearBoundUserHash()
+            returnToNeutral()
+        }
         return getCategories()
     }
 
@@ -833,5 +820,45 @@ extension ConsentManager {
             map[option.gtmKey] = option.isEnabled
         }
         return map
+    }
+}
+
+/// Serializes identity invalidation (logout/reset) against the steps of an in-flight
+/// ``ConsentManager/syncUserIdentifier``: a monotonic generation plus a lock held across each
+/// check-and-mutate, so a check can never pass and then be overtaken by a logout before the
+/// mutation it guards. Recursive because a guarded step may complete synchronously into another
+/// guarded step (a seed-write's completion binds) on the same thread.
+///
+/// A seed-write dispatched before a logout still reaches the network — that request is already
+/// in flight — but the logout wins locally: the login never rebinds after it.
+final class IdentityGate {
+    static let superseded = ConsentError.validationError("User identifier sync superseded by logout")
+
+    private let lock = NSRecursiveLock()
+    private var current = 0
+
+    var generation: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return current
+    }
+
+    /// Bump the generation and run `body` (the logout's own mutations) in the same critical section.
+    func invalidate(_ body: () -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        current &+= 1
+        body()
+    }
+
+    /// Run `body` only if no invalidation happened since `generation` was captured; `nil` always runs.
+    /// - Returns: Whether `body` ran.
+    @discardableResult
+    func ifCurrent(_ generation: Int?, _ body: () throws -> Void) rethrows -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if let generation, generation != current { return false }
+        try body()
+        return true
     }
 }
