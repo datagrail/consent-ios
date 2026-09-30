@@ -371,8 +371,18 @@ public extension DataGrailConsent {
 
     /// Binds the live config so the public Universal Consent calls can resolve the API key; see
     /// ``ConsentManager/resolveUniversalConsentApiKey(explicit:in:)`` for the precedence rules.
-    private func resolvedUniversalConsentApiKey(_ explicit: String?) -> String? {
-        ConsentManager.resolveUniversalConsentApiKey(explicit: explicit, in: manager?.config)
+    /// On failure, reports the error through `completion` and returns `nil`.
+    private func resolvedUniversalConsentApiKey<T>(
+        _ explicit: String?,
+        orFail completion: (Result<T, ConsentError>) -> Void
+    ) -> String? {
+        switch ConsentManager.universalConsentApiKey(explicit: explicit, in: manager?.config) {
+        case let .success(key):
+            return key
+        case let .failure(error):
+            completion(.failure(error))
+            return nil
+        }
     }
 
     /// Register a user identifier and sync their consent across devices via the
@@ -420,7 +430,8 @@ public extension DataGrailConsent {
     ///     edge can resolve customer/tier/secret from KVS. Optional (TRUST-2603): when
     ///     omitted the SDK falls back to `universalConsent.apiKey` from config.json, which
     ///     lets the key rotate server-side with no client release. An explicit value here
-    ///     takes precedence; the call fails with `.validationError` if neither is present.
+    ///     takes precedence; the call fails with `.validationError` if neither is present
+    ///     (`.notInitialized` if config.json has not finished loading yet).
     ///   - trackingSignal: The device's live tracking signal. Defaults to the current
     ///     App Tracking Transparency status, which the SDK reads from the OS — you do
     ///     not need to pass this. Override it only if your app manages ATT itself and
@@ -446,12 +457,7 @@ public extension DataGrailConsent {
             completion(.failure(.notInitialized))
             return
         }
-        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey) else {
-            completion(.failure(.validationError(
-                "Universal Consent requires an API key: pass apiKey or set universalConsent.apiKey in config.json"
-            )))
-            return
-        }
+        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey, orFail: completion) else { return }
 
         // READ then WRITE. Rehydrating first honors a choice made on the web or another device
         // in local state; the write then carries the user's CURRENT LOCAL choice (sync-on-change)
@@ -557,12 +563,7 @@ public extension DataGrailConsent {
             completion(.failure(.notInitialized))
             return
         }
-        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey) else {
-            completion(.failure(.validationError(
-                "Universal Consent requires an API key: pass apiKey or set universalConsent.apiKey in config.json"
-            )))
-            return
-        }
+        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey, orFail: completion) else { return }
 
         manager.fetchUniversalConsent(
             identifier,
@@ -597,12 +598,7 @@ public extension DataGrailConsent {
             completion(.failure(.notInitialized))
             return
         }
-        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey) else {
-            completion(.failure(.validationError(
-                "Universal Consent requires an API key: pass apiKey or set universalConsent.apiKey in config.json"
-            )))
-            return
-        }
+        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey, orFail: completion) else { return }
 
         manager.rehydrateFromUniversalConsent(
             identifier,

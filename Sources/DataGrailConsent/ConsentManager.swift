@@ -1056,4 +1056,18 @@ extension ConsentManager {
         let candidate = explicit?.isEmpty == false ? explicit : config?.universalConsent?.apiKey
         return candidate?.isEmpty == false ? candidate : nil
     }
+
+    /// ``resolveUniversalConsentApiKey(explicit:in:)`` with the failure the public calls report.
+    /// With no config loaded yet (``DataGrailConsent/initialize(configUrl:completion:)`` is still
+    /// fetching it) the config fallback cannot be consulted, so that is `.notInitialized`, not a
+    /// missing key.
+    static func universalConsentApiKey(explicit: String?, in config: ConsentConfig?) -> Result<String, ConsentError> {
+        if let key = resolveUniversalConsentApiKey(explicit: explicit, in: config) {
+            return .success(key)
+        }
+        guard config != nil else { return .failure(.notInitialized) }
+        return .failure(.validationError(
+            "Universal Consent requires an API key: pass apiKey or set universalConsent.apiKey in config.json"
+        ))
+    }
 }

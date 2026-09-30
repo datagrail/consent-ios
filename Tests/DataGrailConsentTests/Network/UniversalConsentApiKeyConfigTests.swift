@@ -60,4 +60,26 @@ final class UniversalConsentApiKeyConfigTests: XCTestCase {
         )
         XCTAssertEqual(resolved, "config_key")
     }
+
+    // MARK: - Failure reported by the public calls
+
+    func testMissingKeyWithAConfigLoadedIsAValidationError() {
+        guard case .failure(.validationError) = ConsentManager.universalConsentApiKey(
+            explicit: nil,
+            in: config(apiKey: nil)
+        ) else {
+            return XCTFail("no key at either source is a validation error")
+        }
+    }
+
+    func testMissingKeyBeforeTheConfigLoadsIsNotInitialized() {
+        guard case .failure(.notInitialized) = ConsentManager.universalConsentApiKey(explicit: nil, in: nil) else {
+            return XCTFail("the config fallback cannot be consulted yet: report timing, not a missing key")
+        }
+    }
+
+    func testExplicitKeyResolvesBeforeTheConfigLoads() {
+        let resolved = ConsentManager.universalConsentApiKey(explicit: "explicit_key", in: nil)
+        XCTAssertEqual(try resolved.get(), "explicit_key")
+    }
 }
