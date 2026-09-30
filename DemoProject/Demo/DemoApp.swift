@@ -4,7 +4,12 @@ import SwiftUI
 struct DemoApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            TabView {
+                ConfigURLTesterView()
+                    .tabItem { Label("Config URL", systemImage: "link") }
+                ContentView()
+                    .tabItem { Label("Universal Consent", systemImage: "person.2") }
+            }
         }
     }
 }

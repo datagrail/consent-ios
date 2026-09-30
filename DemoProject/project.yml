@@ -44,6 +44,23 @@ targets:
       INFOPLIST_KEY_UILaunchScreen_Generation: YES
     dependencies:
       - package: DataGrailConsent
+    scheme:
+      testTargets:
+        - DemoTests
+  DemoTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: DemoTests
+    dependencies:
+      - target: Demo
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: io.datagrail.consent.demo.tests
+      SWIFT_VERSION: "5.0"
+      DEVELOPMENT_TEAM: ""
+      CODE_SIGN_STYLE: Automatic
 packages:
   DataGrailConsent:
     path: ../

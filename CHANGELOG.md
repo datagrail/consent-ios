@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking:** `ConsentError.configNotPublished(statusCode:)`. A config fetch rejected with a definite 4xx (any 4xx except 408 and 429, including 403) when no cached config exists now fails with `.configNotPublished` instead of `.httpError`, and is not retried. With a cached config, the cache is still returned. Host apps that switch exhaustively over `ConsentError` must add the new case. Same name and trigger as Android `ConsentException.ConfigNotPublished` and React `CONFIG_NOT_PUBLISHED`.
 - `Logger.error` on every config-load failure (fetch, parse, validation, 304 with no cache, cache write) and on `initialize` failure. Visible when `DataGrailConsent.logLevel` is `.error` or higher.
+- Demo app: a **Config URL** tab that loads a pre-signed test config link from the Mobile tab and previews it with the SDK's banner, showing the SDK and config schema versions and a specific error for expired, altered, deleted, unreachable, unparseable, or unsupported-schema links. Demo-only; the SDK's public API is unchanged.
 
 ### Changed
 
