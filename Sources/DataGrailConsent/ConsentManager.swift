@@ -399,6 +399,32 @@ public class ConsentManager {
         }
     }
 
+    // MARK: - Retry
+
+    /// Retry any pending API requests
+    /// - Parameter completion: Completion handler with (successCount, failureCount)
+    public func retryPendingRequests(completion: @escaping (Int, Int) -> Void) {
+        consentService.retryPendingRequests(completion: completion)
+    }
+
+    // MARK: - Reset
+
+    /// Clear all consent data
+    public func reset() {
+        identityGate.invalidate {
+            storage.clearAll()
+            currentConfig = nil
+            universalConsentSession = nil
+        }
+    }
+}
+
+// MARK: - Universal Consent read-then-write coordination
+
+// In an extension (not the class body) so the coordinator stays within SwiftLint's
+// type_body_length limit, matching how the public adapter splits its own UC surface.
+extension ConsentManager {
+
     /// The rehydrate behind ``rehydrateReturningRawPreferences(_:apiKey:trackingSignal:completion:)``,
     /// additionally reporting whether the store held a record at all. `raw` alone cannot tell a
     /// GENUINE MISS from a signal-only found record (both carry no raw choice), and the
@@ -515,32 +541,6 @@ public class ConsentManager {
             }
         }
     }
-
-    // MARK: - Retry
-
-    /// Retry any pending API requests
-    /// - Parameter completion: Completion handler with (successCount, failureCount)
-    public func retryPendingRequests(completion: @escaping (Int, Int) -> Void) {
-        consentService.retryPendingRequests(completion: completion)
-    }
-
-    // MARK: - Reset
-
-    /// Clear all consent data
-    public func reset() {
-        identityGate.invalidate {
-            storage.clearAll()
-            currentConfig = nil
-            universalConsentSession = nil
-        }
-    }
-}
-
-// MARK: - Universal Consent read-then-write coordination
-
-// In an extension (not the class body) so the coordinator stays within SwiftLint's
-// type_body_length limit, matching how the public adapter splits its own UC surface.
-extension ConsentManager {
 
     /// Rehydrate, and hand back the RAW stored preferences from the record.
     ///
