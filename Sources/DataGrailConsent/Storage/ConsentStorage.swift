@@ -13,6 +13,8 @@ public class ConsentStorage {
         static let localeCode = "datagrail_consent_locale_code"
         static let configCache = "datagrail_consent_config_cache"
         static let pendingEvents = "datagrail_consent_pending_events"
+        static let boundUserHash = "datagrail_consent_bound_user_hash"
+        static let ccpaOptout = "datagrail_consent_ccpa_optout"
     }
 
     public init(userDefaults: UserDefaults = .standard) {
@@ -40,6 +42,43 @@ public class ConsentStorage {
             return nil
         }
         return try? decoder.decode(ConsentPreferences.self, from: data)
+    }
+
+    /// Remove the stored consent preferences, returning the device to the no-choice state a
+    /// fresh install has. Leaves every other key (unique id, config cache, version, locale,
+    /// pending queue) intact — unlike ``clearAll()``.
+    public func removePreferences() {
+        userDefaults.removeObject(forKey: Keys.preferences)
+    }
+
+    // MARK: - Universal Consent identity binding
+
+    /// Persist the user hash of the identity this device is bound to for Universal Consent.
+    /// Only the hash is stored — never the raw identifier.
+    public func saveBoundUserHash(_ userHash: String) {
+        userDefaults.set(userHash, forKey: Keys.boundUserHash)
+    }
+
+    /// Load the user hash of the identity this device is bound to, or nil when unbound.
+    public func loadBoundUserHash() -> String? {
+        userDefaults.string(forKey: Keys.boundUserHash)
+    }
+
+    /// Clear the Universal Consent identity binding.
+    public func clearBoundUserHash() {
+        userDefaults.removeObject(forKey: Keys.boundUserHash)
+    }
+
+    // MARK: - CCPA opt-out
+
+    /// Persist the user's explicit CCPA/CPRA "Do Not Sell or Share" choice (TRUST-2591).
+    public func saveCcpaOptout(_ optedOut: Bool) {
+        userDefaults.set(optedOut, forKey: Keys.ccpaOptout)
+    }
+
+    /// Load the user's explicit CCPA/CPRA "Do Not Sell or Share" choice; `false` when never set.
+    public func loadCcpaOptout() -> Bool {
+        userDefaults.bool(forKey: Keys.ccpaOptout)
     }
 
     // MARK: - Unique ID
@@ -142,6 +181,8 @@ public class ConsentStorage {
             Keys.localeCode,
             Keys.configCache,
             Keys.pendingEvents,
+            Keys.boundUserHash,
+            Keys.ccpaOptout,
         ]
         keys.forEach { userDefaults.removeObject(forKey: $0) }
     }

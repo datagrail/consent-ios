@@ -385,10 +385,17 @@ extension UniversalConsentRehydrateTests {
 
     /// On a found record the write must carry the user's CURRENT LOCAL choice (sync-on-change),
     /// not the record it just fetched. Re-POSTing the fetched map would discard a local opt-out
-    /// the user made on this device before associating their identity — and echo state the edge
+    /// the user made on this device while logged in — and echo state the edge
     /// already holds.
-    func testSyncWritesLocalRawChoiceNotTheFetchedRecordOnAHit() {
-        // The user opted marketing OFF locally before associating their identity.
+    ///
+    /// Runs as a RE-SYNC (device already bound to this identity): on a LOGIN a found record wins
+    /// and nothing is written (TRUST-2902, covered in UniversalConsentLogoutTests).
+    func testSyncWritesLocalRawChoiceNotTheFetchedRecordOnAHit() throws {
+        let config = try XCTUnwrap(sut.config)
+        storage.saveBoundUserHash(
+            try ConsentService.validatedUserHash(identifier: "user@example.com", config: config)
+        )
+        // The user, already logged in on this device, opted marketing OFF locally.
         try? storage.savePreferences(ConsentPreferences(
             isCustomised: true,
             cookieOptions: [

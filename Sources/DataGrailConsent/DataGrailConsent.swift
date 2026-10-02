@@ -369,11 +369,27 @@ public class DataGrailConsent {
 // `onConsentChangedCallback`, which are private and therefore file-scoped.
 public extension DataGrailConsent {
 
+    /// Binds the live config so the public Universal Consent calls can resolve the API key; see
+    /// ``ConsentManager/resolveUniversalConsentApiKey(explicit:in:)`` for the precedence rules.
+    /// On failure, reports the error through `completion` and returns `nil`.
+    private func resolvedUniversalConsentApiKey<T>(
+        _ explicit: String?,
+        orFail completion: (Result<T, ConsentError>) -> Void
+    ) -> String? {
+        switch ConsentManager.universalConsentApiKey(explicit: explicit, in: manager?.config) {
+        case let .success(key):
+            return key
+        case let .failure(error):
+            completion(.failure(error))
+            return nil
+        }
+    }
+
     /// Register a user identifier and sync their consent across devices via the
     /// Universal Consent API.
     ///
     /// The SDK computes the user hash (`SHA-256(customerId:projectId:identifier)`), mints the
-    /// timestamp and nonce, builds `stringToSign = "{customerId}:{userHash}:{timestamp}:{nonce}"`,
+    /// timestamp and nonce, builds `stringToSign = "{customerId}:{userHash}:{timestamp}:{nonce}:{provDigest}"`,
     /// and reconciles the device's live tracking signal on-device — but does NOT compute the
     /// HMAC. It invokes the customer-provided `getSignature` closure — which calls the
     /// customer's own backend — with that payload to obtain `{ signature, keyId }`, then
@@ -385,13 +401,37 @@ public extension DataGrailConsent {
     /// carries the user's RAW preferences. A device signal never changes what is stored
     /// cross-device — otherwise opening the app with ATT denied would erase a marketing
     /// opt-in the user made on the web, for every device on their identifier.
+    ///
+    /// Login vs. re-sync. The SDK remembers (as a hash) which identity the device is bound to.
+    /// - On a LOGIN (device unbound, or bound to someone else) where a record is stored, the
+    ///   record wins: it replaces local state (categories it does not mention take their config
+    ///   default, never the prior local value) and nothing from the device is written, even if
+    ///   the user made a choice before logging in. A stored record that carries no consent
+    ///   choice returns local state to neutral.
+    /// - On a LOGIN where no record is stored, an explicit choice made on this device (a banner
+    ///   answer or a `savePreferences`/`acceptAll`/`rejectAll` call) seeds the new identity's
+    ///   record. Config defaults are never written. State left behind by a different bound
+    ///   identity is never attributed to the new one: nothing is written and local state returns
+    ///   to neutral.
+    /// - Once bound (a RE-SYNC), a local change is written through as before.
+    /// When there is nothing to write, the call succeeds without writing.
+    ///
+    /// What the SDK cannot detect: it cannot tell whether a pre-login choice was made by the
+    /// person now logging in or by a previous user of a shared device — on a no-record login it
+    /// attaches that choice by design — and does no heuristic shared-device or shared-account
+    /// detection. It cannot detect two people sharing one account; a stored record vs. a
+    /// differing post-login local choice is resolved as before (TRUST-2592). And it cannot detect
+    /// a logout it is not told about: call ``clearUserIdentifier()`` on logout.
     /// - Parameters:
     ///   - identifier: The user identifier (email, account id, …). Normalized (NFC →
     ///     trim → lowercase) before hashing, so casing and stray whitespace cannot
     ///     split one user into multiple records.
     ///   - apiKey: Customer API key, sent as `X-DG-Api-Key` on every request so the
-    ///     edge can resolve customer/tier/secret from KVS (required on writes to
-    ///     locate the HMAC secret to verify).
+    ///     edge can resolve customer/tier/secret from KVS. Optional (TRUST-2603): when
+    ///     omitted the SDK falls back to `universalConsent.apiKey` from config.json, which
+    ///     lets the key rotate server-side with no client release. An explicit value here
+    ///     takes precedence; the call fails with `.validationError` if neither is present
+    ///     (`.notInitialized` if config.json has not finished loading yet).
     ///   - trackingSignal: The device's live tracking signal. Defaults to the current
     ///     App Tracking Transparency status, which the SDK reads from the OS — you do
     ///     not need to pass this. Override it only if your app manages ATT itself and
@@ -400,12 +440,15 @@ public extension DataGrailConsent {
     ///     `notDetermined` leave it untouched. A signal never enables a category, and
     ///     never affects what is written to the cross-device store.
     ///   - getSignature: Customer-provided signature provider (calls their backend). `nil`
-    ///     selects limited (API-key-only) mode.
+    ///     selects limited (API-key-only) mode. On success the SDK keeps it in memory so
+    ///     ``setCcpaOptout(_:completion:)`` can sign its write-through, until
+    ///     ``clearUserIdentifier()``, ``reset()`` or the next successful call replaces it. Capture
+    ///     view controllers or other short-lived objects weakly (`[weak self]`) in this closure.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setUserIdentifier(
         _ identifier: String,
-        apiKey: String,
+        apiKey: String? = nil,
         trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         getSignature: UniversalConsentSignatureProvider? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
@@ -414,13 +457,14 @@ public extension DataGrailConsent {
             completion(.failure(.notInitialized))
             return
         }
+        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey, orFail: completion) else { return }
 
         // READ then WRITE. Rehydrating first honors a choice made on the web or another device
         // in local state; the write then carries the user's CURRENT LOCAL choice (sync-on-change)
         // and NEVER re-POSTs the fetched record — see ConsentManager.syncUserIdentifier.
         manager.syncUserIdentifier(
             identifier,
-            apiKey: apiKey,
+            apiKey: resolvedKey,
             trackingSignal: trackingSignal,
             getSignature: getSignature,
             onRehydrated: { [weak self] preferences in
@@ -436,6 +480,64 @@ public extension DataGrailConsent {
         )
     }
 
+    /// Log out of Universal Consent: clear the identity binding and return this device to
+    /// neutral.
+    ///
+    /// The host MUST call this on logout — the SDK cannot detect a logout it is not told about.
+    /// Afterwards reads return the config's default exactly as a fresh install sees it
+    /// (``shouldDisplayBanner()`` is true again, ``hasUserConsent()`` false), and the
+    /// consent-changed listener fires with those default preferences so the app can re-gate its
+    /// SDKs.
+    ///
+    /// Non-destructive, unlike ``reset()``: no network request is made, the user's stored
+    /// Universal Consent record is not deleted or modified, the device's unique id, cached
+    /// config, config version, locale and pending offline queue are kept, and the SDK stays
+    /// initialized. Idempotent and safe to call when no identifier is set; a no-op before
+    /// ``initialize(configUrl:completion:)``, like ``reset()``.
+    func clearUserIdentifier() {
+        guard let preferences = manager?.clearUserIdentifier() else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onConsentChangedCallback?(preferences)
+        }
+    }
+
+    /// Record the user's explicit CCPA/CPRA "Do Not Sell or Share My Personal Information"
+    /// (DNSMPI) choice.
+    ///
+    /// iOS has no OS or browser DNSMPI signal, so your app is the source of truth: call this from
+    /// your own "Do Not Sell or Share" control. The SDK never derives this value from a category
+    /// choice, ATT or any other signal.
+    ///
+    /// The flag is stored on the device and changes no category (the consent-changed listener
+    /// does not fire). It is written to the user's Universal Consent record as `ccpa_optout` only
+    /// when Universal Consent is enabled, the customer's `universalConsent.sync_optout` setting is
+    /// on, ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` has succeeded in
+    /// this app session, and the user has an explicit consent choice stored. Otherwise it is kept
+    /// locally and sent with the next Universal Consent write. When a login finds a stored record,
+    /// the record's value replaces this one; ``clearUserIdentifier()`` resets it to `false`.
+    ///
+    /// - Parameters:
+    ///   - optedOut: `true` when the user opts out of sale/sharing.
+    ///   - completion: Called on the main queue; a write-through failure is reported here and
+    ///     the local flag is kept.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    func setCcpaOptout(_ optedOut: Bool, completion: ((Result<Void, ConsentError>) -> Void)? = nil) {
+        guard let manager else {
+            DispatchQueue.main.async { completion?(.failure(.notInitialized)) }
+            return
+        }
+        manager.setCcpaOptout(optedOut) { result in
+            DispatchQueue.main.async { completion?(result) }
+        }
+    }
+
+    /// The user's CCPA/CPRA "Do Not Sell or Share" choice stored on this device: set by
+    /// ``setCcpaOptout(_:completion:)`` or adopted from a Universal Consent record. `false` when
+    /// never set or before initialization.
+    func getCcpaOptout() -> Bool {
+        manager?.getCcpaOptout() ?? false
+    }
+
     /// Fetch a user's stored Universal Consent record without changing local state.
     ///
     /// Returns the record with signals already reconciled on-device (see
@@ -445,14 +547,15 @@ public extension DataGrailConsent {
     ///
     /// - Parameters:
     ///   - identifier: The user identifier. Normalized (NFC → trim → lowercase) before hashing.
-    ///   - apiKey: Customer API key, sent as `X-DG-Api-Key`.
+    ///   - apiKey: Customer API key, sent as `X-DG-Api-Key`. Optional (TRUST-2603): falls
+    ///     back to `universalConsent.apiKey` from config.json when omitted; explicit wins.
     ///   - trackingSignal: This device's live signal. Defaults to the current ATT status.
     ///   - completion: Receives the reconciled record, or `nil` when no record is stored for
     ///     this user. `nil` means "no signal" — it is NOT an opt-out.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func fetchUniversalConsent(
         _ identifier: String,
-        apiKey: String,
+        apiKey: String? = nil,
         trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         completion: @escaping (Result<UniversalConsentRecord?, ConsentError>) -> Void
     ) {
@@ -460,10 +563,11 @@ public extension DataGrailConsent {
             completion(.failure(.notInitialized))
             return
         }
+        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey, orFail: completion) else { return }
 
         manager.fetchUniversalConsent(
             identifier,
-            apiKey: apiKey,
+            apiKey: resolvedKey,
             trackingSignal: trackingSignal
         ) { result in
             DispatchQueue.main.async {
@@ -486,7 +590,7 @@ public extension DataGrailConsent {
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func rehydrateFromUniversalConsent(
         _ identifier: String,
-        apiKey: String,
+        apiKey: String? = nil,
         trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         completion: @escaping (Result<Bool, ConsentError>) -> Void
     ) {
@@ -494,10 +598,11 @@ public extension DataGrailConsent {
             completion(.failure(.notInitialized))
             return
         }
+        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey, orFail: completion) else { return }
 
         manager.rehydrateFromUniversalConsent(
             identifier,
-            apiKey: apiKey,
+            apiKey: resolvedKey,
             trackingSignal: trackingSignal
         ) { [weak self] result in
             if case .success(true) = result, let preferences = manager.getCategories() {
