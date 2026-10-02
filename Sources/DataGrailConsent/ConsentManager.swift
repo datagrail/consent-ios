@@ -617,6 +617,17 @@ extension ConsentManager {
         onRehydrated: ((ConsentPreferences) -> Void)? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
+        // Snapshot the identity generation BEFORE reading any state this login depends on, so the
+        // guard is atomic with what it guards. A logout (clearUserIdentifier/reset) that lands at
+        // any point after this snapshot bumps the generation; every later step then bails without
+        // persisting, notifying, writing, or rebinding, so an in-flight login can't undo it.
+        // Snapshotting after the reads below would leave a window where a logout clears storage but
+        // this login still holds the stale pre-logout localChoice/binding and a post-logout
+        // generation that passes every ifCurrent check — letting a superseded login seed-write the
+        // old choice and rebind the just-cleared device.
+        // The snapshot also records the setCcpaOptout revision, so a setter call made mid-flight
+        // is recognized as newer than both the record and this pre-read capture (TRUST-2591).
+        let snapshot = identityGate.snapshot
         // Capture the user's RAW local choice BEFORE rehydrate overwrites storage with the
         // signal-reconciled view. nil means the user has recorded no local choice yet.
         let localChoice = storage.loadPreferences()
@@ -630,14 +641,8 @@ extension ConsentManager {
             isResync: userHash != nil && bound == userHash,
             boundToOther: bound != nil && bound != userHash
         )
-        // Snapshot before the async read. A logout (clearUserIdentifier/reset) that lands while
-        // the read is in flight bumps the generation; every later step then bails without
-        // persisting, notifying, writing, or rebinding, so an in-flight login can't undo it.
-        // The snapshot also records the setCcpaOptout revision, so a setter call made mid-flight
-        // is recognized as newer than both the record and this pre-read capture (TRUST-2591).
-        let snapshot = identityGate.snapshot
-        // The RAW local CCPA flag, captured for the same reason: the rehydrate may adopt the
-        // record's value (TRUST-2591).
+        // The RAW local CCPA flag, captured for the same reason as localChoice: the rehydrate may
+        // adopt the record's value (TRUST-2591).
         let localCcpaOptout = storage.loadCcpaOptout()
 
         rehydrateReportingFound(
