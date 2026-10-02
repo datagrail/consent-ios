@@ -84,10 +84,11 @@ public class ConsentService {
     /// `SDKVersionSyncTests` fails the build if this drifts from the podspec.
     static let sdkVersion = "1.7.0"
 
-    /// Wire schema version this SDK's models are written against. This SDK mirrors the v1
-    /// (byte-equivalent legacy) wire format and doesn't consume consent-schema's generated
-    /// types, so there's no runtime value to read this from — bump manually if/when this SDK
-    /// migrates to a newer schema.
+    /// Wire schema version this SDK's models are written against: the `package` version of the
+    /// dgapp consent_schema `config.proto` vendored under `consent_schema/` (provenance in
+    /// `consent_schema/SOURCE`). `SchemaVersionSyncTests` fails if the two drift; bump them together.
+    /// No build-time injection exists for SPM/CocoaPods (same as `sdkVersion`), and this SDK doesn't
+    /// consume consent-schema's generated types, so this is a pinned literal.
     static let schemaVersion = "v1"
 
     /// Maximum time to wait for the customer-provided `getSignature` callback before failing a
@@ -666,6 +667,9 @@ public extension ConsentService {
     ///     from KVS — the edge needs it on writes to locate the HMAC secret to verify.
     ///   - getSignature: Customer-provided signature provider, invoked per attempt with a
     ///     freshly minted payload. `nil` selects limited (API-key-only) mode.
+    ///   - ccpaOptout: The user's RAW local CCPA/CPRA "Do Not Sell or Share" choice, as set by
+    ///     the host app. Sent as `ccpa_optout` only when `universalConsent.sync_optout` is on;
+    ///     otherwise the field is `false`. Never derived from a category or tracking signal.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setUserIdentifier(
@@ -674,6 +678,7 @@ public extension ConsentService {
         config: ConsentConfig,
         apiKey: String,
         getSignature: UniversalConsentSignatureProvider?,
+        ccpaOptout: Bool = false,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         // Identical preconditions to the read path — see validatedUserHash for why each one
@@ -700,7 +705,8 @@ public extension ConsentService {
             body = try universalConsentPayload(
                 userHash: userHash,
                 preferences: preferences,
-                config: config
+                config: config,
+                ccpaOptout: ccpaOptout
             )
         } catch let error as ConsentError {
             completion(.failure(error))
@@ -758,7 +764,8 @@ public extension ConsentService {
     private func universalConsentPayload(
         userHash: String,
         preferences: ConsentPreferences,
-        config: ConsentConfig
+        config: ConsentConfig,
+        ccpaOptout: Bool
     ) throws -> Data {
         var cookieOptions: [String: Bool] = [:]
         for option in preferences.cookieOptions {
@@ -783,6 +790,9 @@ public extension ConsentService {
             "consent_mode": config.consentMode,
             "config_version": config.version,
             "platform": "ios",
+            // TRUST-2591: the user's explicit DNSMPI choice, gated per customer by sync_optout.
+            // The RAW local flag only: never a category, the reconciled view, or the ATT signal.
+            "ccpa_optout": config.universalConsent?.syncOptout == true && ccpaOptout,
         ]
         return try JSONSerialization.data(withJSONObject: payload)
     }

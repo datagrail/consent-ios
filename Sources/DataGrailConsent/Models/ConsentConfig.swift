@@ -46,14 +46,21 @@ public struct UniversalConsentConfig: Codable {
     /// Whether opt-out state should be synced through Universal Consent.
     public let syncOptout: Bool
 
+    /// Edge API key delivered via config.json (TRUST-2603) so it can rotate server-side (edge KVS
+    /// + config republish) with no client release. Optional: a host may still pass the key
+    /// explicitly to the Universal Consent calls, which takes precedence over this value.
+    public let apiKey: String?
+
     enum CodingKeys: String, CodingKey {
         case enabled
         case syncOptout = "sync_optout"
+        case apiKey
     }
 
-    public init(enabled: Bool, syncOptout: Bool) {
+    public init(enabled: Bool, syncOptout: Bool, apiKey: String? = nil) {
         self.enabled = enabled
         self.syncOptout = syncOptout
+        self.apiKey = apiKey
     }
 }
 
