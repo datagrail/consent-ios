@@ -369,6 +369,22 @@ public class DataGrailConsent {
 // `onConsentChangedCallback`, which are private and therefore file-scoped.
 public extension DataGrailConsent {
 
+    /// Binds the live config so the public Universal Consent calls can resolve the API key; see
+    /// ``ConsentManager/resolveUniversalConsentApiKey(explicit:in:)`` for the precedence rules.
+    /// On failure, reports the error through `completion` and returns `nil`.
+    private func resolvedUniversalConsentApiKey<T>(
+        _ explicit: String?,
+        orFail completion: (Result<T, ConsentError>) -> Void
+    ) -> String? {
+        switch ConsentManager.universalConsentApiKey(explicit: explicit, in: manager?.config) {
+        case let .success(key):
+            return key
+        case let .failure(error):
+            completion(.failure(error))
+            return nil
+        }
+    }
+
     /// Register a user identifier and sync their consent across devices via the
     /// Universal Consent API.
     ///
@@ -411,8 +427,11 @@ public extension DataGrailConsent {
     ///     trim → lowercase) before hashing, so casing and stray whitespace cannot
     ///     split one user into multiple records.
     ///   - apiKey: Customer API key, sent as `X-DG-Api-Key` on every request so the
-    ///     edge can resolve customer/tier/secret from KVS (required on writes to
-    ///     locate the HMAC secret to verify).
+    ///     edge can resolve customer/tier/secret from KVS. Optional (TRUST-2603): when
+    ///     omitted the SDK falls back to `universalConsent.apiKey` from config.json, which
+    ///     lets the key rotate server-side with no client release. An explicit value here
+    ///     takes precedence; the call fails with `.validationError` if neither is present
+    ///     (`.notInitialized` if config.json has not finished loading yet).
     ///   - trackingSignal: The device's live tracking signal. Defaults to the current
     ///     App Tracking Transparency status, which the SDK reads from the OS — you do
     ///     not need to pass this. Override it only if your app manages ATT itself and
@@ -429,7 +448,7 @@ public extension DataGrailConsent {
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setUserIdentifier(
         _ identifier: String,
-        apiKey: String,
+        apiKey: String? = nil,
         trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         getSignature: UniversalConsentSignatureProvider? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
@@ -438,13 +457,14 @@ public extension DataGrailConsent {
             completion(.failure(.notInitialized))
             return
         }
+        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey, orFail: completion) else { return }
 
         // READ then WRITE. Rehydrating first honors a choice made on the web or another device
         // in local state; the write then carries the user's CURRENT LOCAL choice (sync-on-change)
         // and NEVER re-POSTs the fetched record — see ConsentManager.syncUserIdentifier.
         manager.syncUserIdentifier(
             identifier,
-            apiKey: apiKey,
+            apiKey: resolvedKey,
             trackingSignal: trackingSignal,
             getSignature: getSignature,
             onRehydrated: { [weak self] preferences in
@@ -527,14 +547,15 @@ public extension DataGrailConsent {
     ///
     /// - Parameters:
     ///   - identifier: The user identifier. Normalized (NFC → trim → lowercase) before hashing.
-    ///   - apiKey: Customer API key, sent as `X-DG-Api-Key`.
+    ///   - apiKey: Customer API key, sent as `X-DG-Api-Key`. Optional (TRUST-2603): falls
+    ///     back to `universalConsent.apiKey` from config.json when omitted; explicit wins.
     ///   - trackingSignal: This device's live signal. Defaults to the current ATT status.
     ///   - completion: Receives the reconciled record, or `nil` when no record is stored for
     ///     this user. `nil` means "no signal" — it is NOT an opt-out.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func fetchUniversalConsent(
         _ identifier: String,
-        apiKey: String,
+        apiKey: String? = nil,
         trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         completion: @escaping (Result<UniversalConsentRecord?, ConsentError>) -> Void
     ) {
@@ -542,10 +563,11 @@ public extension DataGrailConsent {
             completion(.failure(.notInitialized))
             return
         }
+        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey, orFail: completion) else { return }
 
         manager.fetchUniversalConsent(
             identifier,
-            apiKey: apiKey,
+            apiKey: resolvedKey,
             trackingSignal: trackingSignal
         ) { result in
             DispatchQueue.main.async {
@@ -568,7 +590,7 @@ public extension DataGrailConsent {
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func rehydrateFromUniversalConsent(
         _ identifier: String,
-        apiKey: String,
+        apiKey: String? = nil,
         trackingSignal: TrackingSignal = TrackingSignalReader.current(),
         completion: @escaping (Result<Bool, ConsentError>) -> Void
     ) {
@@ -576,10 +598,11 @@ public extension DataGrailConsent {
             completion(.failure(.notInitialized))
             return
         }
+        guard let resolvedKey = resolvedUniversalConsentApiKey(apiKey, orFail: completion) else { return }
 
         manager.rehydrateFromUniversalConsent(
             identifier,
-            apiKey: apiKey,
+            apiKey: resolvedKey,
             trackingSignal: trackingSignal
         ) { [weak self] result in
             if case .success(true) = result, let preferences = manager.getCategories() {
