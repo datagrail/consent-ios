@@ -394,3 +394,33 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
         """.utf8)
     }
 }
+
+// MARK: - Re-sync against a signal-only record
+
+// In an extension so the primary test class stays within SwiftLint's type_body_length limit.
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+extension UniversalConsentCcpaOptoutTests {
+    /// A signal-only record (no consentPreferences, ccpa_optout present) still carries the
+    /// authoritative CCPA flag: a re-sync adopts it when sync_optout is on, as for a record
+    /// carrying a choice.
+    func testResyncSignalOnlyRecordAdoptsTheFlagWithGateOn() throws {
+        storage.saveBoundUserHash(try hash(userA))
+        network.getResult = .success(Data(#"{"status":"found","ccpa_optout":true,"gpc":true}"#.utf8))
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get])
+        XCTAssertTrue(sut.getCcpaOptout())
+    }
+
+    func testResyncSignalOnlyRecordKeepsTheLocalFlagWithGateOff() throws {
+        makeSut(syncOptout: false)
+        storage.saveBoundUserHash(try hash(userA))
+        network.getResult = .success(Data(#"{"status":"found","ccpa_optout":true,"gpc":true}"#.utf8))
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get])
+        XCTAssertFalse(sut.getCcpaOptout())
+    }
+}

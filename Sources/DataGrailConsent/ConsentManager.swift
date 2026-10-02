@@ -485,7 +485,7 @@ extension ConsentManager {
                 // choice to write back). Mirrors fetchUniversalConsent, which returns the record
                 // unreconciled when consentPreferences is nil.
                 guard let storedPrefs = record.consentPreferences else {
-                    completion(.success(RehydrateOutcome(found: true, raw: nil, ccpaOptout: record.ccpaOptout)))
+                    completion(Self.adoptSignalOnlyRecord(record, adoptsCcpaOptout, identityGate, snapshot, storage))
                     return
                 }
                 let rawCookieOptions = storedPrefs.cookieOptions
@@ -541,6 +541,27 @@ extension ConsentManager {
                 completion(.failure(error))
             }
         }
+    }
+
+    /// A signal-only record (see ``rehydrateReportingFound``) leaves the choice untouched but is
+    /// still authoritative for the CCPA flag: adopt it under the same rule as a record carrying a
+    /// choice, including on a re-sync with `sync_optout` on, unless a logout superseded the read.
+    private static func adoptSignalOnlyRecord(
+        _ record: UniversalConsentRecord,
+        _ adoptsCcpaOptout: Bool,
+        _ identityGate: IdentityGate,
+        _ snapshot: IdentityGate.Snapshot?,
+        _ storage: ConsentStorage
+    ) -> Result<RehydrateOutcome, ConsentError> {
+        // The setter check sits inside the logout check's critical section, as in the
+        // record-with-a-choice branch, so a setter call landing mid-read is never overwritten.
+        let persisted = identityGate.ifCurrent(snapshot?.generation) {
+            if adoptsCcpaOptout, !identityGate.ccpaChanged(since: snapshot) {
+                storage.saveCcpaOptout(record.ccpaOptout)
+            }
+        }
+        let outcome = RehydrateOutcome(found: true, raw: nil, ccpaOptout: record.ccpaOptout)
+        return persisted ? .success(outcome) : .failure(IdentityGate.superseded)
     }
 
     /// Rehydrate, and hand back the RAW stored preferences from the record.
@@ -799,13 +820,13 @@ extension ConsentManager {
 
     /// The CCPA flag a no-write LOGIN leaves stored (TRUST-2591), or `nil` to leave it as it is.
     ///
-    /// - Found record: it is authoritative for the flag. A record carrying a choice already had
-    ///   its flag adopted by the rehydrate (`nil` here); a signal-only record sets it here.
+    /// - Found record: it is authoritative for the flag, which the rehydrate already adopted
+    ///   (`nil` here), whether or not the record carries a choice.
     /// - Miss: the flag returns to neutral (`false`) whenever the stored state is dropped or
     ///   belongs to another bound identity, so another identity's value never lingers.
     static func loginCcpaOptout(outcome: RehydrateOutcome, dropsChoice: Bool, boundToOther: Bool) -> Bool? {
         if outcome.found {
-            return outcome.raw == nil ? outcome.ccpaOptout : nil
+            return nil
         }
         return dropsChoice || boundToOther ? false : nil
     }
