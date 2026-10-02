@@ -597,6 +597,15 @@ extension ConsentManager {
         onRehydrated: ((ConsentPreferences) -> Void)? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
+        // Snapshot the identity generation BEFORE reading any state this login depends on, so the
+        // guard is atomic with what it guards. A logout (clearUserIdentifier/reset) that lands at
+        // any point after this snapshot bumps the generation; every later step then bails without
+        // persisting, notifying, writing, or rebinding, so an in-flight login can't undo it.
+        // Snapshotting after the reads below would leave a window where a logout clears storage but
+        // this login still holds the stale pre-logout localChoice/binding and a post-logout
+        // generation that passes every ifCurrent check — letting a superseded login seed-write the
+        // old choice and rebind the just-cleared device.
+        let generation = identityGate.generation
         // Capture the user's RAW local choice BEFORE rehydrate overwrites storage with the
         // signal-reconciled view. nil means the user has recorded no local choice yet.
         let localChoice = storage.loadPreferences()
@@ -610,10 +619,6 @@ extension ConsentManager {
             isResync: userHash != nil && bound == userHash,
             boundToOther: bound != nil && bound != userHash
         )
-        // Snapshot before the async read. A logout (clearUserIdentifier/reset) that lands while
-        // the read is in flight bumps the generation; every later step then bails without
-        // persisting, notifying, writing, or rebinding, so an in-flight login can't undo it.
-        let generation = identityGate.generation
 
         rehydrateReportingFound(
             identifier,
