@@ -175,6 +175,38 @@ final class UniversalConsentLogoutTests: XCTestCase {
         XCTAssertTrue(sut.isCategoryEnabled("dg-category-essential"))
     }
 
+    func testResyncAfterASubsetRecordLoginDoesNotWriteTheFilledDefaults() throws {
+        loadUniversalConsentConfig(initialCategories: ["dg-category-essential", "dg-category-analytics"])
+        network.methods = []
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get, .get], "config defaults filled at login are never written")
+    }
+
+    func testResyncWritesAnOmittedCategoryTheUserChangedFromItsDefault() throws {
+        loadUniversalConsentConfig(initialCategories: ["dg-category-essential", "dg-category-analytics"])
+        network.methods = []
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA).get())
+        try storage.savePreferences(ConsentPreferences(
+            isCustomised: true,
+            cookieOptions: [
+                CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
+                CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: true),
+                CategoryConsent(gtmKey: "dg-category-analytics", isEnabled: false),
+            ]
+        ))
+        network.methods = []
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get, .post])
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-analytics"], false)
+    }
+
     func testLoginWithSignalOnlyRecordDropsExplicitLocalChoiceToNeutral() throws {
         try storage.savePreferences(marketingChoice(true))
         network.getResult = .success(Data(#"{"status":"found","gpc":true}"#.utf8))

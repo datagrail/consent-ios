@@ -892,7 +892,7 @@ extension ConsentManager {
         guard outcome.found else { return true }
         guard binding.isResync else { return false }
         guard let raw = outcome.raw else { return true }
-        return !Self.cookieOptionsMatch(choice, raw)
+        return !Self.cookieOptionsMatch(choice, raw, neutral: neutralCategoryValues())
     }
 
     /// Clear the Universal Consent identity binding and return local consent to neutral.
@@ -965,14 +965,12 @@ extension ConsentManager {
     /// essential always on — instead of reading as disabled. The rehydrate already overwrote the
     /// stored choice, so no prior local value survives; this only fills the gaps.
     private func fillOmittedCategoriesWithNeutral() {
-        guard let config = currentConfig, let adopted = storage.loadPreferences() else { return }
+        guard let adopted = storage.loadPreferences() else { return }
         let present = Set(adopted.cookieOptions.map(\.gtmKey))
-        let essential = Set(getEssentialCategories())
-        let initial = Set(config.initialCategories.initial)
-        let filled = getAllCategoryKeys(config)
-            .filter { !present.contains($0) }
-            .sorted()
-            .map { CategoryConsent(gtmKey: $0, isEnabled: essential.contains($0) || initial.contains($0)) }
+        let filled = neutralCategoryValues()
+            .filter { !present.contains($0.key) }
+            .sorted { $0.key < $1.key }
+            .map { CategoryConsent(gtmKey: $0.key, isEnabled: $0.value) }
         guard !filled.isEmpty else { return }
         do {
             try storage.savePreferences(ConsentPreferences(
@@ -983,6 +981,19 @@ extension ConsentManager {
             // Left unfilled, an omitted category reads as disabled — the more protective failure.
             Logger.error("Failed to fill omitted categories after login: \(error.localizedDescription)")
         }
+    }
+
+    /// Every configured category's NEUTRAL value: what ``isCategoryEnabled(_:)`` reads with no
+    /// stored choice (`initialCategories.initial`), with essential always on. Empty with no config.
+    private func neutralCategoryValues() -> [String: Bool] {
+        guard let config = currentConfig else { return [:] }
+        let essential = Set(getEssentialCategories())
+        let initial = Set(config.initialCategories.initial)
+        var values: [String: Bool] = [:]
+        for key in getAllCategoryKeys(config) {
+            values[key] = essential.contains(key) || initial.contains(key)
+        }
+        return values
     }
 
     /// Remove the stored explicit choice so reads fall through to the config default via the
@@ -1000,12 +1011,26 @@ extension ConsentManager {
     /// record just adopted — only `cookieOptions` are compared, since that is the payload the
     /// write carries. A `nil` local choice is never a match (the caller handles the miss/adopt
     /// case separately).
-    private static func cookieOptionsMatch(
+    ///
+    /// A category the record omits matches when the local value is its `neutral` one: a LOGIN
+    /// fills omitted categories with config defaults (``fillOmittedCategoriesWithNeutral()``),
+    /// and those defaults are not a choice the user made, so they must not trigger a write that
+    /// attributes them to the user. Changing such a category away from neutral is still a change.
+    static func cookieOptionsMatch(
         _ local: ConsentPreferences?,
-        _ record: ConsentPreferences
+        _ record: ConsentPreferences,
+        neutral: [String: Bool]
     ) -> Bool {
         guard let local else { return false }
-        return cookieOptionsMap(local) == cookieOptionsMap(record)
+        let localMap = cookieOptionsMap(local)
+        let recordMap = cookieOptionsMap(record)
+        guard Set(recordMap.keys).isSubset(of: localMap.keys) else { return false }
+        return localMap.allSatisfy { key, isEnabled in
+            if let recorded = recordMap[key] {
+                return recorded == isEnabled
+            }
+            return neutral[key] == isEnabled
+        }
     }
 
     private static func cookieOptionsMap(_ prefs: ConsentPreferences) -> [String: Bool] {
