@@ -442,3 +442,65 @@ extension UniversalConsentCcpaOptoutTests {
         XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false, "the user's own later choice")
     }
 }
+
+// MARK: - A re-sync compares and writes the RAW choice, never the reconciled view
+
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+extension UniversalConsentCcpaOptoutTests {
+    func testResyncAfterAnATTDeniedLoginWritesNothing() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        XCTAssertEqual(
+            storage.loadPreferences()?.cookieOptions.first { $0.gtmKey == "dg-category-marketing" }?.isEnabled,
+            false,
+            "local state holds the ATT-suppressed view"
+        )
+
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        // A second re-sync proves the first one refreshed the session's synced state.
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+
+        XCTAssertEqual(network.methods, [.get, .get, .get], "the suppressed view is never written")
+        XCTAssertNil(network.lastPostBody)
+        let raw = sut.universalConsentSession?.syncedRaw
+        XCTAssertEqual(raw?.cookieOptions.first { $0.gtmKey == "dg-category-marketing" }?.isEnabled, true)
+    }
+
+    func testResyncAfterAUserSaveUnderATTWritesTheSavedRawChoice() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        let choice = ConsentPreferences(
+            isCustomised: true,
+            cookieOptions: [
+                CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
+                CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: true),
+                CategoryConsent(gtmKey: "dg-category-analytics", isEnabled: false),
+            ]
+        )
+        let saved = expectation(description: "savePreferences")
+        sut.savePreferences(choice) { _ in saved.fulfill() }
+        wait(for: [saved], timeout: 1.0)
+        network.methods = []
+
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+
+        XCTAssertEqual(network.methods, [.get, .post])
+        // The write carries the user's RAW saved choice; ATT only ever shapes local state.
+        XCTAssertEqual(writtenCookieOptions(), [
+            "dg-category-essential": true,
+            "dg-category-marketing": true,
+            "dg-category-analytics": false,
+        ])
+    }
+
+    func testResyncAfterALoginAdoptingCcpaOptoutWritesNothing() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: true))
+        XCTAssertNoThrow(try sync(userA).get())
+        XCTAssertTrue(sut.getCcpaOptout())
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get, .get], "the opt-out-suppressed view is never written")
+        XCTAssertNil(network.lastPostBody)
+    }
+}
