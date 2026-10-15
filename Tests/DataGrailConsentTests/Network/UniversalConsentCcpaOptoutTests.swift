@@ -462,7 +462,7 @@ extension UniversalConsentCcpaOptoutTests {
 
         XCTAssertEqual(network.methods, [.get, .get, .get], "the suppressed view is never written")
         XCTAssertNil(network.lastPostBody)
-        let raw = sut.universalConsentSession?.syncedRaw
+        let raw = storage.loadSyncState()?.syncedRaw
         XCTAssertEqual(raw?.cookieOptions.first { $0.gtmKey == "dg-category-marketing" }?.isEnabled, true)
     }
 

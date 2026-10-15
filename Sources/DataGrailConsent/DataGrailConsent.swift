@@ -413,8 +413,12 @@ public extension DataGrailConsent {
     ///   record. Config defaults are never written. State left behind by a different bound
     ///   identity is never attributed to the new one: nothing is written and local state returns
     ///   to neutral.
-    /// - Once bound (a RE-SYNC), a local change is written through as before. With no local
-    ///   change since the last sync nothing is written; a device signal is never a change.
+    /// - Once bound (a RE-SYNC) with no local change since the last sync, the record is adopted
+    ///   and nothing is written, also after an app relaunch (the SDK persists what the last sync
+    ///   left: consent maps and the identity hash, never the identifier). A device signal is never
+    ///   a change, so a view ATT or GPC suppressed is never written. After a local change (any
+    ///   `savePreferences`/`acceptAll`/`rejectAll`, including one made while a sync was in
+    ///   flight) that choice is written.
     /// When there is nothing to write, the call succeeds without writing.
     ///
     /// What the SDK cannot detect: it cannot tell whether a pre-login choice was made by the

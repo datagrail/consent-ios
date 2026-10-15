@@ -15,6 +15,7 @@ public class ConsentStorage {
         static let pendingEvents = "datagrail_consent_pending_events"
         static let boundUserHash = "datagrail_consent_bound_user_hash"
         static let ccpaOptout = "datagrail_consent_ccpa_optout"
+        static let syncState = "datagrail_consent_sync_state"
     }
 
     public init(userDefaults: UserDefaults = .standard) {
@@ -64,9 +65,33 @@ public class ConsentStorage {
         userDefaults.string(forKey: Keys.boundUserHash)
     }
 
-    /// Clear the Universal Consent identity binding.
+    /// Clear the Universal Consent identity binding, and the sync state that belongs to it.
     public func clearBoundUserHash() {
         userDefaults.removeObject(forKey: Keys.boundUserHash)
+        clearSyncState()
+    }
+
+    /// Persist what the last successful Universal Consent sync left for the bound identity, so a
+    /// re-sync after an app relaunch can still tell whether the user changed anything since.
+    /// Holds consent maps and the user hash only, never the raw identifier.
+    func saveSyncState(_ state: UniversalConsentSyncState) {
+        guard let data = try? encoder.encode(state) else {
+            // Without it the next re-sync treats the stored choice as a change and writes it.
+            clearSyncState()
+            return
+        }
+        userDefaults.set(data, forKey: Keys.syncState)
+    }
+
+    /// The persisted sync state, or nil when none is stored.
+    func loadSyncState() -> UniversalConsentSyncState? {
+        guard let data = userDefaults.data(forKey: Keys.syncState) else { return nil }
+        return try? decoder.decode(UniversalConsentSyncState.self, from: data)
+    }
+
+    /// Forget the persisted sync state: the next re-sync treats the stored choice as a user change.
+    func clearSyncState() {
+        userDefaults.removeObject(forKey: Keys.syncState)
     }
 
     // MARK: - CCPA opt-out
@@ -183,7 +208,22 @@ public class ConsentStorage {
             Keys.pendingEvents,
             Keys.boundUserHash,
             Keys.ccpaOptout,
+            Keys.syncState,
         ]
         keys.forEach { userDefaults.removeObject(forKey: $0) }
     }
+}
+
+/// What the last successful Universal Consent sync left on this device (TRUST-2902), persisted next
+/// to the bound user hash so it survives an app relaunch.
+struct UniversalConsentSyncState: Codable, Equatable {
+    /// The bound identity this state belongs to. It is ignored for any other identity.
+    let userHash: String
+    /// The stored local choice right after the sync. After an adopt this is the RECONCILED view
+    /// (ATT, GPC or the record's ccpa_optout can force categories off), so it must never be written
+    /// back as though the user chose it. `nil` when nothing was stored.
+    let syncedLocal: ConsentPreferences?
+    /// The RAW choice the record held after the sync: what it wrote, or the record it adopted.
+    /// `nil` on a miss with nothing written, or a signal-only record.
+    let syncedRaw: ConsentPreferences?
 }
