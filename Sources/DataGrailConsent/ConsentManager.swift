@@ -163,6 +163,11 @@ public class ConsentManager {
             // Save locally
             try storage.savePreferences(preferences)
             storage.saveConfigVersion(config.version)
+            // The user's own choice now replaces what the last sync left, so a later
+            // setCcpaOptout write-through sends it rather than the record's raw choice.
+            identityGate.ifCurrent(nil) {
+                universalConsentSession?.syncedRaw = nil
+            }
 
             // Send to backend
             consentService.savePreferences(
@@ -701,18 +706,26 @@ extension ConsentManager {
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         // Bind only after the call succeeds, so a failed write never binds. Rechecked because a
-        // seed-write adds a second async hop a logout can land in.
-        let bindingCompletion: (Result<Void, ConsentError>) -> Void = { [weak self] writeResult in
-            guard let self else { return completion(writeResult) }
-            let current = self.identityGate.ifCurrent(snapshot.generation) {
-                if case .success = writeResult, let userHash {
-                    self.storage.saveBoundUserHash(userHash)
-                    self.universalConsentSession = UniversalConsentSession(
-                        userHash: userHash, identifier: identifier, apiKey: apiKey, getSignature: getSignature
-                    )
+        // seed-write adds a second async hop a logout can land in. `syncedRaw` is the RAW choice
+        // the record holds once this call is done: what was written, or the record just adopted.
+        let bindingCompletion: (ConsentPreferences?) -> (Result<Void, ConsentError>) -> Void = { syncedRaw in
+            { [weak self] writeResult in
+                guard let self else { return completion(writeResult) }
+                let current = self.identityGate.ifCurrent(snapshot.generation) {
+                    if case .success = writeResult, let userHash {
+                        self.storage.saveBoundUserHash(userHash)
+                        self.universalConsentSession = UniversalConsentSession(
+                            userHash: userHash,
+                            identifier: identifier,
+                            apiKey: apiKey,
+                            getSignature: getSignature,
+                            syncedLocal: self.storage.loadPreferences(),
+                            syncedRaw: syncedRaw
+                        )
+                    }
                 }
+                completion(current ? writeResult : .failure(IdentityGate.superseded))
             }
-            completion(current ? writeResult : .failure(IdentityGate.superseded))
         }
         // Every local mutation, notification, and the decision to write run in one critical
         // section with the logout check, so a concurrent logout either fully precedes this (and
@@ -734,7 +747,7 @@ extension ConsentManager {
                     apiKey: apiKey,
                     preferences: explicitChoice,
                     getSignature: getSignature,
-                    completion: bindingCompletion
+                    completion: bindingCompletion(explicitChoice)
                 )
                 return
             }
@@ -745,7 +758,7 @@ extension ConsentManager {
                 keepsStoredCcpa: keepsStoredCcpa,
                 onRehydrated: onRehydrated
             )
-            bindingCompletion(.success(()))
+            bindingCompletion(outcome.raw)(.success(()))
         }
         if !current {
             completion(.failure(IdentityGate.superseded))
@@ -830,6 +843,23 @@ extension ConsentManager {
         let identifier: String
         let apiKey: String
         let getSignature: UniversalConsentSignatureProvider?
+        /// The stored local choice right after the sync bound. After an adopt this is the
+        /// RECONCILED view (ATT, GPC or the record's ccpa_optout can force categories off), which
+        /// must never be written back as though the user chose it.
+        var syncedLocal: ConsentPreferences?
+        /// The RAW choice the record held when the sync bound: what the sync wrote, or the record
+        /// it adopted. `nil` on a miss with nothing written, or a signal-only record.
+        var syncedRaw: ConsentPreferences?
+
+        /// The choice a ``ConsentManager/setCcpaOptout(_:completion:)`` write-through sends. While
+        /// local state is still what the sync left, that is the record's RAW choice, so a
+        /// suppressed view never overwrites the user's real opt-ins for every device. Once the user
+        /// has saved a choice since (``ConsentManager/savePreferences(_:completion:)`` clears
+        /// `syncedRaw`), or local state otherwise changed, it is sent as stored.
+        func rawChoice(forStored stored: ConsentPreferences) -> ConsentPreferences {
+            guard let syncedRaw, let syncedLocal, stored == syncedLocal else { return stored }
+            return syncedRaw
+        }
     }
 
     /// The persisted-binding facts ``syncUserIdentifier`` branches on, captured before the read.
@@ -886,11 +916,13 @@ extension ConsentManager {
     /// (TRUST-2591). Backs ``DataGrailConsent/setCcpaOptout(_:completion:)``.
     ///
     /// Persists the flag locally; it changes no category and fires no listener. It is written
-    /// through — the stored local choice plus the new flag, via the same write
+    /// through — the user's RAW choice plus the new flag, via the same write
     /// ``syncUserIdentifier`` makes — only when Universal Consent is enabled, the customer's
     /// `sync_optout` gate is on, the device is bound to an identity that a `setUserIdentifier` call
     /// in this process succeeded for, and an explicit local choice is stored (config defaults are
-    /// never seeded). Otherwise it stays local and rides the next Universal Consent write.
+    /// never seeded). Otherwise it stays local and rides the next Universal Consent write. The RAW
+    /// choice is the record's own (see ``UniversalConsentSession/rawChoice(forStored:)``) while
+    /// local state is still the possibly-suppressed view the sync left, never that view itself.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     public func setCcpaOptout(_ optedOut: Bool, completion: @escaping (Result<Void, ConsentError>) -> Void) {
         // Storing the flag, checking the session, and dispatching the write run in one critical
@@ -910,7 +942,7 @@ extension ConsentManager {
             setUserIdentifier(
                 session.identifier,
                 apiKey: session.apiKey,
-                preferences: localChoice,
+                preferences: session.rawChoice(forStored: localChoice),
                 getSignature: session.getSignature,
                 completion: completion
             )

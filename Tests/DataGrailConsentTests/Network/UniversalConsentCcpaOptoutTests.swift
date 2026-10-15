@@ -394,3 +394,51 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
         """.utf8)
     }
 }
+
+// MARK: - Write-through sends the RAW choice, never the reconciled view
+
+// In an extension so the primary test class stays within SwiftLint's type_body_length limit.
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+extension UniversalConsentCcpaOptoutTests {
+    func testSetterAfterAnATTDeniedLoginWritesTheRecordsRawOptIn() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        XCTAssertEqual(network.methods, [.get])
+        XCTAssertEqual(
+            storage.loadPreferences()?.cookieOptions.first { $0.gtmKey == "dg-category-marketing" }?.isEnabled,
+            false,
+            "local state holds the ATT-suppressed view"
+        )
+
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+
+        XCTAssertEqual(network.methods, [.get, .post])
+        XCTAssertEqual(writtenCcpaOptout(), true)
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "the record's real opt-in survives")
+    }
+
+    func testClearingAnAdoptedOptOutWritesTheRecordsRawOptIn() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: true))
+        XCTAssertNoThrow(try sync(userA).get())
+        XCTAssertTrue(sut.getCcpaOptout())
+
+        XCTAssertNoThrow(try setCcpaOptout(false).get())
+
+        XCTAssertEqual(network.methods, [.get, .post])
+        XCTAssertEqual(writtenCcpaOptout(), false)
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "not the all-off suppressed view")
+    }
+
+    func testSetterAfterALocalChangeSinceTheSyncWritesTheNewLocalChoice() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        // Matches the suppressed view exactly, yet it is the user's own choice and must win.
+        let saved = expectation(description: "savePreferences")
+        sut.savePreferences(marketingChoice(false)) { _ in saved.fulfill() }
+        wait(for: [saved], timeout: 1.0)
+
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false, "the user's own later choice")
+    }
+}
