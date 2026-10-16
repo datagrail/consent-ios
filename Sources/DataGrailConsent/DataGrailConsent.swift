@@ -18,6 +18,7 @@ public class DataGrailConsent {
 
     private var manager: ConsentManager?
     private var configUrl: URL?
+    private var apiKey: String?
     private var _onConsentChangedCallback: ((ConsentPreferences) -> Void)?
     private let callbackLock = NSLock()
 
@@ -42,11 +43,14 @@ public class DataGrailConsent {
     /// Initialize the DataGrail Consent SDK
     /// - Parameters:
     ///   - configUrl: URL to fetch consent configuration from
+    ///   - apiKey: Optional API key for reading consent (required for QR pairing on tvOS)
     ///   - completion: Completion handler with result
     public func initialize(
         configUrl: URL,
+        apiKey: String? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
+        self.apiKey = apiKey
         initialize(
             configUrl: configUrl,
             networkClient: NetworkClient(),
@@ -303,7 +307,7 @@ public class DataGrailConsent {
 
     // MARK: - UI
 
-    #if canImport(UIKit)
+    #if os(iOS)
         /// Show the consent banner UI in modal style
         /// - Parameters:
         ///   - presentingViewController: The view controller to present from
@@ -359,8 +363,199 @@ public class DataGrailConsent {
 
             presentingViewController.present(bannerVC, animated: true)
         }
+    #elseif os(tvOS)
+        /// Show the consent banner UI on tvOS (full-screen only)
+        /// - Parameters:
+        ///   - presentingViewController: The view controller to present from
+        ///   - completion: Called when user saves preferences or dismisses (nil if dismissed)
+        public func showBanner(
+            from presentingViewController: UIViewController,
+            completion: @escaping (ConsentPreferences?) -> Void
+        ) {
+            guard let manager, let config = manager.config else {
+                completion(nil)
+                return
+            }
+
+            // Use getCategories() to get effective preferences
+            let currentPreferences = manager.getCategories()
+            let bannerVC = BannerViewControllerTvOS(
+                config: config,
+                initialPreferences: currentPreferences,
+                completion: { [weak self] preferences in
+                    guard let self, let preferences else {
+                        completion(nil)
+                        return
+                    }
+
+                    // Save preferences
+                    self.savePreferences(preferences) { result in
+                        switch result {
+                        case .success:
+                            completion(preferences)
+                        case .failure:
+                            completion(nil)
+                        }
+                    }
+                }
+            )
+
+            presentingViewController.present(bannerVC, animated: true)
+        }
+
     #endif
 }
+
+// MARK: - tvOS QR Pairing
+
+#if os(tvOS)
+    extension DataGrailConsent {
+        /// Show the consent banner with QR pairing on tvOS
+        /// - Parameters:
+        ///   - presentingViewController: The view controller to present from
+        ///   - publicBaseUrl: The base URL reachable by the phone
+        ///   - configUrl: URL to the consent config JSON (encoded in QR for phone to fetch)
+        ///   - customerId: DataGrail customer ID
+        ///   - apiBaseUrl: Optional full base URL the TV polls for consent reads.
+        ///   - deviceIdentifier: Optional device identifier override (if nil, auto-detect)
+        ///   - completion: Called when user saves preferences or pairing completes
+        public func showBannerWithQRPairing(
+            from presentingViewController: UIViewController,
+            publicBaseUrl: String,
+            configUrl: String,
+            customerId: String,
+            apiBaseUrl: String? = nil,
+            deviceIdentifier: String? = nil,
+            completion: @escaping (ConsentPreferences?) -> Void
+        ) {
+            guard let manager, let config = manager.config else {
+                completion(nil)
+                return
+            }
+
+            let userHash = UserHashGenerator.generateUserHash(
+                customerId: customerId,
+                consentProjectId: config.consentContainerVersionId,
+                deviceIdentifier: deviceIdentifier
+            )
+
+            let networkClient = NetworkClient()
+            let resolvedApiBaseUrl = apiBaseUrl ?? "https://\(config.privacyDomain)"
+            let pairingService = PairingService(
+                networkClient: networkClient,
+                apiBaseUrl: resolvedApiBaseUrl,
+                apiKey: apiKey
+            )
+
+            guard let qrUrl = pairingService.qrURL(
+                publicBaseUrl: publicBaseUrl,
+                customerId: customerId,
+                userHash: userHash,
+                configUrl: configUrl
+            ) else {
+                completion(nil)
+                return
+            }
+
+            guard let qrImage = QRCodeGenerator.generateQRCode(
+                from: qrUrl.absoluteString, size: 300
+            ) else {
+                completion(nil)
+                return
+            }
+
+            let coordinator = PairingCoordinator(
+                pairingService: pairingService,
+                customerId: customerId,
+                userHash: userHash
+            )
+
+            configureCoordinator(
+                coordinator,
+                manager: manager,
+                presentingViewController: presentingViewController,
+                completion: completion
+            )
+
+            presentBannerWithCoordinator(
+                coordinator, config: config, manager: manager,
+                presentingViewController: presentingViewController, qrImage: qrImage,
+                completion: completion
+            )
+        }
+
+        private func presentBannerWithCoordinator(
+            _ coordinator: PairingCoordinator,
+            config: ConsentConfig,
+            manager: ConsentManager,
+            presentingViewController: UIViewController,
+            qrImage: UIImage,
+            completion: @escaping (ConsentPreferences?) -> Void
+        ) {
+            let currentPreferences = manager.getCategories()
+            let bannerVC = BannerViewControllerTvOS(
+                config: config,
+                initialPreferences: currentPreferences,
+                qrImage: qrImage,
+                pairingCoordinator: coordinator,
+                completion: { [weak self] preferences in
+                    guard let self, let preferences else {
+                        coordinator.stopPolling()
+                        completion(nil)
+                        return
+                    }
+
+                    coordinator.stopPolling()
+                    self.savePreferences(preferences) { result in
+                        switch result {
+                        case .success:
+                            completion(preferences)
+                        case .failure:
+                            completion(nil)
+                        }
+                    }
+                }
+            )
+
+            presentingViewController.present(bannerVC, animated: true)
+            coordinator.startPolling()
+        }
+
+        private func configureCoordinator(
+            _ coordinator: PairingCoordinator,
+            manager: ConsentManager,
+            presentingViewController: UIViewController,
+            completion: @escaping (ConsentPreferences?) -> Void
+        ) {
+            coordinator.onConsentFound = { [weak self, weak coordinator] preferences in
+                guard let self else { return }
+
+                manager.adoptRemotePreferences(preferences)
+
+                DispatchQueue.main.async {
+                    self.onConsentChangedCallback?(preferences)
+                }
+
+                presentingViewController.dismiss(animated: true) {
+                    completion(preferences)
+                }
+
+                coordinator?.stopPolling()
+            }
+
+            coordinator.onTimeout = { [weak coordinator, weak presentingViewController] in
+                Logger.warn("QR pairing timeout, falling back to D-pad banner")
+                coordinator?.stopPolling()
+
+                if let presented = presentingViewController?
+                    .presentedViewController as? BannerViewControllerTvOS
+                {
+                    presented.removeQRCode()
+                }
+            }
+        }
+    }
+#endif
 
 // MARK: - Universal Consent
 
