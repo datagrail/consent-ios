@@ -9,6 +9,27 @@
         case fullScreen
     }
 
+    /// Font configuration for the text styles used in the consent banner.
+    /// Override individual fonts while keeping the rest at their defaults.
+    public struct BannerTextStyleConfig {
+        /// Font for `dg-title` elements (e.g. banner headline).
+        public var titleFont: UIFont
+        /// Font for `dg-header` elements (e.g. section headings).
+        public var headerFont: UIFont
+        /// Font for `dg-main-content-explanation` and all other text elements.
+        public var bodyFont: UIFont
+
+        public init(
+            titleFont: UIFont = .systemFont(ofSize: 22, weight: .bold),
+            headerFont: UIFont = .systemFont(ofSize: 18, weight: .semibold),
+            bodyFont: UIFont = .systemFont(ofSize: 16)
+        ) {
+            self.titleFont = titleFont
+            self.headerFont = headerFont
+            self.bodyFont = bodyFont
+        }
+    }
+
     // swiftlint:disable type_body_length
     /// View controller for displaying consent banner with multiple layers
     public class BannerViewController: UIViewController {
@@ -19,6 +40,7 @@
         private var preferences: ConsentPreferences
         private let completion: (ConsentPreferences?) -> Void
         private let displayStyle: BannerDisplayStyle
+        private let textStyleConfig: BannerTextStyleConfig
 
         private let containerView = UIView()
         private let scrollView = UIScrollView()
@@ -32,10 +54,12 @@
             config: ConsentConfig,
             initialPreferences: ConsentPreferences?,
             displayStyle: BannerDisplayStyle = .modal,
+            textStyleConfig: BannerTextStyleConfig = BannerTextStyleConfig(),
             completion: @escaping (ConsentPreferences?) -> Void
         ) {
             self.config = config
             self.displayStyle = displayStyle
+            self.textStyleConfig = textStyleConfig
             currentLayerKey = config.layout.firstLayerId
 
             // Build default preferences from initialCategories
@@ -376,6 +400,20 @@
             }
         }
 
+        /// Maps a config style string to the appropriate UIFont using the current textStyleConfig.
+        /// Supported values: "dg-title", "dg-header", "dg-main-content-explanation".
+        /// Unknown or nil values fall back to bodyFont.
+        private func font(forStyle style: String?) -> UIFont {
+            switch style {
+            case "dg-title":
+                return textStyleConfig.titleFont
+            case "dg-header":
+                return textStyleConfig.headerFont
+            default:
+                return textStyleConfig.bodyFont
+            }
+        }
+
         private func createTextView(_ element: ConsentLayerElement) -> UIView? {
             // Try both "value" and "text" fields (different config formats)
             guard let translation: ElementTranslation = getTranslation(from: element.translations)
@@ -389,7 +427,7 @@
 
             let label = UILabel()
             label.numberOfLines = 0
-            let font = UIFont.systemFont(ofSize: 16)
+            let font = font(forStyle: element.style)
             let color = UIColor.label
             renderRichText(text, in: label, font: font, color: color)
             label.isAccessibilityElement = true

@@ -2,7 +2,7 @@ import XCTest
 
 @testable import DataGrailConsent
 
-// swiftlint:disable force_unwrapping identifier_name
+// swiftlint:disable identifier_name
 /// Tests for DataGrailConsent public API including thread safety, URL validation, and category detection
 final class DataGrailConsentTests: XCTestCase {
     var sut: DataGrailConsent!
@@ -75,6 +75,55 @@ final class DataGrailConsentTests: XCTestCase {
         XCTAssertNotNil(validUrl.scheme)
         XCTAssertNotNil(validUrl.host)
         XCTAssertTrue(validUrl.scheme == "https" || validUrl.scheme == "http")
+    }
+
+    // MARK: - Completion Thread Tests
+
+    /// `MockNetworkClient` calls back synchronously on the caller's thread, so initialize from a
+    /// background queue: a completion that isn't explicitly hopped to main would then run off-main.
+    /// Uses a fresh instance because `reset()` does not un-initialize `shared`.
+    func testInitialize_ConfigLoaded_CompletesOnMainThread() throws {
+        let configFile = try XCTUnwrap(Bundle.module.url(forResource: "test-config", withExtension: "json"))
+        let networkClient = MockNetworkClient()
+        networkClient.requestResult = try .success(Data(contentsOf: configFile))
+
+        let result = try initializeFromBackgroundQueue(networkClient: networkClient)
+
+        XCTAssertNoThrow(try result.get())
+    }
+
+    func testInitialize_ConfigLoadFails_CompletesOnMainThread() throws {
+        let networkClient = MockNetworkClient()
+        networkClient.requestResult = .failure(.networkError("offline"))
+
+        let result = try initializeFromBackgroundQueue(networkClient: networkClient)
+
+        guard case .failure(.networkError) = result else {
+            return XCTFail("Expected networkError, got \(result)")
+        }
+    }
+
+    private func initializeFromBackgroundQueue(
+        networkClient: NetworkClient
+    ) throws -> Result<Void, ConsentError> {
+        let suiteName = "DataGrailConsentTests.initialize"
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        let storage = try ConsentStorage(userDefaults: XCTUnwrap(UserDefaults(suiteName: suiteName)))
+        let configUrl = try XCTUnwrap(URL(string: "https://consent.example.com/config.json"))
+
+        var captured: Result<Void, ConsentError>?
+        let completed = expectation(description: "initialize completes")
+        let instance = DataGrailConsent()
+        DispatchQueue.global().async {
+            instance.initialize(configUrl: configUrl, networkClient: networkClient, storage: storage) { result in
+                XCTAssertTrue(Thread.isMainThread, "initialize completion must run on the main thread")
+                captured = result
+                completed.fulfill()
+            }
+        }
+        wait(for: [completed], timeout: 2.0)
+        return try XCTUnwrap(captured)
     }
 
     // MARK: - Thread Safety Tests

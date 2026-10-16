@@ -11,7 +11,7 @@ Add the DataGrail pod to your `Podfile`:
 ```ruby
 target 'YourApp' do
   use_frameworks!
-  pod 'DataGrailConsent', '~> 1.0'
+  pod 'DataGrailConsent', '~> 1.5'
 end
 ```
 
@@ -29,13 +29,13 @@ Add the package in Xcode:
 
 1. File > Add Packages
 2. Enter: `https://github.com/datagrail/consent-ios.git`
-3. Select version `1.4.0`
+3. Select version `1.6.0`
 
 Or add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/datagrail/consent-ios.git", from: "1.4.0")
+    .package(url: "https://github.com/datagrail/consent-ios.git", from: "1.6.0")
 ]
 ```
 
@@ -95,6 +95,23 @@ if (try? DataGrailConsent.shared.isCategoryEnabled("dg-category-marketing")) == 
   cd /path/to/consent-ios
   pre-commit install
   ```
+
+## Schema Compatibility
+
+Each SDK release consumes exactly one version of the consent configuration schema:
+
+| SDK release                      | Config schema version |
+| -------------------------------- | --------------------- |
+| 1.x (all releases through 1.7.x) | v1                    |
+
+Newer schema versions (v2+) require a newer SDK release, which will be listed here when shipped.
+
+The SDK only reads its own schema version. If DataGrail stops publishing that version after its end of life,
+the last published configuration keeps being served and the SDK keeps working; it just stops receiving banner
+changes until the app upgrades. If a fetched configuration fails to load or validate, the SDK falls back to the
+last cached configuration.
+
+To see configuration-load failures in the console, set `DataGrailConsent.logLevel = .error` (or higher).
 
 ## API Reference
 
@@ -181,9 +198,12 @@ public enum ConsentError: LocalizedError {
     case invalidConfiguration(String)
     case invalidConfigUrl(String)
     case networkError(String)
+    case httpError(statusCode: Int, message: String)
+    case configNotPublished(statusCode: Int?)  // definite 4xx (not 408/429) on config fetch, nothing cached
     case parseError(String)
     case storageError(String)
     case validationError(String)
+    case signatureTimeout
 }
 ```
 
@@ -363,7 +383,10 @@ A full-featured demo app is included under `DemoProject/`. To run the iOS demo:
 ./launch_demo.sh --clean  # Clean build first
 ```
 
-The demo app provides config URL input, banner display in both modal and fullscreen modes, live category status, and debug logging.
+The demo app has two tabs:
+
+- **Config URL** — paste a pre-signed test config link from the Mobile tab and preview it with the SDK's banner (modal or full screen). See [DemoProject/README-config-url-tester.md](DemoProject/README-config-url-tester.md).
+- **Universal Consent** — the cross-device consent demo. See [DemoProject/README-uc-demo.md](DemoProject/README-uc-demo.md).
 
 ## Testing
 

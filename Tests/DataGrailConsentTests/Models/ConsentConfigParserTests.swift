@@ -275,4 +275,77 @@ final class ConsentConfigParserTests: XCTestCase {
         }
     }
 
+    func testButtonElementWithCategories() throws {
+        guard let configUrl = Bundle.module.url(forResource: "test-config", withExtension: "json")
+        else {
+            XCTFail("Could not find test-config.json in test bundle")
+            return
+        }
+
+        let configData = try Data(contentsOf: configUrl)
+        let decoder = JSONDecoder()
+        let config = try decoder.decode(ConsentConfig.self, from: configData)
+
+        guard let defaultLayer = config.layout.consentLayers["b0b9fc31-4ea2-4026-8aa1-25fd647aa265"]
+        else {
+            XCTFail("Default layer not found")
+            return
+        }
+
+        guard let button = defaultLayer.elements.first(where: { $0.id == "d1e2f3a4-b5c6-7890-abcd-ef1234567890" })
+        else {
+            XCTFail("accept_some button element not found")
+            return
+        }
+
+        XCTAssertEqual(button.type, "ConsentLayerButtonElement")
+        XCTAssertEqual(button.buttonAction, "accept_some")
+        XCTAssertEqual(button.translations?["en"]?.value, "Do Not Sell or Share My Info")
+
+        let categories = try XCTUnwrap(button.categories, "Button should have non-nil categories")
+        XCTAssertEqual(categories.count, 2)
+
+        let functional = try XCTUnwrap(categories.first(where: { $0.gtmKey == "dg-category-functional" }))
+        XCTAssertEqual(functional.primitive, "dg-category-functional")
+        XCTAssertFalse(functional.alwaysOn)
+        XCTAssertTrue(functional.hidden)
+        XCTAssertEqual(functional.uuids, ["341ZsIFxXJJ3B5xUHG4CNe"])
+        XCTAssertEqual(functional.cookiePatterns, ["_hjSessionUser_", "drift"])
+        XCTAssertEqual(functional.translations["en"]?.name, "Functional Cookies")
+        XCTAssertFalse(functional.showTrackingDetailsLink)
+
+        let performance = try XCTUnwrap(categories.first(where: { $0.gtmKey == "dg-category-performance" }))
+        XCTAssertEqual(performance.primitive, "dg-category-performance")
+        XCTAssertFalse(performance.alwaysOn)
+        XCTAssertTrue(performance.hidden)
+        XCTAssertEqual(performance.uuids, ["7T4xqXJKtl7rNgiPRgCuv"])
+        XCTAssertEqual(performance.cookiePatterns, ["_ga$", "_gat"])
+        XCTAssertEqual(performance.translations["en"]?.name, "Performance & Analytics Cookies")
+    }
+
+    func testButtonElementWithEmptyCategories() throws {
+        guard let configUrl = Bundle.module.url(forResource: "test-config", withExtension: "json")
+        else {
+            XCTFail("Could not find test-config.json in test bundle")
+            return
+        }
+
+        let configData = try Data(contentsOf: configUrl)
+        let decoder = JSONDecoder()
+        let config = try decoder.decode(ConsentConfig.self, from: configData)
+
+        guard let defaultLayer = config.layout.consentLayers["b0b9fc31-4ea2-4026-8aa1-25fd647aa265"]
+        else {
+            XCTFail("Default layer not found")
+            return
+        }
+
+        let openLayerButton = defaultLayer.elements.first(where: { $0.id == "aa46fc13-8d4c-448d-9716-36b4a751fcdf" })
+        XCTAssertNotNil(openLayerButton)
+        XCTAssertEqual(openLayerButton?.buttonAction, "open_layer")
+        let categories = openLayerButton?.categories
+        XCTAssertNotNil(categories, "categories should be present (empty array, not nil)")
+        XCTAssertEqual(categories?.count, 0)
+    }
+
 }

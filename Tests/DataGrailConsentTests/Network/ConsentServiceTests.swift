@@ -46,6 +46,14 @@ final class ConsentServiceTests: XCTestCase {
                 XCTAssertTrue(self.mockNetworkClient.requestCalled)
                 XCTAssertEqual(self.mockNetworkClient.lastMethod, .post)
                 XCTAssertTrue(self.mockNetworkClient.lastURL?.absoluteString.contains("/save_preferences") ?? false)
+
+                if let body = self.mockNetworkClient.lastBody,
+                   let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                    XCTAssertEqual(json["policyName"] as? String, "GDPR")
+                    XCTAssertEqual(json["policyUuid"] as? String, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+                } else {
+                    XCTFail("Failed to parse request body")
+                }
             case let .failure(error):
                 XCTFail("Expected success but got error: \(error)")
             }
@@ -98,8 +106,28 @@ final class ConsentServiceTests: XCTestCase {
             case .success:
                 XCTAssertTrue(self.mockNetworkClient.requestCalled)
                 XCTAssertEqual(self.mockNetworkClient.lastMethod, .get)
-                XCTAssertTrue(self.mockNetworkClient.lastURL?.absoluteString.contains("/save_open") ?? false)
-                XCTAssertTrue(self.mockNetworkClient.lastURL?.absoluteString.contains("dg_customer_id=") ?? false)
+                let urlString = self.mockNetworkClient.lastURL?.absoluteString ?? ""
+                XCTAssertTrue(urlString.contains("/save_open"))
+                XCTAssertTrue(urlString.contains("customer=customer123"))
+                XCTAssertFalse(urlString.contains("dg_customer_id="))
+                XCTAssertTrue(urlString.contains("action=open"))
+                XCTAssertTrue(urlString.contains("consent_container_version_id=container1"))
+                XCTAssertTrue(urlString.contains("policy_name=GDPR"))
+                XCTAssertTrue(urlString.contains("policy_uuid=a1b2c3d4-e5f6-7890-abcd-ef1234567890"))
+                XCTAssertTrue(urlString.contains("revision=1.0.0"))
+                XCTAssertTrue(urlString.contains("default_policy=true"))
+                XCTAssertTrue(urlString.contains("locale_code="))
+
+                guard let url = self.mockNetworkClient.lastURL,
+                      let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+                else {
+                    XCTFail("Failed to parse save_open URL query items")
+                    expectation.fulfill()
+                    return
+                }
+                XCTAssertEqual(queryItems.first { $0.name == "library_version" }?.value, "1.7.0")
+                XCTAssertFalse((queryItems.first { $0.name == "os_version" }?.value ?? "").isEmpty)
+                XCTAssertEqual(queryItems.first { $0.name == "schema_version" }?.value, "v1")
             case let .failure(error):
                 XCTFail("Expected success but got error: \(error)")
             }
@@ -109,9 +137,114 @@ final class ConsentServiceTests: XCTestCase {
         waitForExpectations(timeout: 1.0)
     }
 
+    func testSavePreferencesOmitsPolicyUuidWhenNil() {
+        let expectation = expectation(description: "savePreferences omits policyUuid when nil")
+
+        mockNetworkClient.requestResult = .success(Data())
+        mockStorage.uniqueId = "test-id-123"
+
+        let preferences = ConsentPreferences(
+            isCustomised: true,
+            cookieOptions: [
+                CategoryConsent(gtmKey: "category_marketing", isEnabled: true),
+            ]
+        )
+
+        let config = createTestConfig(policyUuid: nil)
+
+        service.savePreferences(preferences: preferences, config: config) { result in
+            switch result {
+            case .success:
+                if let body = self.mockNetworkClient.lastBody,
+                   let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                    XCTAssertEqual(json["policyName"] as? String, "GDPR")
+                    XCTAssertNil(json["policyUuid"])
+                } else {
+                    XCTFail("Failed to parse request body")
+                }
+            case let .failure(error):
+                XCTFail("Expected success but got error: \(error)")
+            }
+            expectation.fulfill()
+        }
+
+        waitForExpectations(timeout: 1.0)
+    }
+
+    func testSaveOpenOmitsPolicyUuidWhenNil() {
+        let expectation = expectation(description: "saveOpen omits policy_uuid when nil")
+
+        mockNetworkClient.requestResult = .success(Data())
+        mockStorage.uniqueId = "test-id-123"
+
+        let config = createTestConfig(policyUuid: nil)
+
+        service.saveOpen(config: config) { result in
+            switch result {
+            case .success:
+                let urlString = self.mockNetworkClient.lastURL?.absoluteString ?? ""
+                XCTAssertTrue(urlString.contains("customer=customer123"))
+                XCTAssertTrue(urlString.contains("policy_name=GDPR"))
+                XCTAssertFalse(urlString.contains("policy_uuid"))
+                XCTAssertTrue(urlString.contains("default_policy=true"))
+            case let .failure(error):
+                XCTFail("Expected success but got error: \(error)")
+            }
+            expectation.fulfill()
+        }
+
+        waitForExpectations(timeout: 1.0)
+    }
+
+    func testSaveOpenFailureQueueIncludesPolicyFields() {
+        let expectation = expectation(description: "saveOpen queues policy fields on failure")
+
+        mockNetworkClient.requestResult = .failure(.networkError("Connection failed"))
+        mockStorage.uniqueId = "test-id-123"
+
+        let config = createTestConfig()
+
+        service.saveOpen(config: config) { result in
+            switch result {
+            case .success:
+                XCTFail("Expected failure but got success")
+            case .failure:
+                XCTAssertTrue(self.mockStorage.savePendingEventsCalled)
+                guard let event = self.mockStorage.lastPendingEvents.first,
+                      let payload = event["payload"] as? [String: Any]
+                else {
+                    XCTFail("No queued event found")
+                    expectation.fulfill()
+                    return
+                }
+                XCTAssertEqual(payload["customer"] as? String, "customer123")
+                XCTAssertEqual(payload["action"] as? String, "open")
+                XCTAssertEqual(payload["policy_name"] as? String, "GDPR")
+                XCTAssertEqual(
+                    payload["consent_container_version_id"] as? String,
+                    "container1"
+                )
+                XCTAssertEqual(
+                    payload["policy_uuid"] as? String,
+                    "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                )
+                XCTAssertEqual(payload["revision"] as? String, "1.0.0")
+                XCTAssertEqual(payload["default_policy"] as? String, "true")
+                XCTAssertNotNil(payload["locale_code"])
+                XCTAssertEqual(payload["library_version"] as? String, "1.7.0")
+                XCTAssertFalse((payload["os_version"] as? String ?? "").isEmpty)
+            }
+            expectation.fulfill()
+        }
+
+        waitForExpectations(timeout: 1.0)
+    }
+
     // MARK: - Helper Methods
 
-    private func createTestConfig() -> ConsentConfig {
+    private func createTestConfig(
+        policyUuid: String? = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    ) -> ConsentConfig {
         ConsentConfig(
             version: "1.0.0",
             consentContainerVersionId: "container1",
@@ -132,7 +265,7 @@ final class ConsentServiceTests: XCTestCase {
             trackingDetailsUrl: "https://example.com/tracking",
             consentMode: "optin",
             showBanner: true,
-            consentPolicy: ConsentPolicy(name: "GDPR", default: true),
+            consentPolicy: ConsentPolicy(name: "GDPR", uuid: policyUuid, default: true),
             gppUsNat: false,
             initialCategories: InitialCategories(
                 respectGpc: false,
@@ -183,6 +316,7 @@ class MockNetworkClient: NetworkClient {
     override func retryWithBackoff<T>(
         maxAttempts _: Int = 5,
         baseDelay _: TimeInterval = 0.25,
+        shouldRetry _: @escaping (ConsentError) -> Bool = { _ in true },
         operation: @escaping (@escaping (Result<T, ConsentError>) -> Void) -> Void,
         completion: @escaping (Result<T, ConsentError>) -> Void
     ) {
