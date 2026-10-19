@@ -165,12 +165,13 @@ public class ConsentManager {
         }
 
         do {
-            // Save locally
-            try storage.savePreferences(preferences)
-            storage.saveConfigVersion(config.version)
-            // The user's own choice now replaces what the last sync left: the next re-sync writes
-            // it, and a setCcpaOptout write-through sends it rather than the record's raw choice.
-            identityGate.recordPreferencesSave {
+            // Save locally. The user's own choice now replaces what the last sync left: the next
+            // re-sync writes it, and a setCcpaOptout write-through sends it rather than the record's
+            // raw choice. One critical section with the revision bump, so a rehydrate persisting
+            // concurrently either precedes this save or follows it, never splits it.
+            try identityGate.recordPreferencesSave {
+                try storage.savePreferences(preferences)
+                storage.saveConfigVersion(config.version)
                 storage.clearSyncState()
             }
 
@@ -392,6 +393,15 @@ public class ConsentManager {
     /// persisting an empty record would both fabricate a choice the user never made and
     /// suppress the banner that should collect it.
     ///
+    /// When `identifier` is the identity the device is bound to, the persisted sync state is updated
+    /// the same way a ``DataGrailConsent/setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)``
+    /// adopt updates it: the stored view becomes what the last sync left, and the record's RAW choice
+    /// what the record holds. So a later re-sync or ``setCcpaOptout(_:completion:)`` never mistakes
+    /// the ATT/GPC/`ccpa_optout`-suppressed view this stores for a user change and writes it over the
+    /// user's cross-device opt-ins. For any other identity the sync state is cleared. A
+    /// ``clearUserIdentifier()`` or ``reset()`` that lands during the read supersedes it: nothing is
+    /// persisted and the call fails.
+    ///
     /// - Parameter completion: `true` when local state was rehydrated from a stored record.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     public func rehydrateFromUniversalConsent(
@@ -443,14 +453,21 @@ extension ConsentManager {
     /// `ccpaOptout` is the record's stored `ccpa_optout` (`false` on a miss or when absent). When the
     /// record's choice is applied, the local CCPA flag takes it too (TRUST-2591) — always on a login
     /// (`replacesLocal`), otherwise only with the `sync_optout` gate on: with the gate off the SDK
-    /// never puts the choice on the record, so adopting it would erase a local-only setting.
+    /// never puts the choice on the record, so adopting it would erase a local-only setting. Off a
+    /// login it is also not adopted while a bound choice has yet to reach the record
+    /// (``ConsentStorage/loadCcpaWritePending()``).
+    ///
+    /// `recordsSyncState` is set by the standalone rehydrate, which has no later bind step: when it
+    /// persists a record for the bound identity it records the sync state itself (see
+    /// ``rehydrateFromUniversalConsent(_:apiKey:trackingSignal:completion:)``).
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
-    func rehydrateReportingFound(
+    func rehydrateReportingFound( // swiftlint:disable:this function_body_length
         _ identifier: String,
         apiKey: String,
         trackingSignal: TrackingSignal,
         replacesLocal: Bool = false,
         snapshot: IdentityGate.Snapshot? = nil,
+        recordsSyncState: Bool = false,
         completion: @escaping (Result<RehydrateOutcome, ConsentError>) -> Void
     ) {
         guard let config = currentConfig else {
@@ -468,6 +485,8 @@ extension ConsentManager {
         let essentialCategoryKeys = Set(getEssentialCategories())
         let currentVersion = config.version
         let adoptsCcpaOptout = replacesLocal || config.universalConsent?.syncOptout == true
+        // nil when the preconditions fail; the read below fails on the same validation.
+        let userHash = try? ConsentService.validatedUserHash(identifier: identifier, config: config)
 
         // Goes to the service directly rather than through fetchUniversalConsent, which
         // returns an already-reconciled record. Both views are needed here: the reconciled
@@ -524,8 +543,11 @@ extension ConsentManager {
                 )
 
                 do {
-                    // With a `snapshot` (a login), persist only if no logout landed mid-read:
-                    // the check and the write are one critical section against the logout.
+                    // The user-save revision right after this persist: the baseline a sync compares
+                    // against, since any save before it was overwritten here.
+                    var saveRevision: Int?
+                    // With a `snapshot`, persist only if no logout landed mid-read: the check and the
+                    // write are one critical section against the logout (and against a user save).
                     let persisted = try identityGate.ifCurrent(snapshot?.generation) {
                         try storage.savePreferences(effective)
                         // Stamp the CURRENT config version, not the record's. This marks the
@@ -535,12 +557,28 @@ extension ConsentManager {
                         storage.saveConfigVersion(currentVersion)
                         // The record is authoritative for the stored CCPA choice (an absent field
                         // decodes to false). Not derived from anything: the user's recorded DNSMPI choice.
-                        // A setter call that landed mid-read is newer than the record, so it stays.
-                        if adoptsCcpaOptout, !identityGate.ccpaChanged(since: snapshot) {
+                        // A setter call that landed mid-read is newer than the record, so it stays, and
+                        // so does a bound choice that has not reached the record yet.
+                        if adoptsCcpaOptout, !identityGate.ccpaChanged(since: snapshot),
+                           replacesLocal || !storage.loadCcpaWritePending() {
                             storage.saveCcpaOptout(record.ccpaOptout)
                         }
+                        if recordsSyncState {
+                            Self.recordStandaloneSyncState(
+                                storage: storage,
+                                userHash: userHash,
+                                syncedLocal: effective,
+                                syncedRaw: raw
+                            )
+                        }
+                        saveRevision = identityGate.preferencesSaveRevision
                     }
-                    let outcome = RehydrateOutcome(found: true, raw: raw, ccpaOptout: record.ccpaOptout)
+                    let outcome = RehydrateOutcome(
+                        found: true,
+                        raw: raw,
+                        ccpaOptout: record.ccpaOptout,
+                        saveRevision: saveRevision
+                    )
                     completion(persisted ? .success(outcome) : .failure(IdentityGate.superseded))
                 } catch let error as ConsentError {
                     completion(.failure(error))
@@ -575,7 +613,11 @@ extension ConsentManager {
         rehydrateReportingFound(
             identifier,
             apiKey: apiKey,
-            trackingSignal: trackingSignal
+            trackingSignal: trackingSignal,
+            // Guards the persist against a logout landing mid-read, and keeps a setCcpaOptout call
+            // made mid-read (it is newer than the record).
+            snapshot: identityGate.snapshot,
+            recordsSyncState: true
         ) { result in
             completion(result.map(\.raw))
         }
@@ -722,11 +764,14 @@ extension ConsentManager {
         // Bind only after the call succeeds, so a failed write never binds. Rechecked because a
         // seed-write adds a second async hop a logout can land in. `syncedRaw` is the RAW choice
         // the record holds once this call is done: what was written, or the record just adopted.
-        // The stored view and save revision are captured by the caller BEFORE any write is
-        // dispatched, so a save made while the write is in flight still reads as a user change.
-        let bindingCompletion: (ConsentPreferences?) -> (Result<Void, ConsentError>) -> Void = { syncedRaw in
+        // `writtenCcpa` is the CCPA flag a write carried (`nil` when nothing was written). The stored
+        // view is captured BEFORE any write is dispatched; the save revision it is checked against
+        // is the one right after this call last wrote local state (the rehydrate's persist), or the
+        // one at its start when it wrote none. So a save made during the read or the write still
+        // reads as a user change, and one the persist overwrote does not.
+        let saveRevision = outcome.saveRevision ?? snapshot.saveRevision
+        let bindingCompletion: BindingCompletionFactory = { syncedRaw, writtenCcpa in
             let syncedLocal = self.storage.loadPreferences()
-            let saveRevision = self.identityGate.preferencesSaveRevision
             return { [weak self] writeResult in
                 guard let self else { return completion(writeResult) }
                 let current = self.identityGate.ifCurrent(snapshot.generation) {
@@ -738,6 +783,7 @@ extension ConsentManager {
                             syncedRaw: syncedRaw,
                             saveRevision: saveRevision
                         )
+                        self.resolveCcpaWritePending(writtenCcpa: writtenCcpa, snapshot: snapshot)
                         self.universalConsentSession = UniversalConsentSession(
                             userHash: userHash,
                             identifier: identifier,
@@ -756,10 +802,7 @@ extension ConsentManager {
             // A setCcpaOptout call that landed while the read was in flight is the newest choice:
             // it is already stored, nothing below overwrites it, and a write here carries it.
             let keepsStoredCcpa = identityGate.ccpaChanged(since: snapshot)
-            if binding.boundToOther {
-                // The other identity's sync state never describes this one.
-                storage.clearSyncState()
-            }
+            dropPriorIdentityState(binding: binding, keepsStoredCcpa: keepsStoredCcpa)
             completeAdopt(outcome: outcome, binding: binding, onRehydrated: onRehydrated)
             // The choice this call may write: never another bound identity's leftover state.
             let explicitChoice = binding.boundToOther ? nil : localChoice
@@ -773,7 +816,8 @@ extension ConsentManager {
                     apiKey: apiKey,
                     preferences: explicitChoice,
                     getSignature: getSignature,
-                    completion: bindingCompletion(explicitChoice)
+                    // The flag setUserIdentifier reads for the write, in this same critical section.
+                    completion: bindingCompletion(explicitChoice, storage.loadCcpaOptout())
                 )
                 return
             }
@@ -787,10 +831,26 @@ extension ConsentManager {
             // An unchanged re-sync that read no raw choice (a miss or a signal-only record) keeps
             // the raw choice the last sync recorded: local state is still the view built from it.
             let keptRaw = binding.unchangedSinceSync ? syncState(for: userHash)?.syncedRaw : nil
-            bindingCompletion(outcome.raw ?? keptRaw)(.success(()))
+            bindingCompletion(outcome.raw ?? keptRaw, nil)(.success(()))
         }
         if !current {
             completion(.failure(IdentityGate.superseded))
+        }
+    }
+
+    /// Builds the completion that binds a successful sync, from the RAW choice the record holds and
+    /// the CCPA flag a write carried (`nil` when nothing was written).
+    typealias BindingCompletionFactory = (ConsentPreferences?, Bool?) -> (Result<Void, ConsentError>) -> Void
+
+    /// Before a sync applies its outcome: the other identity's sync state never describes this one,
+    /// and a login replaces local state, so a CCPA write-pending marker from before it is dropped
+    /// (unless a setter call landed during the read; that choice is kept).
+    private func dropPriorIdentityState(binding: LoginBinding, keepsStoredCcpa: Bool) {
+        if binding.boundToOther {
+            storage.clearSyncState()
+        }
+        if !binding.isResync, !keepsStoredCcpa {
+            storage.saveCcpaWritePending(false)
         }
     }
 
@@ -853,11 +913,34 @@ extension ConsentManager {
     }
 
     /// What ``rehydrateReportingFound`` reports: whether a record exists, its RAW choice (`nil` on a
-    /// miss or a signal-only record), and its stored `ccpa_optout` (`false` on a miss).
+    /// miss or a signal-only record), its stored `ccpa_optout` (`false` on a miss), and the user-save
+    /// revision right after it persisted the record locally (`nil` when it persisted nothing).
     struct RehydrateOutcome {
         let found: Bool
         let raw: ConsentPreferences?
         let ccpaOptout: Bool
+        var saveRevision: Int?
+    }
+
+    /// The standalone rehydrate just stored `syncedLocal`, the reconciled view of a record whose RAW
+    /// choice is `syncedRaw`. For the bound identity that is exactly what an adopt by a sync leaves,
+    /// so it is recorded the same way; otherwise the stored view no longer describes the bound
+    /// identity's last sync, so its state is dropped. Runs inside the persist's critical section.
+    static func recordStandaloneSyncState(
+        storage: ConsentStorage,
+        userHash: String?,
+        syncedLocal: ConsentPreferences,
+        syncedRaw: ConsentPreferences
+    ) {
+        guard let userHash, storage.loadBoundUserHash() == userHash else {
+            storage.clearSyncState()
+            return
+        }
+        storage.saveSyncState(UniversalConsentSyncState(
+            userHash: userHash,
+            syncedLocal: syncedLocal,
+            syncedRaw: syncedRaw
+        ))
     }
 
     /// The identity and credentials of the last successful ``syncUserIdentifier``. Memory only:
@@ -917,6 +1000,26 @@ extension ConsentManager {
             syncedLocal: syncedLocal,
             syncedRaw: syncedRaw
         ))
+    }
+
+    /// Settle the CCPA write-pending marker once a sync binds (TRUST-2591). A write that carried the
+    /// stored flag put it on the record, so nothing is pending. A setter call that landed while the
+    /// sync was in flight and that no write carried (on a first login it found the device unbound,
+    /// so it was neither written through nor marked) is still waiting for the record, so it is marked
+    /// pending: otherwise the next re-sync or rehydrate would adopt the record's older value over it.
+    private func resolveCcpaWritePending(writtenCcpa: Bool?, snapshot: IdentityGate.Snapshot) {
+        guard Self.syncsCcpaOptout(currentConfig) else { return }
+        if let writtenCcpa, storage.loadCcpaOptout() == writtenCcpa {
+            storage.saveCcpaWritePending(false)
+        } else if identityGate.ccpaChanged(since: snapshot) {
+            storage.saveCcpaWritePending(true)
+        }
+    }
+
+    /// Whether a CCPA choice is written to the record at all: Universal Consent on and `sync_optout`.
+    static func syncsCcpaOptout(_ config: ConsentConfig?) -> Bool {
+        guard let universalConsent = config?.universalConsent else { return false }
+        return universalConsent.enabled && universalConsent.syncOptout
     }
 
     /// The persisted-binding facts ``syncUserIdentifier`` branches on, captured before the read.
@@ -980,8 +1083,10 @@ extension ConsentManager {
     /// ``syncUserIdentifier`` makes — only when Universal Consent is enabled, the customer's
     /// `sync_optout` gate is on, the device is bound to an identity that a `setUserIdentifier` call
     /// in this process succeeded for, and an explicit local choice is stored (config defaults are
-    /// never seeded). Otherwise it stays local and rides the next Universal Consent write. The RAW
-    /// choice is the record's own (see ``rawChoice(forStored:userHash:)``) while local state is
+    /// never seeded). Otherwise it stays local and rides the next Universal Consent write. While
+    /// bound, the choice is marked pending (``ConsentStorage/loadCcpaWritePending()``) until a write
+    /// carries it, so a re-sync or rehydrate does not replace it with the record's older value. The
+    /// RAW choice is the record's own (see ``rawChoice(forStored:userHash:)``) while local state is
     /// still the possibly-suppressed view the sync left, never that view itself.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     public func setCcpaOptout(_ optedOut: Bool, completion: @escaping (Result<Void, ConsentError>) -> Void) {
@@ -992,9 +1097,13 @@ extension ConsentManager {
         var dispatched = false
         identityGate.recordCcpaChoice {
             storage.saveCcpaOptout(optedOut)
-            guard let universalConsent = currentConfig?.universalConsent,
-                  universalConsent.enabled, universalConsent.syncOptout,
-                  let session = universalConsentSession,
+            guard Self.syncsCcpaOptout(currentConfig) else { return }
+            // Bound: the choice is pending until a write carries it, so a re-sync or rehydrate keeps
+            // it rather than adopting the record's older value (also when it cannot be written now).
+            if storage.loadBoundUserHash() != nil {
+                storage.saveCcpaWritePending(true)
+            }
+            guard let session = universalConsentSession,
                   session.userHash == storage.loadBoundUserHash(),
                   let localChoice = storage.loadPreferences()
             else { return }
@@ -1003,9 +1112,18 @@ extension ConsentManager {
                 session.identifier,
                 apiKey: session.apiKey,
                 preferences: rawChoice(forStored: localChoice, userHash: session.userHash),
-                getSignature: session.getSignature,
-                completion: completion
-            )
+                getSignature: session.getSignature
+            ) { [weak self] result in
+                if case .success = result, let self {
+                    // Reached the record. A newer toggle made during the write stays pending.
+                    self.identityGate.ifCurrent(nil) {
+                        if self.storage.loadCcpaOptout() == optedOut {
+                            self.storage.saveCcpaWritePending(false)
+                        }
+                    }
+                }
+                completion(result)
+            }
         }
         if !dispatched {
             completion(.success(()))
@@ -1063,6 +1181,7 @@ extension ConsentManager {
         storage.removePreferences()
         // Neutral includes "not opted out": the CCPA choice belongs to the identity being dropped.
         storage.saveCcpaOptout(false)
+        storage.saveCcpaWritePending(false)
     }
 
     /// Whether a local choice's cookieOptions equal a just-fetched record's, compared as an
@@ -1113,11 +1232,14 @@ extension ConsentManager {
 final class IdentityGate {
     static let superseded = ConsentError.validationError("User identifier sync superseded by logout")
 
-    /// What a sync captures before its read: the identity generation, and the revision of the
-    /// host's ``ConsentManager/setCcpaOptout(_:completion:)`` calls (TRUST-2591).
+    /// What a sync captures before its read: the identity generation, the revision of the host's
+    /// ``ConsentManager/setCcpaOptout(_:completion:)`` calls (TRUST-2591), and the user-save
+    /// revision, so a ``ConsentManager/savePreferences(_:completion:)`` made at any point after it
+    /// (during the read included) counts as a user change (TRUST-2902).
     struct Snapshot {
         let generation: Int
         let ccpaRevision: Int
+        let saveRevision: Int
     }
 
     private let lock = NSRecursiveLock()
@@ -1128,7 +1250,7 @@ final class IdentityGate {
     var snapshot: Snapshot {
         lock.lock()
         defer { lock.unlock() }
-        return Snapshot(generation: current, ccpaRevision: ccpaRevision)
+        return Snapshot(generation: current, ccpaRevision: ccpaRevision, saveRevision: saveRevision)
     }
 
     /// Bump the CCPA revision and run `body` (the setter's own work) in the same critical section.
@@ -1139,17 +1261,19 @@ final class IdentityGate {
         body()
     }
 
-    /// Bump the user-save revision and run `body` (the save's own work) in the same critical section.
-    func recordPreferencesSave(_ body: () -> Void) {
+    /// Bump the user-save revision and run `body` (the save's own work, its storage write included)
+    /// in the same critical section, so a save and a rehydrate's persist never interleave.
+    func recordPreferencesSave(_ body: () throws -> Void) rethrows {
         lock.lock()
         defer { lock.unlock() }
         saveRevision &+= 1
-        body()
+        try body()
     }
 
-    /// The current user-save revision. A sync captures it with the stored choice it records as
-    /// synced, so a ``ConsentManager/savePreferences(_:completion:)`` made before the sync binds
-    /// (e.g. while its write is in flight) still counts as a user change.
+    /// The current user-save revision. A sync records what it left as synced only if no
+    /// ``ConsentManager/savePreferences(_:completion:)`` landed since it last wrote local state (or
+    /// since it started, when it wrote none), so a save made during its read or its write still
+    /// counts as a user change.
     var preferencesSaveRevision: Int {
         lock.lock()
         defer { lock.unlock() }

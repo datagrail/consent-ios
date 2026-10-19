@@ -519,7 +519,9 @@ public extension DataGrailConsent {
     /// on, ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` has succeeded in
     /// this app session, and the user has an explicit consent choice stored. Otherwise it is kept
     /// locally and sent with the next Universal Consent write. When a login finds a stored record,
-    /// the record's value replaces this one; ``clearUserIdentifier()`` resets it to `false`.
+    /// the record's value replaces this one; ``clearUserIdentifier()`` resets it to `false`. A
+    /// choice made while signed in (or during a login) that has not reached the record yet is kept
+    /// by a re-sync or rehydrate instead of the record's older value.
     ///
     /// - Parameters:
     ///   - optedOut: `true` when the user opts out of sale/sharing.
@@ -590,6 +592,12 @@ public extension DataGrailConsent {
     ///
     /// A read miss leaves local state untouched and writes nothing — "no record" is the
     /// absence of a signal, not a denial, so the banner still shows.
+    ///
+    /// For the signed-in user it also records what it stored as the last sync, as
+    /// ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` does, so a later
+    /// re-sync or ``setCcpaOptout(_:completion:)`` never writes the ATT/GPC-suppressed view over
+    /// the user's cross-device opt-ins. A ``clearUserIdentifier()`` or ``reset()`` during the read
+    /// supersedes it: nothing is stored and the call fails.
     ///
     /// - Parameter completion: `true` when local state was rehydrated from a stored record.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)

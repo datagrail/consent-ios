@@ -15,6 +15,7 @@ public class ConsentStorage {
         static let pendingEvents = "datagrail_consent_pending_events"
         static let boundUserHash = "datagrail_consent_bound_user_hash"
         static let ccpaOptout = "datagrail_consent_ccpa_optout"
+        static let ccpaWritePending = "datagrail_consent_ccpa_write_pending"
         static let syncState = "datagrail_consent_sync_state"
     }
 
@@ -104,6 +105,23 @@ public class ConsentStorage {
     /// Load the user's explicit CCPA/CPRA "Do Not Sell or Share" choice; `false` when never set.
     public func loadCcpaOptout() -> Bool {
         userDefaults.bool(forKey: Keys.ccpaOptout)
+    }
+
+    /// Mark (or clear) that a CCPA choice made while bound has not reached the Universal Consent
+    /// record yet: the setter had no category choice or session to write with, or its write failed.
+    /// While set, a found record's `ccpa_optout` must not replace the local flag on a re-sync or
+    /// rehydrate, or the device would silently lose its own unsent choice.
+    func saveCcpaWritePending(_ pending: Bool) {
+        if pending {
+            userDefaults.set(true, forKey: Keys.ccpaWritePending)
+        } else {
+            userDefaults.removeObject(forKey: Keys.ccpaWritePending)
+        }
+    }
+
+    /// Whether a bound CCPA choice is still waiting to reach the record; `false` when none is stored.
+    func loadCcpaWritePending() -> Bool {
+        userDefaults.bool(forKey: Keys.ccpaWritePending)
     }
 
     // MARK: - Unique ID
@@ -208,6 +226,7 @@ public class ConsentStorage {
             Keys.pendingEvents,
             Keys.boundUserHash,
             Keys.ccpaOptout,
+            Keys.ccpaWritePending,
             Keys.syncState,
         ]
         keys.forEach { userDefaults.removeObject(forKey: $0) }
