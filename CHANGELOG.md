@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `initialize(configUrl:onConfigError:completion:)` (TRUST-3254). When a config fetch fails but a cached config is served, `onConfigError` receives the failure (`.configNotPublished`, `.httpError`, `.networkError`, `.parseError` for any body that is not a config, or `.validationError`) once, on the main queue, before `completion`. It is not called on success, on a 304, or when nothing is cached (`initialize` then fails as before). It is not called for a session that `reset()` or a later `initialize` has superseded. Matches consent-react `onConfigError` (TRUST-2745).
+
 - **Breaking:** `ConsentError.configNotPublished(statusCode:)`. A config fetch rejected with a definite 4xx (any 4xx except 408 and 429, including 403) when no cached config exists now fails with `.configNotPublished` instead of `.httpError`, and is not retried. With a cached config, the cache is still returned. Host apps that switch exhaustively over `ConsentError` must add the new case. Same name and trigger as Android `ConsentException.ConfigNotPublished` and React `CONFIG_NOT_PUBLISHED`.
 - `Logger.error` on every config-load failure (fetch, parse, validation, 304 with no cache, cache write) and on `initialize` failure. Visible when `DataGrailConsent.logLevel` is `.error` or higher.
 - Demo app: a **Config URL** tab that loads a pre-signed test config link from the Mobile tab and previews it with the SDK's banner, showing the SDK and config schema versions and a specific error for expired, altered, deleted, unreachable, unparseable, or unsupported-schema links. Demo-only; the SDK's public API is unchanged.
