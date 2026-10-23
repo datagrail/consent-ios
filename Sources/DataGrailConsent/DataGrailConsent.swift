@@ -418,7 +418,10 @@ public extension DataGrailConsent {
     ///   left: consent maps and the identity hash, never the identifier). A device signal is never
     ///   a change, so a view ATT or GPC suppressed is never written. After a local change (any
     ///   `savePreferences`/`acceptAll`/`rejectAll`, including one made while a sync was in
-    ///   flight) that choice is written.
+    ///   flight) that choice is written, with the time it was made, but over a stored record only
+    ///   when it was made after the record's latest decision (TRUST-3223). A device returning with
+    ///   a choice older than one the user made elsewhere (for example a revocation on the web)
+    ///   adopts the record instead of undoing it.
     /// When there is nothing to write, the call succeeds without writing.
     ///
     /// What the SDK cannot detect: it cannot tell whether a pre-login choice was made by the

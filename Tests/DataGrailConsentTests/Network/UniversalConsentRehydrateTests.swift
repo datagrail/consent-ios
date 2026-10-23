@@ -371,7 +371,8 @@ final class UniversalConsentRehydrateTests: XCTestCase {
           },
           "consent_mode": "optin",
           "platform": "web",
-          "gpc": \(gpc)
+          "gpc": \(gpc),
+          "updated_at": "\(UCFixtures.pastUpdatedAt)"
         }
         """.utf8)
     }
@@ -403,6 +404,7 @@ extension UniversalConsentRehydrateTests {
                 CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: false),
             ]
         ))
+        storage.saveDecisionTs() // a choice the user made on this device (TRUST-3223)
         // The stored record disagrees (marketing ON).
         mockNetworkClient.requestResult = .success(foundRecordJSON(marketing: true))
 

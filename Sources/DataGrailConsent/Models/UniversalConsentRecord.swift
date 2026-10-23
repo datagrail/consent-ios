@@ -108,6 +108,18 @@ public struct UniversalConsentRecord: Codable, Equatable {
         self.gppString = gppString
     }
 
+    /// The record's latest decision time as unix seconds (TRUST-3223): `updated_at` is the latest
+    /// `decision_ts` across all of the record's per-category registers. `nil` when absent or
+    /// unparseable.
+    var updatedAtSeconds: Int64? {
+        guard let updatedAt else { return nil }
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = withFraction.date(from: updatedAt) ?? ISO8601DateFormatter().date(from: updatedAt)
+        else { return nil }
+        return Int64(date.timeIntervalSince1970.rounded(.down))
+    }
+
     /// A copy of this record carrying a different `cookieOptions` map, used to return the
     /// reconciled state without mutating the raw decoded record.
     func withCookieOptions(_ cookieOptions: [String: Bool]) -> UniversalConsentRecord {

@@ -17,6 +17,7 @@ public class ConsentStorage {
         static let ccpaOptout = "datagrail_consent_ccpa_optout"
         static let ccpaWritePending = "datagrail_consent_ccpa_write_pending"
         static let syncState = "datagrail_consent_sync_state"
+        static let decisionTs = "datagrail_consent_decision_ts"
     }
 
     public init(userDefaults: UserDefaults = .standard) {
@@ -48,9 +49,68 @@ public class ConsentStorage {
 
     /// Remove the stored consent preferences, returning the device to the no-choice state a
     /// fresh install has. Leaves every other key (unique id, config cache, version, locale,
-    /// pending queue) intact — unlike ``clearAll()``.
+    /// pending queue) intact — unlike ``clearAll()`` — except the decision time, which belongs
+    /// to the choice being removed.
     public func removePreferences() {
         userDefaults.removeObject(forKey: Keys.preferences)
+        clearDecisionTs()
+    }
+
+    // MARK: - Decision time (TRUST-3223)
+
+    /// How far ahead of this device's clock a decision time may be before it is treated as bogus.
+    /// Matches the edge's own future clamp (now + 300 s).
+    static let decisionTsFutureToleranceSeconds: Int64 = 300
+
+    /// How far ahead a STORED decision time may be and still be read back. A time adopted from a
+    /// record can already sit at the edge's clamp, and the monotonic stamp of a choice made right
+    /// after it has to land beyond it and still be readable, or that fresh choice would read as
+    /// unknown and lose to the record it follows. Twice the edge clamp leaves that room, while a
+    /// stamp written under a clock that has since been corrected is still rejected.
+    static let decisionTsStoredToleranceSeconds: Int64 = 2 * decisionTsFutureToleranceSeconds
+
+    /// Record WHEN the stored choice was made, as unix seconds. `nil` stamps a choice the user just
+    /// made; an adopt passes the adopted record's time instead.
+    ///
+    /// The "now" stamp is MONOTONIC: never earlier than the previous stamp + 1 (unless that stamp
+    /// is itself implausibly far ahead), so two choices in the same second, or a choice right after
+    /// adopting a record stamped slightly ahead of this clock, still order correctly. That is the
+    /// only clock-skew protection: decision times from different devices are compared as-is, so skew
+    /// between devices (up to the edge's ~300 s bound) can still mis-order changes made that close
+    /// together. Mirrors consent-banner `setDecisionTs` (TRUST-3154).
+    func saveDecisionTs(_ decisionTs: Int64? = nil, now: Int64 = ConsentStorage.nowSeconds()) {
+        let value: Int64
+        if let decisionTs {
+            value = decisionTs
+        } else if let previous = loadDecisionTs(now: now) {
+            // Capped at what loadDecisionTs reads back (only reachable by hundreds of same-second saves).
+            value = min(max(now, previous + 1), now + Self.decisionTsStoredToleranceSeconds)
+        } else {
+            value = now
+        }
+        userDefaults.set(String(value), forKey: Keys.decisionTs)
+    }
+
+    /// When the stored choice was made, or `nil` when unknown: no choice is stored, it was stored
+    /// before the SDK recorded decision times, or the stamp is more than
+    /// ``decisionTsStoredToleranceSeconds`` ahead of this clock. A stamp that far ahead is bogus (the
+    /// clock was ahead and has since been corrected); the edge restamps such a write to now + 300, so
+    /// it would never repair itself and would out-rank every record forever.
+    func loadDecisionTs(now: Int64 = ConsentStorage.nowSeconds()) -> Int64? {
+        guard let raw = userDefaults.string(forKey: Keys.decisionTs),
+              let value = Int64(raw), value >= 0
+        else { return nil }
+        return value <= now + Self.decisionTsStoredToleranceSeconds ? value : nil
+    }
+
+    /// The stored choice no longer has a known decision time.
+    func clearDecisionTs() {
+        userDefaults.removeObject(forKey: Keys.decisionTs)
+    }
+
+    /// Unix seconds, the resolution `decision_ts` has on the Universal Consent wire.
+    static func nowSeconds() -> Int64 {
+        Int64(Date().timeIntervalSince1970.rounded(.down))
     }
 
     // MARK: - Universal Consent identity binding
@@ -228,6 +288,7 @@ public class ConsentStorage {
             Keys.ccpaOptout,
             Keys.ccpaWritePending,
             Keys.syncState,
+            Keys.decisionTs,
         ]
         keys.forEach { userDefaults.removeObject(forKey: $0) }
     }

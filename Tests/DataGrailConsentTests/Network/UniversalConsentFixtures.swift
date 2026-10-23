@@ -7,6 +7,10 @@ enum UCFixtures {
     static let customerId = "ac46d8ad-a67a-431f-a5d5-9e3eb922dae7"
     static let projectId = "proj_abc123"
 
+    /// An `updated_at` older than any choice a test makes (TRUST-3223), so a local change made
+    /// during a test is newer than the record and a re-sync writes it through.
+    static let pastUpdatedAt = "2020-01-01T00:00:00.000Z"
+
     /// Minimal layer so the config passes `ConfigValidator` when loaded through `ConfigService`.
     private static let firstLayer = ConsentLayer(
         id: "layer1",

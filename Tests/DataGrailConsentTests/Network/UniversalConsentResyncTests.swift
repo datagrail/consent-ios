@@ -289,7 +289,8 @@ final class UniversalConsentResyncTests: XCTestCase {
           "consent_mode": "optin",
           "platform": "web",
           "gpc": \(gpc),
-          "ccpa_optout": false
+          "ccpa_optout": false,
+          "updated_at": "\(UCFixtures.pastUpdatedAt)"
         }
         """.utf8)
     }
@@ -436,6 +437,26 @@ extension UniversalConsentResyncTests {
         XCTAssertNoThrow(try sync(userA).get())
 
         XCTAssertTrue(sut.getCcpaOptout(), "the record's older false does not replace it")
+    }
+
+    /// TRUST-3308 (web: consent-banner 7195aa3): a setter write-through that fails leaves the choice
+    /// pending, so the next re-sync does not replace it with the record's stale value; logout clears it.
+    func testSetterWhoseWriteFailedIsNotRevertedByTheResync() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA).get())
+
+        network.postResult = .failure(.networkError("offline"))
+        XCTAssertThrowsError(try setCcpaOptout(true).get())
+        XCTAssertTrue(storage.loadCcpaWritePending(), "the failed write did not carry it")
+
+        network.postResult = .success(Data(#"{"status":"ok"}"#.utf8))
+        XCTAssertNoThrow(try sync(userA).get())
+        XCTAssertTrue(sut.getCcpaOptout(), "the record's older false does not replace it")
+        XCTAssertTrue(storage.loadCcpaWritePending())
+
+        sut.clearUserIdentifier()
+        XCTAssertFalse(storage.loadCcpaWritePending())
+        XCTAssertFalse(sut.getCcpaOptout())
     }
 
     private func rehydrate(
