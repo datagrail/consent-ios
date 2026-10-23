@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Behavior change (TRUST-3223):** a stale device's Universal Consent re-sync no longer undoes a newer choice made on another device (the P0-06 sign-off scenario: choose on this device, revoke on the web, re-sync here, and the grant came back). The SDK now stores the time of each consent choice next to the stored preferences (an adopted record takes the record's `updated_at`; removing the stored choice clears it) and sends it on every write as `is_explicit: true` plus `decision_ts`, signed into `provDigest`. A re-sync writes a local change over a found record only when it was made strictly after the record's `updated_at`; otherwise the record is adopted. A choice stored before this release has no recorded time, so it adopts a found record rather than overwrite it, and a write with no known time sends no provenance (byte-identical to before). Same rule as consent-banner TRUST-3154.
+- **Behavior change (TRUST-3223):** after a re-sync writes a local change over an older found record, this device keeps that change locally. Previously local state took the older record until the next sync, so a category the user had just turned off on this device read as enabled again.
 - `initialize` now always delivers its completion on the main queue, on both success and failure.
 
 ## [1.7.0] - 2026-08-25

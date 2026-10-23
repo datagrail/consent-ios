@@ -73,6 +73,8 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         ])
         XCTAssertEqual(body["is_explicit"] as? Bool, true)
         XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, localTs, "when the user chose, not now")
+        XCTAssertEqual(storedMarketing(), false, "this device keeps the newer choice it wrote, not the older record")
+        XCTAssertEqual(storage.loadDecisionTs(), localTs)
         XCTAssertEqual(
             try XCTUnwrap(signedPayloads.last).stringToSign.split(separator: ":").last.map(String.init),
             sha256Hex("true\n\(localTs)\n"),

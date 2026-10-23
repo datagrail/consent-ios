@@ -845,11 +845,11 @@ extension ConsentManager {
             // it is already stored, nothing below overwrites it, and a write here carries it.
             let keepsStoredCcpa = identityGate.ccpaChanged(since: snapshot)
             dropPriorIdentityState(binding: binding, keepsStoredCcpa: keepsStoredCcpa)
-            completeAdopt(outcome: outcome, binding: binding, onRehydrated: onRehydrated)
             // The choice this call may write: never another bound identity's leftover state.
-            let explicitChoice = binding.boundToOther ? nil : localChoice
-            if let explicitChoice,
-               shouldWrite(explicitChoice, decisionTs: localDecisionTs, outcome: outcome, binding: binding) {
+            if let explicitChoice = adoptOrKeepLocal(
+                binding.boundToOther ? nil : localChoice,
+                decisionTs: localDecisionTs, outcome: outcome, binding: binding, onRehydrated: onRehydrated
+            ) {
                 // The write carries the user's own CCPA flag, not a value the rehydrate adopted.
                 if !keepsStoredCcpa {
                     storage.saveCcpaOptout(localCcpaOptout)
@@ -912,6 +912,45 @@ extension ConsentManager {
         }
         if let effective = getCategories() {
             onRehydrated?(effective)
+        }
+    }
+
+    /// After the read: decide whether `explicitChoice` is written (``shouldWrite``) and return it if
+    /// so. Adopt the record (``completeAdopt``), unless this re-sync writes a local choice newer than
+    /// the found record over it: then this device keeps that choice too, rather than the older record
+    /// the rehydrate just stored (TRUST-3223).
+    private func adoptOrKeepLocal(
+        _ explicitChoice: ConsentPreferences?,
+        decisionTs: Int64?,
+        outcome: RehydrateOutcome,
+        binding: LoginBinding,
+        onRehydrated: ((ConsentPreferences) -> Void)?
+    ) -> ConsentPreferences? {
+        let writeChoice = explicitChoice.flatMap {
+            shouldWrite($0, decisionTs: decisionTs, outcome: outcome, binding: binding) ? $0 : nil
+        }
+        if let writeChoice, outcome.raw != nil {
+            restoreLocalChoice(writeChoice, decisionTs: decisionTs)
+        } else {
+            completeAdopt(outcome: outcome, binding: binding, onRehydrated: onRehydrated)
+        }
+        return writeChoice
+    }
+
+    /// Put back the local choice a re-sync is writing through, and its decision time, over the older
+    /// record the rehydrate stored. Local state is then what it was before the sync, so no listener
+    /// fires. Runs inside the sync's critical section.
+    private func restoreLocalChoice(_ choice: ConsentPreferences, decisionTs: Int64?) {
+        do {
+            try storage.savePreferences(choice)
+            if let decisionTs {
+                storage.saveDecisionTs(decisionTs)
+            } else {
+                storage.clearDecisionTs()
+            }
+        } catch {
+            // Left as the adopted record until the next sync adopts the written choice.
+            Logger.error("Failed to restore the local choice after a re-sync: \(error.localizedDescription)")
         }
     }
 
