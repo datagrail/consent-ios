@@ -55,6 +55,7 @@ final class UniversalConsentReadTests: XCTestCase {
                 "read must query the same golden hash the write path posts: \(url)"
             )
             XCTAssertTrue(url.contains("customer_id=\(UCFixtures.customerId)"))
+            XCTAssertTrue(url.contains("platform=ios"), "read must send the platform hint: \(url)")
 
             // Reads are unsigned, but the API key is still required so the edge can resolve
             // the customer from KVS.

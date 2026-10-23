@@ -550,6 +550,9 @@ public extension ConsentService {
     /// - Returns: the parsed record, or `nil` when the server reports `not_found`. A miss is
     ///   the absence of a signal, NOT an opt-out — the two lead to opposite banner decisions,
     ///   so they must not collapse into one value.
+    /// The `platform` this SDK declares on Universal Consent writes and sends as the GET hint.
+    static let universalConsentPlatform = "ios"
+
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func getUniversalConsent(
         _ identifier: String,
@@ -578,6 +581,9 @@ public extension ConsentService {
         components.queryItems = [
             URLQueryItem(name: "customer_id", value: config.dgCustomerId),
             URLQueryItem(name: "user_hash", value: userHash),
+            // Same platform writes declare, so UC analytics classify reads and writes as one
+            // surface (TRUST-3251; universal_consent_edge/lib/analytics.js).
+            URLQueryItem(name: "platform", value: Self.universalConsentPlatform),
         ]
         guard let url = components.url else {
             completion(.failure(.invalidConfiguration("Could not build Universal Consent URL")))
@@ -756,7 +762,7 @@ public extension ConsentService {
             "consent_preferences": preferencesObject,
             "consent_mode": config.consentMode,
             "config_version": config.version,
-            "platform": "ios",
+            "platform": Self.universalConsentPlatform,
         ]
         return try JSONSerialization.data(withJSONObject: payload)
     }
