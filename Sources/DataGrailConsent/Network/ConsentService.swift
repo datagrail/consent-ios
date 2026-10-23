@@ -537,6 +537,9 @@ public extension ConsentService {
         )
     }
 
+    /// The `platform` this SDK declares on Universal Consent writes and sends as the GET hint.
+    static let universalConsentPlatform = "ios"
+
     /// Read a user's stored Universal Consent record for cross-device rehydration.
     ///
     /// `GET /universal_consent?customer_id=..&user_hash=..` with an `X-DG-Api-Key` header.
@@ -550,9 +553,6 @@ public extension ConsentService {
     /// - Returns: the parsed record, or `nil` when the server reports `not_found`. A miss is
     ///   the absence of a signal, NOT an opt-out — the two lead to opposite banner decisions,
     ///   so they must not collapse into one value.
-    /// The `platform` this SDK declares on Universal Consent writes and sends as the GET hint.
-    static let universalConsentPlatform = "ios"
-
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func getUniversalConsent(
         _ identifier: String,
