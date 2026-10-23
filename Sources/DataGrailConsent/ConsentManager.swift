@@ -1209,10 +1209,14 @@ extension ConsentManager {
                   let localChoice = storage.loadPreferences()
             else { return }
             dispatched = true
-            setUserIdentifier(
+            writeUniversalConsent(
                 session.identifier,
                 apiKey: session.apiKey,
                 preferences: rawChoice(forStored: localChoice, userHash: session.userHash),
+                // The categories riding along are stamped with when they were chosen, not now, so this
+                // write cannot undo a newer revocation made elsewhere (TRUST-3311, as consent-react #47).
+                // Trade-off: the fresh CCPA choice shares that older stamp and can lose to a newer record.
+                decisionTs: storage.loadDecisionTs(),
                 getSignature: session.getSignature
             ) { [weak self] result in
                 if case .success = result, let self {

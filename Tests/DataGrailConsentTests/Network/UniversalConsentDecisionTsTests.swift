@@ -131,6 +131,22 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         XCTAssertEqual((writtenBody()?["decision_ts"] as? NSNumber)?.int64Value, localTs)
     }
 
+    /// TRUST-3311 (consent-react #47): a setCcpaOptout write-through carries the stored choice's
+    /// decision time, so the categories riding along cannot out-rank a newer revocation elsewhere.
+    func testSetterWriteThroughCarriesTheStoredChoicesDecisionTime() throws {
+        try bindAfterFirstSync()
+        try save(marketing: true)
+        let localTs = try XCTUnwrap(storage.loadDecisionTs())
+
+        let expectation = expectation(description: "setCcpaOptout")
+        sut.setCcpaOptout(true) { _ in expectation.fulfill() }
+        wait(for: [expectation], timeout: 1.0)
+
+        XCTAssertEqual(network.methods, [.post])
+        XCTAssertEqual((writtenBody()?["decision_ts"] as? NSNumber)?.int64Value, localTs, "not now")
+        XCTAssertEqual(writtenBody()?["ccpa_optout"] as? Bool, true)
+    }
+
     // MARK: - Unknown decision time is byte-identical to before
 
     func testMissWithNoRecordedTimeSendsNoProvenanceAndSignsTheRequestTimestamp() throws {
