@@ -40,7 +40,13 @@ enum UCFixtures {
         ]
     )
 
-    static func makeConfig(privacyDomain: String, consentProjectId: String? = projectId) -> ConsentConfig {
+    static func makeConfig(
+        privacyDomain: String = "consent.test.com",
+        consentProjectId: String? = projectId,
+        initialCategories initial: [String] = ["dg-category-essential"],
+        syncOptout: Bool = false,
+        universalApiKey: String? = nil
+    ) -> ConsentConfig {
         ConsentConfig(
             version: "1.0.0",
             consentContainerVersionId: "container1",
@@ -67,7 +73,7 @@ enum UCFixtures {
                 respectGpc: true,
                 respectDnt: false,
                 respectOptout: false,
-                initial: ["dg-category-essential"],
+                initial: initial,
                 gpc: [],
                 optout: []
             ),
@@ -83,7 +89,11 @@ enum UCFixtures {
                 consentLayers: ["layer1": firstLayer]
             ),
             consentProjectId: consentProjectId,
-            universalConsent: UniversalConsentConfig(enabled: true, syncOptout: false)
+            universalConsent: UniversalConsentConfig(
+                enabled: true,
+                syncOptout: syncOptout,
+                apiKey: universalApiKey
+            )
         )
     }
 }
