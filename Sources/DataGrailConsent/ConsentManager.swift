@@ -591,15 +591,21 @@ extension ConsentManager {
         }
     }
 
-    /// Rehydrate, and hand back the RAW stored preferences from the record.
+    /// The STANDALONE rehydrate behind ``rehydrateFromUniversalConsent(_:apiKey:trackingSignal:completion:)``:
+    /// a read with no write and no bind step after it. The completion carries the record's RAW
+    /// preferences (`nil` on a miss or a signal-only record) rather than a Bool, which is what the
+    /// public method maps and what tests assert on.
     ///
-    /// Same behavior as ``rehydrateFromUniversalConsent(_:apiKey:trackingSignal:completion:)``,
-    /// except the completion carries the record's raw preferences (or `nil` on a miss) rather
-    /// than a Bool. The read-then-write entry point needs this: rehydration persists the
-    /// RECONCILED view locally, so a subsequent write that sourced its payload from
-    /// ``getCategories()`` would read back the suppressed state and persist it to the store as
-    /// though the user had chosen it. Returning the raw record lets the write carry what the
-    /// user actually consented to.
+    /// It RECORDS the persisted sync state (`recordsSyncState: true`): when the record is persisted
+    /// for the identity the device is bound to, the stored view and the record's raw choice become
+    /// that identity's last sync, exactly as an adopt by ``syncUserIdentifier`` leaves them; for any
+    /// other identity the sync state is cleared. It records it inside the persist's critical section
+    /// with no save-revision check, which is right only because nothing follows the persist.
+    ///
+    /// Not a building block for a read-then-write caller. A caller that writes or binds after the
+    /// read must use ``rehydrateReportingFound`` (which records no sync state) and record the sync
+    /// state itself once its write lands, as ``syncUserIdentifier`` does; reusing this would record
+    /// sync state for a choice that write is about to replace.
     ///
     /// Deliberately a separate name rather than an overload — one distinguished only by its
     /// completion type is ambiguous at every call site that does not annotate the closure.
@@ -806,18 +812,27 @@ extension ConsentManager {
             completeAdopt(outcome: outcome, binding: binding, onRehydrated: onRehydrated)
             // The choice this call may write: never another bound identity's leftover state.
             let explicitChoice = binding.boundToOther ? nil : localChoice
-            if let explicitChoice, shouldWrite(explicitChoice, outcome: outcome, binding: binding) {
-                // The write carries the user's own CCPA flag, not a value the rehydrate adopted.
-                if !keepsStoredCcpa {
+            let writesExplicit = explicitChoice.map { shouldWrite($0, outcome: outcome, binding: binding) } ?? false
+            // Otherwise, a bound CCPA choice that has not reached the record yet (a setter call
+            // after a relaunch, with no session to write through, or a failed write) is a local
+            // change too. This re-sync is the first moment a session exists again, so it is flushed
+            // now with the record's own raw choice just read: the categories another device set
+            // stay as they are. Same rule as consent-android.
+            if let choice = writesExplicit
+                ? explicitChoice
+                : pendingCcpaFlushChoice(outcome: outcome, binding: binding, localChoice: localChoice) {
+                // An explicit write carries the user's own CCPA flag, not a value the rehydrate
+                // adopted. A flush carries the stored one, which the rehydrate kept (it is pending).
+                if writesExplicit, !keepsStoredCcpa {
                     storage.saveCcpaOptout(localCcpaOptout)
                 }
                 setUserIdentifier(
                     identifier,
                     apiKey: apiKey,
-                    preferences: explicitChoice,
+                    preferences: choice,
                     getSignature: getSignature,
                     // The flag setUserIdentifier reads for the write, in this same critical section.
-                    completion: bindingCompletion(explicitChoice, storage.loadCcpaOptout())
+                    completion: bindingCompletion(choice, storage.loadCcpaOptout())
                 )
                 return
             }
@@ -1058,6 +1073,27 @@ extension ConsentManager {
         return !Self.cookieOptionsMatch(choice, raw, neutral: neutralCategoryValues())
     }
 
+    /// The choice a RE-SYNC that writes nothing else sends to flush a pending CCPA choice
+    /// (``ConsentStorage/loadCcpaWritePending()``), or `nil` when there is none to flush.
+    ///
+    /// It is the found record's RAW choice, so the write changes only `ccpa_optout`. It needs a
+    /// found record that carries a choice (a miss or a signal-only record has no raw choice to
+    /// re-send, and the setter never seeds config defaults) and an explicit local choice, as a
+    /// setter write-through does. The stored flag is the pending value: the rehydrate does not adopt
+    /// the record's over it.
+    private func pendingCcpaFlushChoice(
+        outcome: RehydrateOutcome,
+        binding: LoginBinding,
+        localChoice: ConsentPreferences?
+    ) -> ConsentPreferences? {
+        guard binding.isResync,
+              localChoice != nil,
+              Self.syncsCcpaOptout(currentConfig),
+              storage.loadCcpaWritePending()
+        else { return nil }
+        return outcome.raw
+    }
+
     /// Clear the Universal Consent identity binding and return local consent to neutral.
     ///
     /// Backs ``DataGrailConsent/clearUserIdentifier()``. Non-destructive: no network call, the
@@ -1085,7 +1121,8 @@ extension ConsentManager {
     /// in this process succeeded for, and an explicit local choice is stored (config defaults are
     /// never seeded). Otherwise it stays local and rides the next Universal Consent write. While
     /// bound, the choice is marked pending (``ConsentStorage/loadCcpaWritePending()``) until a write
-    /// carries it, so a re-sync or rehydrate does not replace it with the record's older value. The
+    /// carries it, so a re-sync or rehydrate does not replace it with the record's older value, and
+    /// the next re-sync writes it with the record's raw choice (see ``pendingCcpaFlushChoice``). The
     /// RAW choice is the record's own (see ``rawChoice(forStored:userHash:)``) while local state is
     /// still the possibly-suppressed view the sync left, never that view itself.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)

@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `setCcpaOptout` choice made while signed in but before `setUserIdentifier` re-ran in this app session (for example right after a relaunch) now reaches the Universal Consent record. Before, the next re-sync kept it locally but, with no category change to write, never sent it. The re-sync now writes it with the record's own categories, so no category changes (TRUST-2591)
 - `initialize` now always delivers its completion on the main queue, on both success and failure.
 
 ## [1.7.0] - 2026-08-25

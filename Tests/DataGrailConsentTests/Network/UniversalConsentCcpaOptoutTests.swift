@@ -241,7 +241,8 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
         sut.setCcpaOptout(true) { _ in }
         try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
 
-        XCTAssertEqual(network.methods, [.get], "an unchanged choice is not re-written")
+        XCTAssertEqual(network.methods, [.get, .post], "the categories are unchanged, but the pending flag is flushed")
+        XCTAssertEqual(writtenCcpaOptout(), true, "the write carries the newer setter value")
         XCTAssertTrue(sut.getCcpaOptout(), "adopting the record does not overwrite the newer setter value")
     }
 
