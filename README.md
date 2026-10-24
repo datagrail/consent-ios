@@ -111,7 +111,18 @@ the last published configuration keeps being served and the SDK keeps working; i
 changes until the app upgrades. If a fetched configuration fails to load or validate, the SDK falls back to the
 last cached configuration.
 
-To see configuration-load failures in the console, set `DataGrailConsent.logLevel = .error` (or higher).
+To see configuration-load failures in the console, set `DataGrailConsent.logLevel = .error` (or higher). To
+receive the failures the cached configuration masked, pass `onConfigError`. It gets the same `ConsentError` cases
+as a failed uncached load (`.configNotPublished`, `.httpError`, `.networkError`, `.parseError`, `.validationError`),
+once per `initialize`, on the main queue:
+
+```swift
+DataGrailConsent.shared.initialize(
+    configUrl: configUrl,
+    onConfigError: { error in log.warning("Config refresh failed: \(error)") },
+    completion: { result in /* ... */ }
+)
+```
 
 ## API Reference
 
@@ -121,6 +132,7 @@ To see configuration-load failures in the console, set `DataGrailConsent.logLeve
 |--------|-------------|
 | `DataGrailConsent.shared` | Singleton instance |
 | `initialize(configUrl:completion:)` | Initialize the SDK with a remote config URL. `configUrl` is a `URL`. |
+| `initialize(configUrl:onConfigError:completion:)` | Same, and `onConfigError` receives a config refresh failure the cached config masked (not called on success, on a 304, or when nothing is cached). |
 
 ### Consent Status
 

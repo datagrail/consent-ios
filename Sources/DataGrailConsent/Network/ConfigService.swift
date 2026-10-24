@@ -5,6 +5,14 @@ public class ConfigService {
     private let networkClient: NetworkClient
     private let storage: ConsentStorage
 
+    /// Receives a config refresh failure that was masked by serving the cached config (TRUST-3254):
+    /// a fetch that failed, could not be parsed, or did not validate while a cached config existed.
+    /// Called once per such fetch, with the same error the fetch would have failed with uncached.
+    /// Not called on success, on a 304 served from the cache, or when no cached config exists (the
+    /// fetch then fails and the caller sees the error directly). See
+    /// ``DataGrailConsent/initialize(configUrl:onConfigError:completion:)``.
+    var onCachedFallbackError: ((ConsentError) -> Void)?
+
     public init(networkClient: NetworkClient, storage: ConsentStorage) {
         self.networkClient = networkClient
         self.storage = storage
@@ -107,6 +115,7 @@ public class ConfigService {
     ) {
         if let cachedConfig = storage.loadConfigCache() {
             Logger.error("\(reason); using cached config")
+            onCachedFallbackError?(error)
             completion(.success(cachedConfig))
         } else {
             Logger.error("\(reason); no cached config available")
