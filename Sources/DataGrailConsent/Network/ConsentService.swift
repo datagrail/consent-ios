@@ -565,6 +565,9 @@ public extension ConsentService {
         )
     }
 
+    /// The `platform` this SDK declares on Universal Consent writes and sends as the GET hint.
+    static let universalConsentPlatform = "ios"
+
     /// Read a user's stored Universal Consent record for cross-device rehydration.
     ///
     /// `GET /universal_consent?customer_id=..&user_hash=..` with an `X-DG-Api-Key` header.
@@ -606,6 +609,9 @@ public extension ConsentService {
         components.queryItems = [
             URLQueryItem(name: "customer_id", value: config.dgCustomerId),
             URLQueryItem(name: "user_hash", value: userHash),
+            // Same platform writes declare, so UC analytics classify reads and writes as one
+            // surface (TRUST-3251; universal_consent_edge/lib/analytics.js).
+            URLQueryItem(name: "platform", value: Self.universalConsentPlatform),
         ]
         guard let url = components.url else {
             completion(.failure(.invalidConfiguration("Could not build Universal Consent URL")))
@@ -799,7 +805,7 @@ public extension ConsentService {
             "consent_preferences": preferencesObject,
             "consent_mode": config.consentMode,
             "config_version": config.version,
-            "platform": "ios",
+            "platform": Self.universalConsentPlatform,
             // TRUST-2591: the user's explicit DNSMPI choice, gated per customer by sync_optout.
             // The RAW local flag only: never a category, the reconciled view, or the ATT signal.
             "ccpa_optout": config.universalConsent?.syncOptout == true && ccpaOptout,
