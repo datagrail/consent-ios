@@ -422,10 +422,11 @@ public extension ConsentService {
     /// actor_id_str)` rendered as lowercase hex. The edge reconstructs the same digest from the
     /// request body (or its resolved defaults) and folds it into the string it verifies.
     ///
-    /// This SDK sends no provenance in the write body today, so it signs the RESOLVED-DEFAULT
-    /// triple the edge synthesizes: `is_explicit`→`"true"`, `decision_ts`→the same unix-seconds
-    /// `X-DG-Timestamp` the SDK minted for this write, `actor_id`→`""`. When the SDK later starts
-    /// sending explicit provenance, pass those values here instead.
+    /// A write sends `is_explicit: true` and, when the SDK knows it, the TRUE `decision_ts` — when
+    /// the user made the choice being written (TRUST-3223) — and never `actor_id`, so it signs
+    /// `is_explicit`→`"true"`, `decision_ts`→that time, `actor_id`→`""`. With no known decision
+    /// time the body carries no provenance and this signs the RESOLVED-DEFAULT triple the edge
+    /// synthesizes, `decision_ts`→the same unix-seconds `X-DG-Timestamp` minted for the write.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     static func provenanceDigest(
         isExplicit: Bool,
@@ -670,6 +671,11 @@ public extension ConsentService {
     ///   - ccpaOptout: The user's RAW local CCPA/CPRA "Do Not Sell or Share" choice, as set by
     ///     the host app. Sent as `ccpa_optout` only when `universalConsent.sync_optout` is on;
     ///     otherwise the field is `false`. Never derived from a category or tracking signal.
+    ///   - decisionTs: When the user made the choice being written (unix seconds, TRUST-3223). Sent
+    ///     as the body's `decision_ts` (with `is_explicit: true`) and signed into `provDigest`, so
+    ///     the edge's per-category merge ranks the write by when the choice was made, not when it
+    ///     was sent. `nil` (unknown) sends no provenance: the edge defaults `decision_ts` to the
+    ///     signed request timestamp, byte-identical to a write before TRUST-3223.
     ///   - completion: Completion handler with result.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setUserIdentifier(
@@ -679,6 +685,7 @@ public extension ConsentService {
         apiKey: String,
         getSignature: UniversalConsentSignatureProvider?,
         ccpaOptout: Bool = false,
+        decisionTs: Int64? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         // Identical preconditions to the read path — see validatedUserHash for why each one
@@ -706,7 +713,8 @@ public extension ConsentService {
                 userHash: userHash,
                 preferences: preferences,
                 config: config,
-                ccpaOptout: ccpaOptout
+                ccpaOptout: ccpaOptout,
+                decisionTs: decisionTs
             )
         } catch let error as ConsentError {
             completion(.failure(error))
@@ -746,6 +754,7 @@ public extension ConsentService {
                     writeRequest,
                     customerId: config.dgCustomerId,
                     userHash: userHash,
+                    decisionTs: decisionTs,
                     getSignature: getSignature,
                     completion: operationCompletion
                 )
@@ -765,7 +774,8 @@ public extension ConsentService {
         userHash: String,
         preferences: ConsentPreferences,
         config: ConsentConfig,
-        ccpaOptout: Bool
+        ccpaOptout: Bool,
+        decisionTs: Int64?
     ) throws -> Data {
         var cookieOptions: [String: Bool] = [:]
         for option in preferences.cookieOptions {
@@ -783,7 +793,7 @@ public extension ConsentService {
             throw ConsentError.parseError("Failed to encode universal consent preferences")
         }
 
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "customer_id": config.dgCustomerId,
             "user_hash": userHash,
             "consent_preferences": preferencesObject,
@@ -794,6 +804,12 @@ public extension ConsentService {
             // The RAW local flag only: never a category, the reconciled view, or the ATT signal.
             "ccpa_optout": config.universalConsent?.syncOptout == true && ccpaOptout,
         ]
+        // TRUST-3223: when the choice was made, so a stale device's write cannot out-rank a newer
+        // choice made elsewhere. Omitted when unknown: the edge then defaults to the signed timestamp.
+        if let decisionTs {
+            payload["is_explicit"] = true
+            payload["decision_ts"] = decisionTs
+        }
         return try JSONSerialization.data(withJSONObject: payload)
     }
 
@@ -818,18 +834,19 @@ public extension ConsentService {
         _ request: UniversalConsentWriteRequest,
         customerId: String,
         userHash: String,
+        decisionTs: Int64?,
         getSignature: @escaping UniversalConsentSignatureProvider,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         let timestamp = Int64(Date().timeIntervalSince1970)
         let nonce = Self.generateNonce()
-        // The SDK sends no provenance in the write body today, so it signs the RESOLVED-DEFAULT
-        // provenance triple the edge synthesizes: is_explicit=true, decision_ts=this write's
-        // timestamp, actor_id="". Folding its digest in binds the resolved provenance to the
-        // signature so the edge cannot verify a request whose provenance was tampered with.
+        // Sign the provenance triple the edge resolves for this body: is_explicit=true, the body's
+        // decision_ts (or, when the body carries none, this write's timestamp), actor_id="".
+        // Folding its digest in binds the provenance to the signature so the edge cannot verify a
+        // request whose provenance was tampered with.
         let provDigest = Self.provenanceDigest(
             isExplicit: true,
-            decisionTimestamp: timestamp,
+            decisionTimestamp: decisionTs ?? timestamp,
             actorId: ""
         )
         let stringToSign = "\(customerId):\(userHash):\(timestamp):\(nonce):\(provDigest)"

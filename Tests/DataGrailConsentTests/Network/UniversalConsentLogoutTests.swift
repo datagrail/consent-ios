@@ -199,6 +199,7 @@ final class UniversalConsentLogoutTests: XCTestCase {
                 CategoryConsent(gtmKey: "dg-category-analytics", isEnabled: false),
             ]
         ))
+        storage.saveDecisionTs() // a choice the user made on this device (TRUST-3223)
         network.methods = []
 
         XCTAssertNoThrow(try sync(userA).get())
@@ -284,6 +285,7 @@ final class UniversalConsentLogoutTests: XCTestCase {
     func testResyncWithRecordWritesThroughAGenuineLocalChange() throws {
         storage.saveBoundUserHash(try hash(userA))
         try storage.savePreferences(marketingChoice(false))
+        storage.saveDecisionTs() // a choice the user made on this device (TRUST-3223)
         network.getResult = .success(foundRecordJSON(marketing: true))
 
         let result = sync(userA)
@@ -474,7 +476,8 @@ final class UniversalConsentLogoutTests: XCTestCase {
           },
           "consent_mode": "optin",
           "platform": "web",
-          "gpc": false
+          "gpc": false,
+          "updated_at": "\(UCFixtures.pastUpdatedAt)"
         }
         """.utf8)
     }

@@ -371,7 +371,8 @@ final class UniversalConsentRehydrateTests: XCTestCase {
           },
           "consent_mode": "optin",
           "platform": "web",
-          "gpc": \(gpc)
+          "gpc": \(gpc),
+          "updated_at": "\(UCFixtures.pastUpdatedAt)"
         }
         """.utf8)
     }
@@ -403,6 +404,7 @@ extension UniversalConsentRehydrateTests {
                 CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: false),
             ]
         ))
+        storage.saveDecisionTs() // a choice the user made on this device (TRUST-3223)
         // The stored record disagrees (marketing ON).
         mockNetworkClient.requestResult = .success(foundRecordJSON(marketing: true))
 
@@ -431,8 +433,9 @@ extension UniversalConsentRehydrateTests {
         }
         XCTAssertEqual(cookieOptions["dg-category-marketing"], false, "write carries the LOCAL choice")
 
-        // Local reads still reflect the record — remote wins for the read side.
-        XCTAssertTrue(sut.isCategoryEnabled("dg-category-marketing"))
+        // Local reads keep the choice just written: it is newer than the record (TRUST-3223), so the
+        // older record must not re-enable on this device a category the user turned off here.
+        XCTAssertFalse(sut.isCategoryEnabled("dg-category-marketing"))
     }
 
     /// A found record with no local change is adopted into local state and NOT re-POSTed. The
