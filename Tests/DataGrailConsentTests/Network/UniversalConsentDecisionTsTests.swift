@@ -82,6 +82,44 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         )
     }
 
+    /// A re-sync that keeps the newer local choice decides so before storing the record, so it never
+    /// writes the record and then puts the pre-read choice back: a save landing mid-sync survives.
+    func testASaveDuringAKeepLocalReSyncIsNotUndoneByIt() throws {
+        try bindAfterFirstSync()
+        try save(marketing: false)
+        let localTs = try XCTUnwrap(storage.loadDecisionTs())
+        let recordTs = localTs - 60
+
+        network.deferGet = true
+        let synced = expectation(description: "sync")
+        var outcome: Result<Void, ConsentError> = .failure(.notInitialized)
+        sut.syncUserIdentifier(
+            userA,
+            apiKey: testApiKey,
+            trackingSignal: .authorized,
+            getSignature: { payload, done in
+                self.signedPayloads.append(payload)
+                done(.success(UniversalConsentSignature(signature: "sig", keyId: "k1")))
+            },
+            completion: { result in
+                outcome = result
+                synced.fulfill()
+            }
+        )
+        let pendingGet = try XCTUnwrap(network.pendingGetCompletion)
+        network.deferGet = false
+        // The user changes their mind while the read is in flight.
+        try save(marketing: true)
+        pendingGet(.success(foundRecordJSON(marketing: true, updatedAt: recordTs)))
+        wait(for: [synced], timeout: 1.0)
+
+        XCTAssertNoThrow(try outcome.get())
+        XCTAssertEqual(storedMarketing(), true, "the mid-sync save is kept, not the pre-read choice")
+        XCTAssertNotEqual(storage.loadDecisionTs(), recordTs, "the record was not adopted either")
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(storage.loadDecisionTs()), localTs)
+        XCTAssertNil(storage.loadSyncState(), "the mid-sync save still reads as a change for the next re-sync")
+    }
+
     func testSameSecondTieAdoptsTheRecord() throws {
         try bindAfterFirstSync()
         try save(marketing: true)

@@ -61,8 +61,8 @@ public class DataGrailConsent {
     }
 
     /// Initialize the DataGrail Consent SDK, and be told when a config refresh fails but the SDK
-    /// carries on with the cached config (TRUST-3254, parity with consent-react `onConfigError` and
-    /// the Android SDK).
+    /// carries on with the cached config (TRUST-3254). Same shape as consent-react's `onConfigError`
+    /// option on `initialize`: the handler applies to this `initialize` call only, not to later ones.
     ///
     /// Every `initialize` fetches the config. When that fetch fails and a config from an earlier
     /// launch is cached, initialization still succeeds with the cached config, and `onConfigError`
