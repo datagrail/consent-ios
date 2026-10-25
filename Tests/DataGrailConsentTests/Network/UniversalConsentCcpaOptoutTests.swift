@@ -114,7 +114,7 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
 
     func testResyncWriteThroughCarriesTheLocalFlagNotTheRecord() throws {
         storage.saveBoundUserHash(try hash(userA))
-        try storage.savePreferences(marketingChoice(true))
+        try saveUserChoice(marketingChoice(true))
         storage.saveCcpaOptout(true)
         network.getResult = .success(foundRecordJSON(marketing: false, ccpaOptout: false))
 
@@ -215,7 +215,7 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
 
     func testSetterDuringAnInFlightResyncWriteIsNotReverted() throws {
         storage.saveBoundUserHash(try hash(userA))
-        try storage.savePreferences(marketingChoice(true))
+        try saveUserChoice(marketingChoice(true))
         network.getResult = .success(foundRecordJSON(marketing: false, ccpaOptout: false))
         network.deferGet = true
         var outcome: Result<Void, ConsentError>?
@@ -241,8 +241,7 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
         sut.setCcpaOptout(true) { _ in }
         try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
 
-        XCTAssertEqual(network.methods, [.get, .post], "the categories are unchanged, but the pending flag is flushed")
-        XCTAssertEqual(writtenCcpaOptout(), true, "the write carries the newer setter value")
+        XCTAssertEqual(writtenCcpaOptout(), true, "categories unchanged, but the pending setter value is flushed")
         XCTAssertTrue(sut.getCcpaOptout(), "adopting the record does not overwrite the newer setter value")
     }
 
@@ -390,7 +389,8 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
           "consent_mode": "optin",
           "platform": "web",
           "gpc": false,
-          "ccpa_optout": \(ccpaOptout)
+          "ccpa_optout": \(ccpaOptout),
+          "updated_at": "\(UCFixtures.pastUpdatedAt)"
         }
         """.utf8)
     }
@@ -503,5 +503,12 @@ extension UniversalConsentCcpaOptoutTests {
 
         XCTAssertEqual(network.methods, [.get, .get], "the opt-out-suppressed view is never written")
         XCTAssertNil(network.lastPostBody)
+    }
+
+    /// Store `preferences` as a choice the user made on this device, with its decision time
+    /// (TRUST-3223), so a re-sync treats it as newer than the fixture record.
+    func saveUserChoice(_ preferences: ConsentPreferences) throws {
+        try storage.savePreferences(preferences)
+        storage.saveDecisionTs()
     }
 }

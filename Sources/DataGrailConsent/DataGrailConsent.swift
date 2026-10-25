@@ -18,6 +18,11 @@ public class DataGrailConsent {
 
     private var manager: ConsentManager?
     private var configUrl: URL?
+    /// Bumped by every ``initialize(configUrl:completion:)`` and ``reset()``, so a config fetch
+    /// started by an earlier session never reports into ``initialize(configUrl:onConfigError:completion:)``'s
+    /// handler after it is superseded.
+    private var configErrorGeneration = 0
+    private let configErrorLock = NSLock()
     private var _onConsentChangedCallback: ((ConsentPreferences) -> Void)?
     private let callbackLock = NSLock()
 
@@ -55,12 +60,52 @@ public class DataGrailConsent {
         )
     }
 
+    /// Initialize the DataGrail Consent SDK, and be told when a config refresh fails but the SDK
+    /// carries on with the cached config (TRUST-3254, parity with consent-react `onConfigError` and
+    /// the Android SDK).
+    ///
+    /// Every `initialize` fetches the config. When that fetch fails and a config from an earlier
+    /// launch is cached, initialization still succeeds with the cached config, and `onConfigError`
+    /// receives the failure, using the same ``ConsentError`` cases a failed uncached fetch reports:
+    /// ``ConsentError/configNotPublished(statusCode:)`` (a definite 4xx), ``ConsentError/httpError(statusCode:message:)``,
+    /// ``ConsentError/networkError(_:)`` (transport failures and timeouts), ``ConsentError/parseError(_:)``
+    /// (a body that is not a config, including well-formed JSON of the wrong shape) or
+    /// ``ConsentError/validationError(_:)``. It is for logging and monitoring only: the cached config
+    /// is already in use.
+    ///
+    /// - Called at most once per `initialize`, on the main queue, before `completion`.
+    /// - Not called when the fetch succeeds, when the server answers 304 and the cache is served, or
+    ///   when no cached config exists (the fetch then fails `initialize` and `completion` carries the error).
+    /// - Never called for a superseded session: once ``reset()`` or another `initialize` runs, a
+    ///   fetch still in flight for this one does not report.
+    ///
+    /// - Parameters:
+    ///   - configUrl: URL to fetch consent configuration from.
+    ///   - onConfigError: Receives a refresh failure masked by the cached config.
+    ///   - completion: Completion handler with result.
+    public func initialize(
+        configUrl: URL,
+        onConfigError: @escaping (ConsentError) -> Void,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
+        initialize(
+            configUrl: configUrl,
+            networkClient: NetworkClient(),
+            storage: ConsentStorage(),
+            onConfigError: onConfigError,
+            completion: completion
+        )
+    }
+
     func initialize(
         configUrl: URL,
         networkClient: NetworkClient,
         storage: ConsentStorage,
+        onConfigError: ((ConsentError) -> Void)? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
+        // A new session: an earlier session's fetch in flight no longer reports anywhere.
+        let generation = bumpConfigErrorGeneration()
         // Validate URL scheme
         guard let scheme = configUrl.scheme, scheme == "https" || scheme == "http" else {
             DispatchQueue.main.async {
@@ -84,6 +129,14 @@ public class DataGrailConsent {
             networkClient: networkClient,
             storage: storage
         )
+        if let onConfigError {
+            configService.onCachedFallbackError = { [weak self] error in
+                DispatchQueue.main.async {
+                    guard let self, self.isCurrentConfigErrorGeneration(generation) else { return }
+                    onConfigError(error)
+                }
+            }
+        }
 
         // Extract privacy domain from config URL
         let privacyDomain = configUrl.host ?? "consent.datagrail.io"
@@ -264,7 +317,23 @@ public class DataGrailConsent {
 
     /// Reset all consent data
     public func reset() {
+        // A config fetch still in flight no longer reports to an `onConfigError` handler.
+        bumpConfigErrorGeneration()
         manager?.reset()
+    }
+
+    @discardableResult
+    private func bumpConfigErrorGeneration() -> Int {
+        configErrorLock.lock()
+        defer { configErrorLock.unlock() }
+        configErrorGeneration += 1
+        return configErrorGeneration
+    }
+
+    private func isCurrentConfigErrorGeneration(_ generation: Int) -> Bool {
+        configErrorLock.lock()
+        defer { configErrorLock.unlock() }
+        return configErrorGeneration == generation
     }
 
     // MARK: - Banner Display
@@ -418,7 +487,10 @@ public extension DataGrailConsent {
     ///   left: consent maps and the identity hash, never the identifier). A device signal is never
     ///   a change, so a view ATT or GPC suppressed is never written. After a local change (any
     ///   `savePreferences`/`acceptAll`/`rejectAll`, including one made while a sync was in
-    ///   flight) that choice is written.
+    ///   flight) that choice is written, with the time it was made, but over a stored record only
+    ///   when it was made after the record's latest decision (TRUST-3223). A device returning with
+    ///   a choice older than one the user made elsewhere (for example a revocation on the web)
+    ///   adopts the record instead of undoing it.
     /// When there is nothing to write, the call succeeds without writing.
     ///
     /// What the SDK cannot detect: it cannot tell whether a pre-login choice was made by the

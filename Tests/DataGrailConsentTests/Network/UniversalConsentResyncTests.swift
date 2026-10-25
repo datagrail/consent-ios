@@ -289,7 +289,8 @@ final class UniversalConsentResyncTests: XCTestCase {
           "consent_mode": "optin",
           "platform": "web",
           "gpc": \(gpc),
-          "ccpa_optout": false
+          "ccpa_optout": false,
+          "updated_at": "\(UCFixtures.pastUpdatedAt)"
         }
         """.utf8)
     }
@@ -437,6 +438,31 @@ extension UniversalConsentResyncTests {
         XCTAssertTrue(sut.getCcpaOptout(), "the record's older false does not replace it")
     }
 
+    /// TRUST-3308 (web: consent-banner 7195aa3): a setter write-through that fails leaves the choice
+    /// pending, so the next re-sync does not replace it with the record's stale value and, with a
+    /// session again (TRUST-2902), flushes it; logout clears it.
+    func testSetterWhoseWriteFailedIsNotRevertedByTheResync() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA).get())
+
+        network.postResult = .failure(.networkError("offline"))
+        XCTAssertThrowsError(try setCcpaOptout(true).get())
+        XCTAssertTrue(storage.loadCcpaWritePending(), "the failed write did not carry it")
+
+        network.postResult = .success(Data(#"{"status":"ok"}"#.utf8))
+        XCTAssertNoThrow(try sync(userA).get())
+        XCTAssertTrue(sut.getCcpaOptout(), "the record's older false does not replace it")
+        XCTAssertEqual(writtenCcpaOptout(), true, "the re-sync flushes the pending choice")
+        XCTAssertFalse(storage.loadCcpaWritePending())
+
+        network.postResult = .failure(.networkError("offline"))
+        XCTAssertThrowsError(try setCcpaOptout(false).get())
+        XCTAssertTrue(storage.loadCcpaWritePending())
+        sut.clearUserIdentifier()
+        XCTAssertFalse(storage.loadCcpaWritePending())
+        XCTAssertFalse(sut.getCcpaOptout())
+    }
+
     private func rehydrate(
         _ identifier: String,
         trackingSignal: TrackingSignal = .authorized
@@ -484,6 +510,12 @@ extension UniversalConsentResyncTests {
             "dg-category-marketing": true,
             "dg-category-analytics": false,
         ], "the record's own raw choice, so no category changes")
+        let body = try XCTUnwrap(network.lastPostBody.flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        })
+        // 2020-01-01T00:00:00Z, the record's updated_at: never now, which could out-rank another
+        // device's newer category change (P0-06).
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, 1_577_836_800, "the record's time")
         XCTAssertFalse(storage.loadCcpaWritePending(), "the write carried it")
         XCTAssertTrue(sut.getCcpaOptout())
 
