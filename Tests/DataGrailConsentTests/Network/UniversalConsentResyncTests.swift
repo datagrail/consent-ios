@@ -549,6 +549,11 @@ extension UniversalConsentResyncTests {
         XCTAssertNoThrow(try sync(userA).get())
         XCTAssertTrue(storage.loadCcpaWritePending(), "nothing reached the record")
         XCTAssertTrue(sut.getCcpaOptout(), "the record's older false does not replace it")
+        XCTAssertNotNil(storage.loadBoundUserHash(), "the identity bound")
+        // The session is set: a setter call now writes through instead of staying local.
+        network.methods = []
+        XCTAssertThrowsError(try setCcpaOptout(true).get(), "it wrote through (and failed offline)")
+        XCTAssertEqual(network.methods, [.post])
 
         network.postResult = .success(Data(#"{"status":"ok"}"#.utf8))
         network.lastPostBody = nil

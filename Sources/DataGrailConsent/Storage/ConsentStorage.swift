@@ -213,8 +213,9 @@ public class ConsentStorage {
         }
     }
 
-    /// When the stored CCPA choice was made by the setter (``saveCcpaChoice(_:now:)``), or `nil` when
-    /// unknown. A CCPA-only write sends it as `decision_ts`, so a choice that waited for a session
+    /// When the stored CCPA choice was made: by the setter (``saveCcpaChoice(_:now:)``), or, for a
+    /// flag adopted from a record, that record's `updated_at` (``restoreCcpaChoice(_:)``), which is
+    /// the floor the next setter time is stamped after. `nil` when unknown. A CCPA-only write sends it as `decision_ts`, so a choice that waited for a session
     /// (pending) is ranked by when the user made it, not by when it was finally sent: a late flush
     /// cannot out-rank a newer choice made on another device in between. Its own key: the category
     /// choice's time never stamps the CCPA flag. Unknown (never set by the
