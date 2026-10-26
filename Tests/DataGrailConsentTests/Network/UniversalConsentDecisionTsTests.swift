@@ -148,6 +148,23 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         XCTAssertEqual(writtenBody()?["ccpa_optout"] as? Bool, true)
     }
 
+    /// TRUST-2902 (lucasv-dg, consent-android #74): a local change stored before decision times were
+    /// recorded does not ride a setter write stamped "now", which could undo a newer revocation.
+    func testSetterAfterALocalChangeWithNoRecordedTimeIsCcpaOnly() throws {
+        try bindAfterFirstSync()
+        try storage.savePreferences(choice(marketing: false))
+        storage.clearDecisionTs()
+        storage.clearSyncState()
+
+        let expectation = expectation(description: "setCcpaOptout")
+        sut.setCcpaOptout(true) { _ in expectation.fulfill() }
+        wait(for: [expectation], timeout: 1.0)
+
+        let prefs = try XCTUnwrap(writtenBody()?["consent_preferences"] as? [String: Any])
+        XCTAssertEqual(prefs["cookieOptions"] as? [String: Bool], [:])
+        XCTAssertEqual((writtenBody()?["decision_ts"] as? NSNumber)?.int64Value, storage.loadCcpaDecisionTs())
+    }
+
     // MARK: - Unknown decision time is byte-identical to before
 
     func testMissWithNoRecordedTimeSendsNoProvenanceAndSignsTheRequestTimestamp() throws {

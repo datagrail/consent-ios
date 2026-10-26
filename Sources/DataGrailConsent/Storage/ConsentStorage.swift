@@ -158,9 +158,26 @@ public class ConsentStorage {
 
     // MARK: - CCPA opt-out
 
-    /// Persist the user's explicit CCPA/CPRA "Do Not Sell or Share" choice (TRUST-2591).
+    /// Persist the user's explicit CCPA/CPRA "Do Not Sell or Share" choice (TRUST-2591). A value not
+    /// chosen by the setter (an adopt, the neutral reset) has no known decision time, so any earlier
+    /// setter time is removed with it rather than left paired with this value (TRUST-2902).
     public func saveCcpaOptout(_ optedOut: Bool) {
         userDefaults.set(optedOut, forKey: Keys.ccpaOptout)
+        userDefaults.removeObject(forKey: Keys.ccpaDecisionTs)
+    }
+
+    /// Persist the host app's CCPA choice and when it was made (TRUST-2902), together. The time is
+    /// monotonic, as ``saveDecisionTs(_:now:)`` is: two toggles in the same second must not tie,
+    /// since the edge keeps an opt-out on a tie.
+    func saveCcpaChoice(_ optedOut: Bool, now: Int64 = ConsentStorage.nowSeconds()) {
+        let value: Int64
+        if let previous = loadCcpaDecisionTs(now: now) {
+            value = min(max(now, previous + 1), now + Self.decisionTsStoredToleranceSeconds)
+        } else {
+            value = now
+        }
+        userDefaults.set(optedOut, forKey: Keys.ccpaOptout)
+        userDefaults.set(String(value), forKey: Keys.ccpaDecisionTs)
     }
 
     /// Load the user's explicit CCPA/CPRA "Do Not Sell or Share" choice; `false` when never set.
@@ -185,15 +202,11 @@ public class ConsentStorage {
         userDefaults.bool(forKey: Keys.ccpaWritePending)
     }
 
-    /// Record that the host app's CCPA choice was made now (TRUST-2902). A CCPA-only write sends it
-    /// as `decision_ts`, so a choice that waited for a session (pending) is ranked by when the user
-    /// made it, not by when it was finally sent: a late flush cannot out-rank a newer choice made on
-    /// another device in between. Its own key: the category choice's time never stamps the CCPA flag.
-    func saveCcpaDecisionTs(now: Int64 = ConsentStorage.nowSeconds()) {
-        userDefaults.set(String(now), forKey: Keys.ccpaDecisionTs)
-    }
-
-    /// When the stored CCPA choice was made by the setter, or `nil` when unknown (never set by the
+    /// When the stored CCPA choice was made by the setter (``saveCcpaChoice(_:now:)``), or `nil` when
+    /// unknown. A CCPA-only write sends it as `decision_ts`, so a choice that waited for a session
+    /// (pending) is ranked by when the user made it, not by when it was finally sent: a late flush
+    /// cannot out-rank a newer choice made on another device in between. Its own key: the category
+    /// choice's time never stamps the CCPA flag. Unknown (never set by the
     /// setter, set before this was recorded, or bogusly far ahead of this clock, as for
     /// ``loadDecisionTs(now:)``). `nil` sends no provenance: the edge stamps the request time.
     func loadCcpaDecisionTs(now: Int64 = ConsentStorage.nowSeconds()) -> Int64? {

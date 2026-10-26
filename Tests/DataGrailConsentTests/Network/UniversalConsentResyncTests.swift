@@ -502,7 +502,7 @@ extension UniversalConsentResyncTests {
         XCTAssertTrue(storage.loadCcpaWritePending())
         // The setter ran well before the re-sync that finally sends it.
         let setterTs: Int64 = 1_700_000_000
-        storage.saveCcpaDecisionTs(now: setterTs)
+        storage.saveCcpaChoice(true, now: setterTs)
 
         XCTAssertNoThrow(try sync(userA).get())
 

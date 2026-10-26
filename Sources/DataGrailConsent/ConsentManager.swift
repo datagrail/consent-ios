@@ -1275,8 +1275,7 @@ extension ConsentManager {
         // flight, and the logout's return-to-neutral resets the local flag).
         var dispatched = false
         identityGate.recordCcpaChoice {
-            storage.saveCcpaOptout(optedOut)
-            storage.saveCcpaDecisionTs()
+            storage.saveCcpaChoice(optedOut)
             guard Self.syncsCcpaOptout(currentConfig) else { return }
             // Bound: the choice is pending until a write carries it, so a re-sync or rehydrate keeps
             // it rather than adopting the record's older value (also when it cannot be written now).
@@ -1293,14 +1292,22 @@ extension ConsentManager {
             // is stamped with its own time (just now). A category-time stamp would tie the record's `ccpa_optout`
             // register right after an adopt, and the edge keeps the stored opt-out on a tie, so an
             // opt-in never landed. A local change since the sync rides along with when it was made.
-            let carriesLocalChange = !unchangedSinceSync(localChoice, userHash: session.userHash)
+            // The categories ride along only when they cannot out-rank anything they should not: a
+            // local change with a known decision time (an unknown one would go out stamped now,
+            // P0-06), or a last sync that found no category choice (a miss or a signal-only record,
+            // where an empty-category write would leave an answered, all-off block instead).
+            let syncState = syncState(for: session.userHash)
+            let choiceDecisionTs = storage.loadDecisionTs()
+            let carriesCategories =
+                (!unchangedSinceSync(localChoice, userHash: session.userHash) && choiceDecisionTs != nil)
+                || (syncState != nil && syncState?.syncedRaw == nil)
             writeUniversalConsent(
                 session.identifier,
                 apiKey: session.apiKey,
-                preferences: carriesLocalChange
+                preferences: carriesCategories
                     ? localChoice
                     : Self.ccpaOnly(rawChoice(forStored: localChoice, userHash: session.userHash)),
-                decisionTs: carriesLocalChange ? storage.loadDecisionTs() : storage.loadCcpaDecisionTs(),
+                decisionTs: carriesCategories ? choiceDecisionTs : storage.loadCcpaDecisionTs(),
                 getSignature: session.getSignature
             ) { [weak self] result in
                 if case .success = result, let self {
