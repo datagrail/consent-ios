@@ -500,6 +500,9 @@ extension UniversalConsentResyncTests {
         XCTAssertNoThrow(try setCcpaOptout(true).get())
         XCTAssertEqual(network.methods, [], "no session in this process, so it stays local")
         XCTAssertTrue(storage.loadCcpaWritePending())
+        // The setter ran well before the re-sync that finally sends it.
+        let setterTs: Int64 = 1_700_000_000
+        storage.saveCcpaDecisionTs(now: setterTs)
 
         XCTAssertNoThrow(try sync(userA).get())
 
@@ -509,9 +512,10 @@ extension UniversalConsentResyncTests {
         let body = try XCTUnwrap(network.lastPostBody.flatMap {
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
         })
-        // No provenance: the edge stamps it with the request time, so the `ccpa_optout` register
-        // lands over the record's (a record-time stamp would tie it, and a tie keeps an opt-out).
-        XCTAssertNil(body["decision_ts"])
+        // Stamped with when the setter was called: not the record's time (it would tie the record's
+        // `ccpa_optout` register, and a tie keeps an opt-out), nor the send time (a late flush
+        // would out-rank a newer CCPA choice made elsewhere meanwhile).
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, setterTs)
         XCTAssertFalse(storage.loadCcpaWritePending(), "the write carried it")
         XCTAssertTrue(sut.getCcpaOptout())
 

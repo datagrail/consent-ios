@@ -1164,10 +1164,12 @@ extension ConsentManager {
     /// A bound CCPA choice that has not reached the record yet (a setter call after a relaunch, with
     /// no session to write through, or a failed write) is a local change too, and a re-sync is the
     /// first moment a session exists again. The write is CCPA-only (``ccpaOnly(_:)``): it sends no
-    /// category, so the categories another device set stay as they are whatever the stamp, and it
-    /// carries no decision time, so the edge stamps it with the request time and the `ccpa_optout`
-    /// register lands over the record's older one (a record-time stamp would tie it, and a tie keeps
-    /// the stored opt-out). It needs a found record that carries a choice (a miss or a signal-only
+    /// category, so the categories another device set stay as they are whatever the stamp. It is
+    /// stamped with when the setter was called (``ConsentStorage/loadCcpaDecisionTs(now:)``), not
+    /// the record's time, which would tie the record's `ccpa_optout` register (every write carries
+    /// it, and a tie keeps the stored opt-out), and not the send time, which would let a late flush
+    /// out-rank a newer CCPA choice made on another device meanwhile. Unknown, it sends no
+    /// provenance (request time). It needs a found record that carries a choice (a miss or a signal-only
     /// record has nothing to flush over, and the setter never seeds config defaults) and an explicit
     /// local choice, as a setter write-through does. The stored flag is the pending value: the adopt
     /// does not replace it. Same rule as consent-android.
@@ -1197,7 +1199,7 @@ extension ConsentManager {
                 saveRevision: saveRevision
             )
         }
-        return SyncWrite(preferences: Self.ccpaOnly(raw), decisionTs: nil, syncedRaw: raw)
+        return SyncWrite(preferences: Self.ccpaOnly(raw), decisionTs: storage.loadCcpaDecisionTs(), syncedRaw: raw)
     }
 
     /// The write a re-sync sends: the preferences, their decision time (`nil` lets the edge stamp
@@ -1274,6 +1276,7 @@ extension ConsentManager {
         var dispatched = false
         identityGate.recordCcpaChoice {
             storage.saveCcpaOptout(optedOut)
+            storage.saveCcpaDecisionTs()
             guard Self.syncsCcpaOptout(currentConfig) else { return }
             // Bound: the choice is pending until a write carries it, so a re-sync or rehydrate keeps
             // it rather than adopting the record's older value (also when it cannot be written now).
@@ -1287,7 +1290,7 @@ extension ConsentManager {
             dispatched = true
             // Unchanged since the last sync, the write is CCPA-only (TRUST-2902): no category rides
             // along, so it cannot undo a newer revocation made elsewhere (TRUST-3311), and the choice
-            // made now is stamped now. A category-time stamp would tie the record's `ccpa_optout`
+            // is stamped with its own time (just now). A category-time stamp would tie the record's `ccpa_optout`
             // register right after an adopt, and the edge keeps the stored opt-out on a tie, so an
             // opt-in never landed. A local change since the sync rides along with when it was made.
             let carriesLocalChange = !unchangedSinceSync(localChoice, userHash: session.userHash)
@@ -1297,7 +1300,7 @@ extension ConsentManager {
                 preferences: carriesLocalChange
                     ? localChoice
                     : Self.ccpaOnly(rawChoice(forStored: localChoice, userHash: session.userHash)),
-                decisionTs: carriesLocalChange ? storage.loadDecisionTs() : nil,
+                decisionTs: carriesLocalChange ? storage.loadDecisionTs() : storage.loadCcpaDecisionTs(),
                 getSignature: session.getSignature
             ) { [weak self] result in
                 if case .success = result, let self {

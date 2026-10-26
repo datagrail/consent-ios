@@ -428,7 +428,10 @@ extension UniversalConsentCcpaOptoutTests {
         XCTAssertEqual(network.methods, [.get, .post])
         XCTAssertEqual(writtenCcpaOptout(), false)
         XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only, never the all-off suppressed view")
-        XCTAssertNil(writtenJSON()?["decision_ts"], "stamped now, so the opt-in beats the adopted opt-out")
+        XCTAssertEqual(
+            (writtenJSON()?["decision_ts"] as? NSNumber)?.int64Value, storage.loadCcpaDecisionTs(),
+            "stamped with the setter's own time, so the opt-in beats the adopted opt-out"
+        )
     }
 
     func testSetterAfterALocalChangeSinceTheSyncWritesTheNewLocalChoice() throws {

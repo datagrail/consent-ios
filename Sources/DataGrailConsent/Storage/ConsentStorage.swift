@@ -18,6 +18,7 @@ public class ConsentStorage {
         static let ccpaWritePending = "datagrail_consent_ccpa_write_pending"
         static let syncState = "datagrail_consent_sync_state"
         static let decisionTs = "datagrail_consent_decision_ts"
+        static let ccpaDecisionTs = "datagrail_consent_ccpa_decision_ts"
     }
 
     public init(userDefaults: UserDefaults = .standard) {
@@ -184,6 +185,24 @@ public class ConsentStorage {
         userDefaults.bool(forKey: Keys.ccpaWritePending)
     }
 
+    /// Record that the host app's CCPA choice was made now (TRUST-2902). A CCPA-only write sends it
+    /// as `decision_ts`, so a choice that waited for a session (pending) is ranked by when the user
+    /// made it, not by when it was finally sent: a late flush cannot out-rank a newer choice made on
+    /// another device in between. Its own key: the category choice's time never stamps the CCPA flag.
+    func saveCcpaDecisionTs(now: Int64 = ConsentStorage.nowSeconds()) {
+        userDefaults.set(String(now), forKey: Keys.ccpaDecisionTs)
+    }
+
+    /// When the stored CCPA choice was made by the setter, or `nil` when unknown (never set by the
+    /// setter, set before this was recorded, or bogusly far ahead of this clock, as for
+    /// ``loadDecisionTs(now:)``). `nil` sends no provenance: the edge stamps the request time.
+    func loadCcpaDecisionTs(now: Int64 = ConsentStorage.nowSeconds()) -> Int64? {
+        guard let raw = userDefaults.string(forKey: Keys.ccpaDecisionTs),
+              let value = Int64(raw), value >= 0
+        else { return nil }
+        return value <= now + Self.decisionTsStoredToleranceSeconds ? value : nil
+    }
+
     // MARK: - Unique ID
 
     /// Get or create a unique identifier for this user
@@ -289,6 +308,7 @@ public class ConsentStorage {
             Keys.ccpaWritePending,
             Keys.syncState,
             Keys.decisionTs,
+            Keys.ccpaDecisionTs,
         ]
         keys.forEach { userDefaults.removeObject(forKey: $0) }
     }
