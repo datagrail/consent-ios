@@ -320,6 +320,7 @@ public class ConsentManager {
         preferences: ConsentPreferences?,
         decisionTs: Int64?,
         ccpaOnly: Bool = false,
+        ccpaOptout: Bool? = nil,
         getSignature: UniversalConsentSignatureProvider?,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
@@ -345,8 +346,9 @@ public class ConsentManager {
             config: config,
             apiKey: apiKey,
             getSignature: getSignature,
-            // The RAW local CCPA flag (TRUST-2591); the service applies the sync_optout gate.
-            ccpaOptout: storage.loadCcpaOptout(),
+            // The RAW local CCPA flag (TRUST-2591), or the one the caller captured; the service applies
+            // the sync_optout gate.
+            ccpaOptout: ccpaOptout ?? storage.loadCcpaOptout(),
             // When the stored choice was made (TRUST-3223). A caller-supplied choice has no known
             // time, so the edge stamps it with the request time, as before.
             decisionTs: decisionTs ?? (preferences == nil ? storage.loadDecisionTs() : nil),
@@ -1327,7 +1329,7 @@ extension ConsentManager {
             // it rather than adopting the record's older value (also when it cannot be written now).
             // Whatever the sync_optout gate (TRUST-3381, as consent-banner #756): a choice made with
             // the gate off is not sent, and the next re-sync after the gate turns on flushes it.
-            if currentConfig?.universalConsent?.enabled == true, storage.loadBoundUserHash() != nil {
+            if storage.loadBoundUserHash() != nil {
                 storage.saveCcpaWritePending(true)
             }
             guard Self.syncsCcpaOptout(currentConfig),
@@ -1368,6 +1370,9 @@ extension ConsentManager {
             (!unchangedSinceSync(localChoice, userHash: session.userHash) && choiceDecisionTs != nil)
             || (syncState != nil && syncState?.syncedRaw == nil)
         let saveRevision = identityGate.preferencesSaveRevision
+        // The flag and its time, captured together now: the CCPA-only write may go out after the
+        // categories write, and must never carry a value a logout or another identity left meanwhile.
+        let ccpaOptout = storage.loadCcpaOptout()
         let ccpaDecisionTs = storage.loadCcpaDecisionTs()
         let sendCcpa: () -> Void = { [weak self] in
             guard let self else { return completion(.failure(.notInitialized)) }
@@ -1377,6 +1382,7 @@ extension ConsentManager {
                 preferences: localChoice,
                 decisionTs: ccpaDecisionTs,
                 ccpaOnly: true,
+                ccpaOptout: ccpaOptout,
                 getSignature: session.getSignature
             ) { [weak self] result in
                 if case .success = result, let self {
@@ -1401,21 +1407,22 @@ extension ConsentManager {
             guard let self, case .success = result else { return completion(result) }
             // The record now holds this choice, so the next re-sync must not send it again. Not over
             // a save made since, nor after a logout or a bind to another identity.
+            // The binding check, the sync-state record and dispatching the CCPA-only write run in one
+            // critical section: a logout or rebind either precedes it (nothing more is sent) or
+            // follows it (the CCPA write for the still-bound identity is already in flight).
             var stillBound = false
             self.identityGate.ifCurrent(nil) {
                 stillBound = self.storage.loadBoundUserHash() == session.userHash
-                if stillBound {
-                    self.recordSyncState(
-                        userHash: session.userHash,
-                        syncedLocal: localChoice,
-                        syncedRaw: localChoice,
-                        saveRevision: saveRevision
-                    )
-                }
-            }
-            if stillBound {
+                guard stillBound else { return }
+                self.recordSyncState(
+                    userHash: session.userHash,
+                    syncedLocal: localChoice,
+                    syncedRaw: localChoice,
+                    saveRevision: saveRevision
+                )
                 sendCcpa()
-            } else {
+            }
+            if !stillBound {
                 completion(.failure(IdentityGate.superseded))
             }
         }

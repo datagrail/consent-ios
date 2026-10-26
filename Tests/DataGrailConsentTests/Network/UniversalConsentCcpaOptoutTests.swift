@@ -538,6 +538,28 @@ extension UniversalConsentCcpaOptoutTests {
         XCTAssertTrue(sut.getCcpaOptout())
     }
 
+    /// A logout between the categories write and the CCPA-only write sends nothing more: the old
+    /// identity's record must not get the neutral flag a logout leaves.
+    func testLogoutBetweenTheTwoSetterWritesSendsNoCcpaWrite() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA).get())
+        let saved = expectation(description: "savePreferences")
+        sut.savePreferences(marketingChoice(false)) { _ in saved.fulfill() }
+        wait(for: [saved], timeout: 1.0)
+        network.postBodies = []
+        network.deferPost = true
+
+        var outcome: Result<Void, ConsentError>?
+        sut.setCcpaOptout(true) { outcome = $0 }
+        let firstWrite = try XCTUnwrap(network.pendingPostCompletion, "the categories write is in flight")
+        sut.clearUserIdentifier()
+        network.deferPost = false
+        firstWrite(.success(Data(#"{"status":"ok"}"#.utf8)))
+
+        XCTAssertEqual(network.postBodies.count, 1, "no CCPA-only write after the logout")
+        XCTAssertThrowsError(try XCTUnwrap(outcome).get())
+    }
+
     func testSetterAfterALocalChangeSendsItFirstThenACcpaOnlyWrite() throws {
         network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
         XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
