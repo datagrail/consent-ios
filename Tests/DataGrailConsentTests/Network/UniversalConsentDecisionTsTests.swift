@@ -82,6 +82,23 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         )
     }
 
+    /// TRUST-2902: a re-sync over a pending CCPA choice keeps the flag and the setter's time, so a
+    /// later CCPA-only flush is not stamped now.
+    func testWriteThroughKeepsTheSettersCcpaTime() throws {
+        try bindAfterFirstSync()
+        try save(marketing: false)
+        let localTs = try XCTUnwrap(storage.loadDecisionTs())
+        storage.saveCcpaChoice(true, now: 1_650_000_000)
+        storage.saveCcpaWritePending(true)
+
+        network.getResult = .success(foundRecordJSON(marketing: true, updatedAt: localTs - 60))
+        network.postResult = .failure(.networkError("offline"))
+        XCTAssertThrowsError(try sync().get())
+
+        XCTAssertTrue(storage.loadCcpaOptout())
+        XCTAssertEqual(storage.loadCcpaDecisionTs(), 1_650_000_000)
+    }
+
     func testSameSecondTieAdoptsTheRecord() throws {
         try bindAfterFirstSync()
         try save(marketing: true)
@@ -131,20 +148,49 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         XCTAssertEqual((writtenBody()?["decision_ts"] as? NSNumber)?.int64Value, localTs)
     }
 
-    /// TRUST-3311 (consent-react #47): a setCcpaOptout write-through carries the stored choice's
-    /// decision time, so the categories riding along cannot out-rank a newer revocation elsewhere.
-    func testSetterWriteThroughCarriesTheStoredChoicesDecisionTime() throws {
+    /// TRUST-3311 (consent-react #47): a setCcpaOptout write-through that carries a local change made
+    /// since the sync stamps it with the stored choice's decision time, so it cannot out-rank a newer
+    /// revocation elsewhere. (Unchanged since the sync, it sends no category at all: TRUST-2902.)
+    func testSetterWriteThroughIsCcpaOnlyDatedWhenTheCcpaChoiceWasMade() throws {
         try bindAfterFirstSync()
         try save(marketing: true)
-        let localTs = try XCTUnwrap(storage.loadDecisionTs())
+        storage.saveDecisionTs(1_600_000_100)
+        network.postBodies = []
 
         let expectation = expectation(description: "setCcpaOptout")
         sut.setCcpaOptout(true) { _ in expectation.fulfill() }
         wait(for: [expectation], timeout: 1.0)
 
-        XCTAssertEqual(network.methods, [.post])
-        XCTAssertEqual((writtenBody()?["decision_ts"] as? NSNumber)?.int64Value, localTs, "not now")
-        XCTAssertEqual(writtenBody()?["ccpa_optout"] as? Bool, true)
+        // The unsynced change first at its own time (as consent-banner #756), then the CCPA-only
+        // write (TRUST-2591 decision, 2026-10-26): the flag and its provenance only.
+        XCTAssertEqual(network.methods, [.post, .post])
+        let first = try XCTUnwrap(network.postBodies.first.flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        })
+        XCTAssertEqual((first["decision_ts"] as? NSNumber)?.int64Value, 1_600_000_100, "the change's own time")
+        let body = try XCTUnwrap(writtenBody())
+        XCTAssertEqual(Set(body.keys), ["customer_id", "user_hash", "consent_preferences", "ccpa_optout",
+                                        "is_explicit", "decision_ts"])
+        XCTAssertEqual(body["consent_preferences"] as? [String: [String: Bool]], ["cookieOptions": [:]])
+        XCTAssertEqual(body["ccpa_optout"] as? Bool, true)
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, storage.loadCcpaDecisionTs(), "the CCPA time")
+    }
+
+    /// TRUST-2902 (lucasv-dg, consent-android #74): a local change stored before decision times were
+    /// recorded does not ride a setter write stamped "now", which could undo a newer revocation.
+    func testSetterAfterALocalChangeWithNoRecordedTimeIsCcpaOnly() throws {
+        try bindAfterFirstSync()
+        try storage.savePreferences(choice(marketing: false))
+        storage.clearDecisionTs()
+        storage.clearSyncState()
+
+        let expectation = expectation(description: "setCcpaOptout")
+        sut.setCcpaOptout(true) { _ in expectation.fulfill() }
+        wait(for: [expectation], timeout: 1.0)
+
+        let prefs = try XCTUnwrap(writtenBody()?["consent_preferences"] as? [String: Any])
+        XCTAssertEqual(prefs["cookieOptions"] as? [String: Bool], [:])
+        XCTAssertEqual((writtenBody()?["decision_ts"] as? NSNumber)?.int64Value, storage.loadCcpaDecisionTs())
     }
 
     // MARK: - Unknown decision time is byte-identical to before

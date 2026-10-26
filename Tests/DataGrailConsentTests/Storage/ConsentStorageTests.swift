@@ -73,4 +73,16 @@ final class ConsentStorageTests: XCTestCase {
         let newId = storage.getOrCreateUniqueId()
         XCTAssertFalse(newId.isEmpty)
     }
+
+    /// TRUST-2902: the CCPA decision time is monotonic (a same-second tie keeps an opt-out at the
+    /// edge) and paired with the flag (a value the setter did not choose has no time).
+    func testCcpaChoiceTimeIsMonotonicAndClearedWithTheFlag() {
+        storage.saveCcpaChoice(true, now: 1_000)
+        storage.saveCcpaChoice(false, now: 1_000)
+        XCTAssertEqual(storage.loadCcpaDecisionTs(now: 1_000), 1_001)
+        XCTAssertFalse(storage.loadCcpaOptout())
+
+        storage.saveCcpaOptout(true)
+        XCTAssertNil(storage.loadCcpaDecisionTs(now: 1_000), "an adopted value has no setter time")
+    }
 }

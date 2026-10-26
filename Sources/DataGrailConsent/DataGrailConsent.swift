@@ -593,7 +593,9 @@ public extension DataGrailConsent {
     /// locally and sent with the next Universal Consent write. When a login finds a stored record,
     /// the record's value replaces this one; ``clearUserIdentifier()`` resets it to `false`. A
     /// choice made while signed in (or during a login) that has not reached the record yet is kept
-    /// by a re-sync or rehydrate instead of the record's older value.
+    /// by a re-sync or rehydrate instead of the record's older value, and the next successful
+    /// ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` for that user writes
+    /// it to the record as a CCPA-only write (no category changes), even when nothing else changed.
     ///
     /// - Parameters:
     ///   - optedOut: `true` when the user opts out of sale/sharing.

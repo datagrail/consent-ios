@@ -18,6 +18,7 @@ public class ConsentStorage {
         static let ccpaWritePending = "datagrail_consent_ccpa_write_pending"
         static let syncState = "datagrail_consent_sync_state"
         static let decisionTs = "datagrail_consent_decision_ts"
+        static let ccpaDecisionTs = "datagrail_consent_ccpa_decision_ts"
     }
 
     public init(userDefaults: UserDefaults = .standard) {
@@ -157,9 +158,30 @@ public class ConsentStorage {
 
     // MARK: - CCPA opt-out
 
-    /// Persist the user's explicit CCPA/CPRA "Do Not Sell or Share" choice (TRUST-2591).
+    /// Persist the user's explicit CCPA/CPRA "Do Not Sell or Share" choice (TRUST-2591). A value not
+    /// chosen by the setter (an adopt, the neutral reset) has no known decision time, so any earlier
+    /// setter time is removed with it rather than left paired with this value (TRUST-2902).
+    ///
+    /// - Note: Hosts should call `DataGrailConsent.setCcpaOptout`, not this. Calling it directly while
+    ///   a choice is pending drops that choice's time, so the next flush is stamped with the request
+    ///   time.
     public func saveCcpaOptout(_ optedOut: Bool) {
         userDefaults.set(optedOut, forKey: Keys.ccpaOptout)
+        userDefaults.removeObject(forKey: Keys.ccpaDecisionTs)
+    }
+
+    /// Persist the host app's CCPA choice and when it was made (TRUST-2902), together. The time is
+    /// monotonic, as ``saveDecisionTs(_:now:)`` is: two toggles in the same second must not tie,
+    /// since the edge keeps an opt-out on a tie.
+    func saveCcpaChoice(_ optedOut: Bool, now: Int64 = ConsentStorage.nowSeconds()) {
+        let value: Int64
+        if let previous = loadCcpaDecisionTs(now: now) {
+            value = min(max(now, previous + 1), now + Self.decisionTsStoredToleranceSeconds)
+        } else {
+            value = now
+        }
+        userDefaults.set(optedOut, forKey: Keys.ccpaOptout)
+        userDefaults.set(String(value), forKey: Keys.ccpaDecisionTs)
     }
 
     /// Load the user's explicit CCPA/CPRA "Do Not Sell or Share" choice; `false` when never set.
@@ -182,6 +204,32 @@ public class ConsentStorage {
     /// Whether a bound CCPA choice is still waiting to reach the record; `false` when none is stored.
     func loadCcpaWritePending() -> Bool {
         userDefaults.bool(forKey: Keys.ccpaWritePending)
+    }
+
+    /// Put back a CCPA flag and the setter time it had (`nil` removes it), as one pair: a re-sync that
+    /// writes the user's own flag after the rehydrate adopted the record's restores both.
+    func restoreCcpaChoice(_ choice: (optedOut: Bool, decisionTs: Int64?)) {
+        userDefaults.set(choice.optedOut, forKey: Keys.ccpaOptout)
+        if let decisionTs = choice.decisionTs {
+            userDefaults.set(String(decisionTs), forKey: Keys.ccpaDecisionTs)
+        } else {
+            userDefaults.removeObject(forKey: Keys.ccpaDecisionTs)
+        }
+    }
+
+    /// When the stored CCPA choice was made: by the setter (``saveCcpaChoice(_:now:)``), or, for a
+    /// flag adopted from a record, that record's `updated_at` (``restoreCcpaChoice(_:)``), which is
+    /// the floor the next setter time is stamped after. `nil` when unknown. A CCPA-only write sends it as `decision_ts`, so a choice that waited for a session
+    /// (pending) is ranked by when the user made it, not by when it was finally sent: a late flush
+    /// cannot out-rank a newer choice made on another device in between. Its own key: the category
+    /// choice's time never stamps the CCPA flag. Unknown (never set by the
+    /// setter, set before this was recorded, or bogusly far ahead of this clock, as for
+    /// ``loadDecisionTs(now:)``). `nil` sends no provenance: the edge stamps the request time.
+    func loadCcpaDecisionTs(now: Int64 = ConsentStorage.nowSeconds()) -> Int64? {
+        guard let raw = userDefaults.string(forKey: Keys.ccpaDecisionTs),
+              let value = Int64(raw), value >= 0
+        else { return nil }
+        return value <= now + Self.decisionTsStoredToleranceSeconds ? value : nil
     }
 
     // MARK: - Unique ID
@@ -289,6 +337,7 @@ public class ConsentStorage {
             Keys.ccpaWritePending,
             Keys.syncState,
             Keys.decisionTs,
+            Keys.ccpaDecisionTs,
         ]
         keys.forEach { userDefaults.removeObject(forKey: $0) }
     }
