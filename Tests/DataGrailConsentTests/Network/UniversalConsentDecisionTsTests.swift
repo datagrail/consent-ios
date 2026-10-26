@@ -82,13 +82,14 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         )
     }
 
-    /// TRUST-2902 round 4: a re-sync that puts the user's own CCPA flag back after the rehydrate
-    /// puts the setter's time back with it, so a later CCPA-only flush is not stamped now.
+    /// TRUST-2902: a re-sync over a pending CCPA choice keeps the flag and the setter's time, so a
+    /// later CCPA-only flush is not stamped now.
     func testWriteThroughKeepsTheSettersCcpaTime() throws {
         try bindAfterFirstSync()
         try save(marketing: false)
         let localTs = try XCTUnwrap(storage.loadDecisionTs())
         storage.saveCcpaChoice(true, now: 1_650_000_000)
+        storage.saveCcpaWritePending(true)
 
         network.getResult = .success(foundRecordJSON(marketing: true, updatedAt: localTs - 60))
         network.postResult = .failure(.networkError("offline"))

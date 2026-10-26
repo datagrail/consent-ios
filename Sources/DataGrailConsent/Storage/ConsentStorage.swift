@@ -161,6 +161,10 @@ public class ConsentStorage {
     /// Persist the user's explicit CCPA/CPRA "Do Not Sell or Share" choice (TRUST-2591). A value not
     /// chosen by the setter (an adopt, the neutral reset) has no known decision time, so any earlier
     /// setter time is removed with it rather than left paired with this value (TRUST-2902).
+    ///
+    /// - Note: Hosts should call `DataGrailConsent.setCcpaOptout`, not this. Calling it directly while
+    ///   a choice is pending drops that choice's time, so the next flush is stamped with the request
+    ///   time.
     public func saveCcpaOptout(_ optedOut: Bool) {
         userDefaults.set(optedOut, forKey: Keys.ccpaOptout)
         userDefaults.removeObject(forKey: Keys.ccpaDecisionTs)

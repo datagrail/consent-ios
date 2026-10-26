@@ -754,11 +754,6 @@ extension ConsentManager {
         // When that choice was made, captured for the same reason: the rehydrate restamps it with the
         // record's time (TRUST-3223).
         let localDecisionTs = storage.loadDecisionTs()
-        // The RAW local CCPA flag, captured for the same reason as localChoice: the rehydrate may
-        // adopt the record's value (TRUST-2591).
-        // The flag and the setter's time for it, captured as a pair: putting the flag back after the
-        // rehydrate must put its time back too, or a later CCPA-only flush would go out stamped now.
-        let localCcpa = (optedOut: storage.loadCcpaOptout(), decisionTs: storage.loadCcpaDecisionTs())
 
         rehydrateReportingFound(
             identifier,
@@ -783,7 +778,6 @@ extension ConsentManager {
                     getSignature: getSignature,
                     localChoice: localChoice,
                     localDecisionTs: localDecisionTs,
-                    localCcpa: localCcpa,
                     userHash: userHash,
                     binding: binding,
                     snapshot: snapshot,
@@ -810,7 +804,6 @@ extension ConsentManager {
         getSignature: UniversalConsentSignatureProvider?,
         localChoice: ConsentPreferences?,
         localDecisionTs: Int64?,
-        localCcpa: (optedOut: Bool, decisionTs: Int64?),
         userHash: String?,
         binding: LoginBinding,
         snapshot: IdentityGate.Snapshot,
@@ -864,8 +857,10 @@ extension ConsentManager {
                 binding.boundToOther ? nil : localChoice,
                 decisionTs: localDecisionTs, outcome: outcome, binding: binding, onRehydrated: onRehydrated
             )
-            // The write carries the user's own CCPA flag, not a value the rehydrate adopted.
-            if explicitChoice != nil, !keepsStoredCcpa { storage.restoreCcpaChoice(localCcpa) }
+            // The write carries the stored CCPA flag as it is now: the rehydrate adopted the record's
+            // unless a local CCPA choice is pending (or landed mid-read), and the flag is its own
+            // register. Putting this device's pre-read flag back would carry a stale value over a
+            // newer CCPA choice made elsewhere (lucasv-dg, consent-android #74).
             let target = SyncTarget(
                 identifier: identifier, apiKey: apiKey, getSignature: getSignature, userHash: userHash
             )
@@ -1366,9 +1361,9 @@ extension ConsentManager {
     ) {
         let syncState = syncState(for: session.userHash)
         let choiceDecisionTs = storage.loadDecisionTs()
-        let sendsCategories =
-            (!unchangedSinceSync(localChoice, userHash: session.userHash) && choiceDecisionTs != nil)
-            || (syncState != nil && syncState?.syncedRaw == nil)
+        let sendsCategories = choiceDecisionTs != nil
+            && (!unchangedSinceSync(localChoice, userHash: session.userHash)
+                || (syncState != nil && syncState?.syncedRaw == nil))
         let saveRevision = identityGate.preferencesSaveRevision
         // The flag and its time, captured together now: the CCPA-only write may go out after the
         // categories write, and must never carry a value a logout or another identity left meanwhile.

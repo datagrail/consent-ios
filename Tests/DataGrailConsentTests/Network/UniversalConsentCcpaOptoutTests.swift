@@ -113,19 +113,6 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
         XCTAssertFalse(sut.getCcpaOptout())
     }
 
-    func testResyncWriteThroughCarriesTheLocalFlagNotTheRecord() throws {
-        storage.saveBoundUserHash(try hash(userA))
-        try saveUserChoice(marketingChoice(true))
-        storage.saveCcpaOptout(true)
-        network.getResult = .success(foundRecordJSON(marketing: false, ccpaOptout: false))
-
-        XCTAssertNoThrow(try sync(userA).get())
-
-        XCTAssertEqual(network.methods, [.get, .post])
-        XCTAssertEqual(writtenCcpaOptout(), true)
-        XCTAssertTrue(sut.getCcpaOptout())
-    }
-
     func testResyncAdoptTakesTheRecordValueWithGateOn() throws {
         storage.saveBoundUserHash(try hash(userA))
         network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: true))
@@ -558,6 +545,35 @@ extension UniversalConsentCcpaOptoutTests {
 
         XCTAssertEqual(network.postBodies.count, 1, "no CCPA-only write after the logout")
         XCTAssertThrowsError(try XCTUnwrap(outcome).get())
+    }
+
+    func testResyncWriteThroughCarriesAPendingLocalFlagNotTheRecord() throws {
+        storage.saveBoundUserHash(try hash(userA))
+        try saveUserChoice(marketingChoice(true))
+        storage.saveCcpaOptout(true)
+        storage.saveCcpaWritePending(true)
+        network.getResult = .success(foundRecordJSON(marketing: false, ccpaOptout: false))
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get, .post])
+        XCTAssertEqual(writtenCcpaOptout(), true)
+        XCTAssertTrue(sut.getCcpaOptout())
+    }
+
+    /// lucasv-dg (consent-android #74): with no pending CCPA choice this device's flag is stale; a
+    /// category change written through carries the record's newer opt-out, not the stale false.
+    func testResyncWriteThroughOfACategoryChangeCarriesTheRecordsNewerCcpaFlag() throws {
+        storage.saveBoundUserHash(try hash(userA))
+        try saveUserChoice(marketingChoice(true))
+        storage.saveCcpaOptout(false)
+        network.getResult = .success(foundRecordJSON(marketing: false, ccpaOptout: true))
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get, .post])
+        XCTAssertEqual(writtenCcpaOptout(), true)
+        XCTAssertTrue(sut.getCcpaOptout())
     }
 
     func testSetterAfterALocalChangeSendsItFirstThenACcpaOnlyWrite() throws {
