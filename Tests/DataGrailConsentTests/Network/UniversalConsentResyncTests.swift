@@ -390,6 +390,7 @@ extension UniversalConsentResyncTests {
         network.deferGet = true
         network.methods = []
         network.lastPostBody = nil
+        network.postBodies = []
         var outcome: Result<Void, ConsentError>?
         sut.syncUserIdentifier(userA, apiKey: testApiKey, trackingSignal: .denied) { outcome = $0 }
         try save(choice(marketing: false, analytics: true))
@@ -398,7 +399,10 @@ extension UniversalConsentResyncTests {
         XCTAssertNoThrow(try XCTUnwrap(outcome).get())
 
         XCTAssertEqual(storedMarketing(), false, "the record does not replace the mid-read save")
-        XCTAssertEqual(network.methods.last, .post, "the mid-read save is written after the read")
+        // The Universal Consent write itself (it carries user_hash), not the save's own event POST.
+        let ucWrites = network.postBodies.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            .filter { $0["user_hash"] != nil }
+        XCTAssertEqual(ucWrites.count, 1, "the mid-read save is written by the sync")
         XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false)
         XCTAssertEqual(writtenCookieOptions()?["dg-category-analytics"], true)
     }
