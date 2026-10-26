@@ -1229,8 +1229,9 @@ extension ConsentManager {
     }
 
     /// Whether a local choice made at `local` is strictly newer than a record whose latest decision
-    /// is `record`. `updated_at` is the latest decision across ALL the record's categories, so this
-    /// is a conservative bound (the read exposes no per-category times) that errs toward adopting.
+    /// is `record`. `updated_at` is the latest decision across ALL the record's registers, categories
+    /// and record-level fields such as `ccpa_optout` alike, so this is a conservative bound (the read
+    /// exposes no per-category times) that errs toward adopting.
     static func isNewer(_ local: Int64?, than record: Int64?) -> Bool {
         guard let local, let record else { return false }
         return local > record
