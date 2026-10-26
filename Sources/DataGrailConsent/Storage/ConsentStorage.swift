@@ -202,6 +202,17 @@ public class ConsentStorage {
         userDefaults.bool(forKey: Keys.ccpaWritePending)
     }
 
+    /// Put back a CCPA flag and the setter time it had (`nil` removes it), as one pair: a re-sync that
+    /// writes the user's own flag after the rehydrate adopted the record's restores both.
+    func restoreCcpaChoice(_ choice: (optedOut: Bool, decisionTs: Int64?)) {
+        userDefaults.set(choice.optedOut, forKey: Keys.ccpaOptout)
+        if let decisionTs = choice.decisionTs {
+            userDefaults.set(String(decisionTs), forKey: Keys.ccpaDecisionTs)
+        } else {
+            userDefaults.removeObject(forKey: Keys.ccpaDecisionTs)
+        }
+    }
+
     /// When the stored CCPA choice was made by the setter (``saveCcpaChoice(_:now:)``), or `nil` when
     /// unknown. A CCPA-only write sends it as `decision_ts`, so a choice that waited for a session
     /// (pending) is ranked by when the user made it, not by when it was finally sent: a late flush

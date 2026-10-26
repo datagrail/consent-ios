@@ -750,7 +750,9 @@ extension ConsentManager {
         let localDecisionTs = storage.loadDecisionTs()
         // The RAW local CCPA flag, captured for the same reason as localChoice: the rehydrate may
         // adopt the record's value (TRUST-2591).
-        let localCcpaOptout = storage.loadCcpaOptout()
+        // The flag and the setter's time for it, captured as a pair: putting the flag back after the
+        // rehydrate must put its time back too, or a later CCPA-only flush would go out stamped now.
+        let localCcpa = (optedOut: storage.loadCcpaOptout(), decisionTs: storage.loadCcpaDecisionTs())
 
         rehydrateReportingFound(
             identifier,
@@ -775,7 +777,7 @@ extension ConsentManager {
                     getSignature: getSignature,
                     localChoice: localChoice,
                     localDecisionTs: localDecisionTs,
-                    localCcpaOptout: localCcpaOptout,
+                    localCcpa: localCcpa,
                     userHash: userHash,
                     binding: binding,
                     snapshot: snapshot,
@@ -802,7 +804,7 @@ extension ConsentManager {
         getSignature: UniversalConsentSignatureProvider?,
         localChoice: ConsentPreferences?,
         localDecisionTs: Int64?,
-        localCcpaOptout: Bool,
+        localCcpa: (optedOut: Bool, decisionTs: Int64?),
         userHash: String?,
         binding: LoginBinding,
         snapshot: IdentityGate.Snapshot,
@@ -857,7 +859,7 @@ extension ConsentManager {
                 decisionTs: localDecisionTs, outcome: outcome, binding: binding, onRehydrated: onRehydrated
             )
             // The write carries the user's own CCPA flag, not a value the rehydrate adopted.
-            if explicitChoice != nil, !keepsStoredCcpa { storage.saveCcpaOptout(localCcpaOptout) }
+            if explicitChoice != nil, !keepsStoredCcpa { storage.restoreCcpaChoice(localCcpa) }
             // The user's choice carries when they made it, so the edge ranks it by that and not by
             // the send time. Otherwise a pending CCPA choice may be flushed (``pendingCcpaFlush``).
             if let write = explicitChoice.map({ SyncWrite($0, decisionTs: localDecisionTs) })
