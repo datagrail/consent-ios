@@ -492,6 +492,8 @@ final class MethodAwareMockNetworkClient: NetworkClient {
     var postResult: Result<Data, ConsentError> = .success(Data(#"{"status":"ok"}"#.utf8))
     var methods: [HTTPMethod] = []
     var lastPostBody: Data?
+    /// Every POST body, in order (a CCPA setter can send a categories write, then a CCPA-only one).
+    var postBodies: [Data] = []
     /// When set, a GET records its method but holds its completion in `pendingGetCompletion`
     /// instead of answering, so a test can interleave work (e.g. a logout) before it resolves.
     var deferGet = false
@@ -508,7 +510,10 @@ final class MethodAwareMockNetworkClient: NetworkClient {
         completion: @escaping (Result<Data, ConsentError>) -> Void
     ) {
         methods.append(method)
-        if method == .post { lastPostBody = body }
+        if method == .post {
+            lastPostBody = body
+            if let body { postBodies.append(body) }
+        }
         if method == .get, deferGet {
             pendingGetCompletion = completion
             return

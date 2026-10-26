@@ -82,7 +82,7 @@ final class UniversalConsentResyncTests: XCTestCase {
         XCTAssertNoThrow(try setCcpaOptout(true).get())
 
         XCTAssertEqual(network.methods, [.get, .post])
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "the record's raw opt-in")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only: the record's raw opt-in is untouched")
     }
 
     // MARK: - The user changed something
@@ -314,7 +314,7 @@ extension UniversalConsentResyncTests {
 
         XCTAssertNoThrow(try setCcpaOptout(true).get())
         XCTAssertEqual(network.methods.last, .post)
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "the record's raw opt-in")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only: the record's raw opt-in is untouched")
     }
 
     func testStandaloneRehydrateOfAGPCRecordIsNotWrittenByTheNextResyncAfterARelaunch() throws {
@@ -444,16 +444,15 @@ extension UniversalConsentResyncTests {
         XCTAssertTrue(sut.getCcpaOptout())
         XCTAssertTrue(storage.loadCcpaWritePending(), "no write carried it, so it is pending")
 
-        XCTAssertNoThrow(try sync(userA).get())
         XCTAssertNoThrow(try rehydrate(userA).get())
         XCTAssertTrue(sut.getCcpaOptout(), "the record's older false does not replace it")
+        XCTAssertNil(network.lastPostBody, "a standalone rehydrate never writes")
 
-        // The next write carries it.
-        try save(choice(marketing: true, analytics: true))
-        network.lastPostBody = nil
+        // The next re-sync carries it, although the categories are unchanged.
         XCTAssertNoThrow(try sync(userA).get())
         XCTAssertEqual(writtenCcpaOptout(), true)
         XCTAssertFalse(storage.loadCcpaWritePending())
+        XCTAssertTrue(sut.getCcpaOptout())
     }
 
     func testSetterWithNoSessionAfterARelaunchIsNotRevertedByTheResync() throws {
@@ -469,7 +468,8 @@ extension UniversalConsentResyncTests {
     }
 
     /// TRUST-3308 (web: consent-banner 7195aa3): a setter write-through that fails leaves the choice
-    /// pending, so the next re-sync does not replace it with the record's stale value; logout clears it.
+    /// pending, so the next re-sync does not replace it with the record's stale value and, with a
+    /// session again (TRUST-2902), flushes it; logout clears it.
     func testSetterWhoseWriteFailedIsNotRevertedByTheResync() throws {
         network.getResult = .success(foundRecordJSON(marketing: true))
         XCTAssertNoThrow(try sync(userA).get())
@@ -481,8 +481,12 @@ extension UniversalConsentResyncTests {
         network.postResult = .success(Data(#"{"status":"ok"}"#.utf8))
         XCTAssertNoThrow(try sync(userA).get())
         XCTAssertTrue(sut.getCcpaOptout(), "the record's older false does not replace it")
-        XCTAssertTrue(storage.loadCcpaWritePending())
+        XCTAssertEqual(writtenCcpaOptout(), true, "the re-sync flushes the pending choice")
+        XCTAssertFalse(storage.loadCcpaWritePending())
 
+        network.postResult = .failure(.networkError("offline"))
+        XCTAssertThrowsError(try setCcpaOptout(false).get())
+        XCTAssertTrue(storage.loadCcpaWritePending())
         sut.clearUserIdentifier()
         XCTAssertFalse(storage.loadCcpaWritePending())
         XCTAssertFalse(sut.getCcpaOptout())
@@ -507,5 +511,131 @@ extension UniversalConsentResyncTests {
               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
         else { return nil }
         return json["ccpa_optout"] as? Bool
+    }
+}
+
+// MARK: - A pending CCPA choice is flushed by the next re-sync
+
+// A setter call made while bound but with no session (after a relaunch, before the host re-syncs)
+// is marked pending and stays local. The next re-sync is when a session exists again, so it writes
+// the pending flag with the record's own raw choice, even though the categories are unchanged.
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+extension UniversalConsentResyncTests {
+    func testSetterWithNoSessionAfterARelaunchIsWrittenByTheNextResync() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, analytics: false))
+        XCTAssertNoThrow(try sync(userA).get())
+
+        relaunch()
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+        XCTAssertEqual(network.methods, [], "no session in this process, so it stays local")
+        XCTAssertTrue(storage.loadCcpaWritePending())
+        // The setter ran well before the re-sync that finally sends it.
+        let setterTs: Int64 = 1_700_000_000
+        storage.saveCcpaChoice(true, now: setterTs)
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get, .post], "the pending choice is flushed")
+        XCTAssertEqual(writtenCcpaOptout(), true)
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only, so no category changes at any stamp")
+        let body = try XCTUnwrap(network.lastPostBody.flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        })
+        // Stamped with when the setter was called: not the record's time (it would tie the record's
+        // `ccpa_optout` register, and a tie keeps an opt-out), nor the send time (a late flush
+        // would out-rank a newer CCPA choice made elsewhere meanwhile).
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, setterTs)
+        XCTAssertFalse(storage.loadCcpaWritePending(), "the write carried it")
+        XCTAssertTrue(sut.getCcpaOptout())
+
+        // Flushed and unchanged since: the next re-sync writes nothing.
+        network.methods = []
+        XCTAssertNoThrow(try sync(userA).get())
+        XCTAssertEqual(network.methods, [.get])
+    }
+
+    func testPendingFlushSendsTheRecordsRawOptInNotTheATTSuppressedView() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+
+        relaunch()
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+
+        XCTAssertEqual(network.methods, [.get, .post])
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only: the record's raw opt-in is untouched")
+        XCTAssertEqual(storedMarketing(), false, "local keeps the suppressed view")
+    }
+
+    func testFailedPendingFlushStaysPendingAndIsRetriedByTheNextResync() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA).get())
+
+        relaunch()
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+        network.postResult = .failure(.networkError("offline"))
+        // A failed flush does not fail the sync (lucasv-dg): the read and adopt succeeded.
+        XCTAssertNoThrow(try sync(userA).get())
+        XCTAssertTrue(storage.loadCcpaWritePending(), "nothing reached the record")
+        XCTAssertTrue(sut.getCcpaOptout(), "the record's older false does not replace it")
+        XCTAssertNotNil(storage.loadBoundUserHash(), "the identity bound")
+        // The session is set: a setter call now writes through instead of staying local.
+        network.methods = []
+        XCTAssertThrowsError(try setCcpaOptout(true).get(), "it wrote through (and failed offline)")
+        XCTAssertEqual(network.methods, [.post])
+
+        network.postResult = .success(Data(#"{"status":"ok"}"#.utf8))
+        network.lastPostBody = nil
+        XCTAssertNoThrow(try sync(userA).get())
+        XCTAssertEqual(writtenCcpaOptout(), true)
+        XCTAssertFalse(storage.loadCcpaWritePending())
+    }
+
+    /// lucasv-dg: a record that already holds the pending flag needs no signed write.
+    func testPendingFlagTheRecordAlreadyHoldsIsClearedWithoutAWrite() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA).get())
+
+        relaunch()
+        XCTAssertNoThrow(try setCcpaOptout(false).get())
+        XCTAssertTrue(storage.loadCcpaWritePending())
+        network.methods = []
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get], "the record already says false")
+        XCTAssertFalse(storage.loadCcpaWritePending())
+    }
+
+    /// A failed flush still records the adopt it made as the sync state: an ATT transition to denied
+    /// suppressed marketing locally, and the retry must not read that as the user turning it off.
+    func testFailedFlushAfterAnATTDenialDoesNotWriteTheSuppressedViewOnTheRetry() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .authorized).get())
+
+        relaunch()
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+        network.postResult = .failure(.networkError("offline"))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get(), "a failed flush does not fail the sync")
+        XCTAssertEqual(storedMarketing(), false, "local holds the suppressed view")
+
+        network.postResult = .success(Data(#"{"status":"ok"}"#.utf8))
+        network.lastPostBody = nil
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        XCTAssertEqual(writtenCcpaOptout(), true, "the retry flushes the pending choice")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only, never the suppressed view")
+        XCTAssertFalse(storage.loadCcpaWritePending())
+    }
+
+    func testPendingChoiceIsNotFlushedOverAMiss() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA).get())
+
+        relaunch()
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+        network.getResult = .success(notFound)
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get], "no raw choice to re-send, and defaults are never seeded")
+        XCTAssertTrue(storage.loadCcpaWritePending(), "still waiting for a write to carry it")
     }
 }

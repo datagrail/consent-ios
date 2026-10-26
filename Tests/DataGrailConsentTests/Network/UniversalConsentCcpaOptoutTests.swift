@@ -62,7 +62,7 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
 
         XCTAssertEqual(network.methods, [.get, .post, .post])
         XCTAssertEqual(writtenCcpaOptout(), true)
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "RAW local categories ride along")
+        XCTAssertEqual(writtenCookieOptions(), [:], "unchanged since the sync, so no category rides along")
     }
 
     func testSetterStaysLocalWhenGateOff() throws {
@@ -90,7 +90,8 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
 
     // MARK: - Wire field
 
-    func testWireFieldIsFalseWhenGateOffEvenWithLocalFlag() throws {
+    /// TRUST-3381 (as consent-banner #756): with the gate off the field is left out, never `false`.
+    func testWireFieldIsOmittedWhenGateOffEvenWithLocalFlag() throws {
         makeSut(syncOptout: false)
         try storage.savePreferences(marketingChoice(true))
         storage.saveCcpaOptout(true)
@@ -98,7 +99,7 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
 
         XCTAssertNoThrow(try sync(userA).get())
 
-        XCTAssertEqual(writtenCcpaOptout(), false)
+        XCTAssertNil(try XCTUnwrap(writtenJSON(), "the attach write was sent")["ccpa_optout"], "omitted, not false")
     }
 
     func testWireFieldIsNeverDerivedFromMarketingOrATT() throws {
@@ -228,7 +229,7 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
         sut.setCcpaOptout(true) { _ in }
         try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
 
-        XCTAssertEqual(network.methods, [.get], "an unchanged choice is not re-written")
+        XCTAssertEqual(writtenCcpaOptout(), true, "categories unchanged, but the pending setter value is flushed")
         XCTAssertTrue(sut.getCcpaOptout(), "adopting the record does not overwrite the newer setter value")
     }
 
@@ -402,7 +403,7 @@ extension UniversalConsentCcpaOptoutTests {
 
         XCTAssertEqual(network.methods, [.get, .post])
         XCTAssertEqual(writtenCcpaOptout(), true)
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "the record's real opt-in survives")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only: the record's real opt-in is untouched")
     }
 
     func testClearingAnAdoptedOptOutWritesTheRecordsRawOptIn() throws {
@@ -414,21 +415,13 @@ extension UniversalConsentCcpaOptoutTests {
 
         XCTAssertEqual(network.methods, [.get, .post])
         XCTAssertEqual(writtenCcpaOptout(), false)
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "not the all-off suppressed view")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only, never the all-off suppressed view")
+        XCTAssertEqual(
+            (writtenJSON()?["decision_ts"] as? NSNumber)?.int64Value, storage.loadCcpaDecisionTs(),
+            "stamped with the setter's own time, so the opt-in beats the adopted opt-out"
+        )
     }
 
-    func testSetterAfterALocalChangeSinceTheSyncWritesTheNewLocalChoice() throws {
-        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
-        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
-        // Matches the suppressed view exactly, yet it is the user's own choice and must win.
-        let saved = expectation(description: "savePreferences")
-        sut.savePreferences(marketingChoice(false)) { _ in saved.fulfill() }
-        wait(for: [saved], timeout: 1.0)
-
-        XCTAssertNoThrow(try setCcpaOptout(true).get())
-
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false, "the user's own later choice")
-    }
 }
 
 // MARK: - A re-sync compares and writes the RAW choice, never the reconciled view
@@ -500,10 +493,60 @@ extension UniversalConsentCcpaOptoutTests {
     }
 }
 
-// MARK: - A category write-through carries the record's CCPA flag unless a local one is pending
+// MARK: - TRUST-2591 decision (2026-10-26): a LOGIN adopts the record's flag whatever sync_optout says
 
 @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
 extension UniversalConsentCcpaOptoutTests {
+    func testLoginWithTheGateOffAdoptsTheRecordsFlag() throws {
+        makeSut(syncOptout: false)
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: true))
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertTrue(sut.getCcpaOptout(), "a login is a record-wins reset, the CCPA flag included")
+    }
+
+    /// TRUST-3381 (as consent-banner #756): a choice made with the gate off is not sent, stays
+    /// pending, and the next re-sync after the gate turns on flushes it.
+    func testAChoiceMadeWithTheGateOffIsSentOnceTheGateTurnsOn() throws {
+        makeSut(syncOptout: false)
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA).get())
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+        XCTAssertNil(network.lastPostBody, "not sent with the gate off")
+        XCTAssertTrue(storage.loadCcpaWritePending())
+
+        makeSut(syncOptout: true)
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(writtenCcpaOptout(), true, "flushed once the gate is on")
+        XCTAssertFalse(storage.loadCcpaWritePending())
+        XCTAssertTrue(sut.getCcpaOptout())
+    }
+
+    /// A logout between the categories write and the CCPA-only write sends nothing more: the old
+    /// identity's record must not get the neutral flag a logout leaves.
+    func testLogoutBetweenTheTwoSetterWritesSendsNoCcpaWrite() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA).get())
+        let saved = expectation(description: "savePreferences")
+        sut.savePreferences(marketingChoice(false)) { _ in saved.fulfill() }
+        wait(for: [saved], timeout: 1.0)
+        network.postBodies = []
+        network.deferPost = true
+
+        var outcome: Result<Void, ConsentError>?
+        sut.setCcpaOptout(true) { outcome = $0 }
+        let firstWrite = try XCTUnwrap(network.pendingPostCompletion, "the categories write is in flight")
+        sut.clearUserIdentifier()
+        network.deferPost = false
+        firstWrite(.success(Data(#"{"status":"ok"}"#.utf8)))
+
+        XCTAssertEqual(network.postBodies.count, 1, "no CCPA-only write after the logout")
+        XCTAssertThrowsError(try XCTUnwrap(outcome).get())
+    }
+
     func testResyncWriteThroughCarriesAPendingLocalFlagNotTheRecord() throws {
         storage.saveBoundUserHash(try hash(userA))
         try saveUserChoice(marketingChoice(true))
@@ -518,9 +561,9 @@ extension UniversalConsentCcpaOptoutTests {
         XCTAssertTrue(sut.getCcpaOptout())
     }
 
-    /// With no pending CCPA choice this device's flag is stale: a kept-local category change written
-    /// through carries the record's newer opt-out, not the stale false.
-    func testKeepLocalWriteThroughCarriesTheRecordsNewerCcpaFlag() throws {
+    /// lucasv-dg (consent-android #74): with no pending CCPA choice this device's flag is stale; a
+    /// category change written through carries the record's newer opt-out, not the stale false.
+    func testResyncWriteThroughOfACategoryChangeCarriesTheRecordsNewerCcpaFlag() throws {
         storage.saveBoundUserHash(try hash(userA))
         try saveUserChoice(marketingChoice(true))
         storage.saveCcpaOptout(false)
@@ -531,5 +574,24 @@ extension UniversalConsentCcpaOptoutTests {
         XCTAssertEqual(network.methods, [.get, .post])
         XCTAssertEqual(writtenCcpaOptout(), true)
         XCTAssertTrue(sut.getCcpaOptout())
+    }
+
+    func testSetterAfterALocalChangeSendsItFirstThenACcpaOnlyWrite() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        // Matches the suppressed view exactly, yet it is the user's own choice and must win.
+        let saved = expectation(description: "savePreferences")
+        sut.savePreferences(marketingChoice(false)) { _ in saved.fulfill() }
+        wait(for: [saved], timeout: 1.0)
+
+        network.postBodies = []
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+
+        // As consent-banner #756: the unsynced change at its own time, then the CCPA change alone.
+        let bodies = network.postBodies.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        XCTAssertEqual(bodies.count, 2)
+        let first = bodies.first?["consent_preferences"] as? [String: Any]
+        XCTAssertEqual((first?["cookieOptions"] as? [String: Bool])?["dg-category-marketing"], false)
+        XCTAssertEqual(bodies.last?["consent_preferences"] as? [String: [String: Bool]], ["cookieOptions": [:]])
     }
 }
