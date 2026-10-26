@@ -80,15 +80,7 @@ public class ConsentStorage {
     /// between devices (up to the edge's ~300 s bound) can still mis-order changes made that close
     /// together. Mirrors consent-banner `setDecisionTs` (TRUST-3154).
     func saveDecisionTs(_ decisionTs: Int64? = nil, now: Int64 = ConsentStorage.nowSeconds()) {
-        let value: Int64
-        if let decisionTs {
-            value = decisionTs
-        } else if let previous = loadDecisionTs(now: now) {
-            // Capped at what loadDecisionTs reads back (only reachable by hundreds of same-second saves).
-            value = min(max(now, previous + 1), now + Self.decisionTsStoredToleranceSeconds)
-        } else {
-            value = now
-        }
+        let value = decisionTs ?? nextStamp(after: loadDecisionTs(now: now), now: now)
         userDefaults.set(String(value), forKey: Keys.decisionTs)
     }
 
@@ -98,9 +90,21 @@ public class ConsentStorage {
     /// clock was ahead and has since been corrected); the edge restamps such a write to now + 300, so
     /// it would never repair itself and would out-rank every record forever.
     func loadDecisionTs(now: Int64 = ConsentStorage.nowSeconds()) -> Int64? {
-        guard let raw = userDefaults.string(forKey: Keys.decisionTs),
-              let value = Int64(raw), value >= 0
-        else { return nil }
+        loadStamp(forKey: Keys.decisionTs, now: now)
+    }
+
+    /// A monotonic "now" stamp: never before `previous + 1`, capped at what ``loadStamp(forKey:now:)``
+    /// reads back (only reachable by hundreds of same-second choices). Shared by both registers, so a
+    /// change to the tolerance applies to the category and the CCPA time alike.
+    private func nextStamp(after previous: Int64?, now: Int64) -> Int64 {
+        guard let previous else { return now }
+        return min(max(now, previous + 1), now + Self.decisionTsStoredToleranceSeconds)
+    }
+
+    /// A stored stamp, or `nil` when none is stored, it is unreadable, or it is more than
+    /// ``decisionTsStoredToleranceSeconds`` ahead of this clock (bogus, see ``loadDecisionTs(now:)``).
+    private func loadStamp(forKey key: String, now: Int64) -> Int64? {
+        guard let raw = userDefaults.string(forKey: key), let value = Int64(raw), value >= 0 else { return nil }
         return value <= now + Self.decisionTsStoredToleranceSeconds ? value : nil
     }
 
@@ -174,14 +178,8 @@ public class ConsentStorage {
     /// monotonic, as ``saveDecisionTs(_:now:)`` is: two toggles in the same second must not tie,
     /// since the edge keeps an opt-out on a tie.
     func saveCcpaChoice(_ optedOut: Bool, now: Int64 = ConsentStorage.nowSeconds()) {
-        let value: Int64
-        if let previous = loadCcpaDecisionTs(now: now) {
-            value = min(max(now, previous + 1), now + Self.decisionTsStoredToleranceSeconds)
-        } else {
-            value = now
-        }
         userDefaults.set(optedOut, forKey: Keys.ccpaOptout)
-        userDefaults.set(String(value), forKey: Keys.ccpaDecisionTs)
+        userDefaults.set(String(nextStamp(after: loadCcpaDecisionTs(now: now), now: now)), forKey: Keys.ccpaDecisionTs)
     }
 
     /// Load the user's explicit CCPA/CPRA "Do Not Sell or Share" choice; `false` when never set.
@@ -206,8 +204,9 @@ public class ConsentStorage {
         userDefaults.bool(forKey: Keys.ccpaWritePending)
     }
 
-    /// Put back a CCPA flag and the setter time it had (`nil` removes it), as one pair: a re-sync that
-    /// writes the user's own flag after the rehydrate adopted the record's restores both.
+    /// Store a CCPA flag adopted from a record together with that record's `updated_at` (`nil`
+    /// removes the time), as one pair: the rehydrate adopt's floor, so the next setter call here is
+    /// stamped strictly after it (a tie keeps an opt-out at the edge).
     func restoreCcpaChoice(_ choice: (optedOut: Bool, decisionTs: Int64?)) {
         userDefaults.set(choice.optedOut, forKey: Keys.ccpaOptout)
         if let decisionTs = choice.decisionTs {
@@ -218,18 +217,19 @@ public class ConsentStorage {
     }
 
     /// When the stored CCPA choice was made: by the setter (``saveCcpaChoice(_:now:)``), or, for a
-    /// flag adopted from a record, that record's `updated_at` (``restoreCcpaChoice(_:)``), which is
-    /// the floor the next setter time is stamped after. `nil` when unknown. A CCPA-only write sends it as `decision_ts`, so a choice that waited for a session
-    /// (pending) is ranked by when the user made it, not by when it was finally sent: a late flush
-    /// cannot out-rank a newer choice made on another device in between. Its own key: the category
-    /// choice's time never stamps the CCPA flag. Unknown (never set by the
-    /// setter, set before this was recorded, or bogusly far ahead of this clock, as for
-    /// ``loadDecisionTs(now:)``). `nil` sends no provenance: the edge stamps the request time.
+    /// flag adopted from a record, that record's `updated_at` (``restoreCcpaChoice(_:)``), the floor
+    /// the next setter time is stamped after.
+    ///
+    /// A CCPA-only write sends it as `decision_ts`, so a choice that waited for a session (pending)
+    /// is ranked by when the user made it, not when it was finally sent: a late flush cannot
+    /// out-rank a newer choice made on another device meanwhile. It has its own key, so the category
+    /// choice's time never stamps the CCPA flag.
+    ///
+    /// `nil` when unknown: never set, set before this was recorded, or bogusly far ahead of this
+    /// clock (as for ``loadDecisionTs(now:)``). `nil` sends no provenance, so the edge stamps the
+    /// request time.
     func loadCcpaDecisionTs(now: Int64 = ConsentStorage.nowSeconds()) -> Int64? {
-        guard let raw = userDefaults.string(forKey: Keys.ccpaDecisionTs),
-              let value = Int64(raw), value >= 0
-        else { return nil }
-        return value <= now + Self.decisionTsStoredToleranceSeconds ? value : nil
+        loadStamp(forKey: Keys.ccpaDecisionTs, now: now)
     }
 
     // MARK: - Unique ID

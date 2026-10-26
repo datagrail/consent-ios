@@ -1435,7 +1435,9 @@ extension ConsentManager {
     /// CCPA-only write that follows advances the record's `updated_at` (the latest decision over ALL
     /// registers), so without that first write the next re-sync would read the change as older than
     /// the record and adopt over it. Also when the last sync found no category choice, so the CCPA
-    /// write never leaves an empty block. An unknown time is not sent stamped now (P0-06).
+    /// write does not leave an empty block. A choice with no known time is never sent stamped now
+    /// (P0-06): the write is then CCPA-only, even over a record with no category choice, which is
+    /// the right result for an unknown time.
     ///
     /// Then the CCPA-only write (TRUST-2591 decision, 2026-10-26): the flag alone, dated when this
     /// CCPA choice was made, never the category map, so it cannot undo a newer revocation made
@@ -1487,7 +1489,9 @@ extension ConsentManager {
             decisionTs: choiceDecisionTs,
             getSignature: session.getSignature
         ) { [weak self] result in
-            guard let self, case .success = result else { return completion(result) }
+            guard case .success = result else { return completion(result) }
+            // The categories landed, but the CCPA-only write can no longer be sent.
+            guard let self else { return completion(.failure(.notInitialized)) }
             // The record now holds this choice, so the next re-sync must not send it again. Not over
             // a save made since, nor after a logout or a bind to another identity.
             // The binding check, the sync-state record and dispatching the CCPA-only write run in one

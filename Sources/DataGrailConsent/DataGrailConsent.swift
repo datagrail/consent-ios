@@ -595,7 +595,10 @@ public extension DataGrailConsent {
     /// choice made while signed in (or during a login) that has not reached the record yet is kept
     /// by a re-sync or rehydrate instead of the record's older value, and the next successful
     /// ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` for that user writes
-    /// it to the record as a CCPA-only write (no category changes), even when nothing else changed.
+    /// it to the record as a CCPA-only write (no category changes). That flush happens on a re-sync
+    /// (the same identity again) over a found record that carries a choice, with a choice stored on
+    /// this device and `sync_optout` on. A login lets the record win, and a miss or a signal-only
+    /// record keeps the choice pending until a later write carries it.
     ///
     /// - Parameters:
     ///   - optedOut: `true` when the user opts out of sale/sharing.
