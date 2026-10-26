@@ -82,7 +82,7 @@ final class UniversalConsentResyncTests: XCTestCase {
         XCTAssertNoThrow(try setCcpaOptout(true).get())
 
         XCTAssertEqual(network.methods, [.get, .post])
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "the record's raw opt-in")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only: the record's raw opt-in is untouched")
     }
 
     // MARK: - The user changed something
@@ -314,7 +314,7 @@ extension UniversalConsentResyncTests {
 
         XCTAssertNoThrow(try setCcpaOptout(true).get())
         XCTAssertEqual(network.methods.last, .post)
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "the record's raw opt-in")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only: the record's raw opt-in is untouched")
     }
 
     func testStandaloneRehydrateOfAGPCRecordIsNotWrittenByTheNextResyncAfterARelaunch() throws {
@@ -505,17 +505,13 @@ extension UniversalConsentResyncTests {
 
         XCTAssertEqual(network.methods, [.get, .post], "the pending choice is flushed")
         XCTAssertEqual(writtenCcpaOptout(), true)
-        XCTAssertEqual(writtenCookieOptions(), [
-            "dg-category-essential": true,
-            "dg-category-marketing": true,
-            "dg-category-analytics": false,
-        ], "the record's own raw choice, so no category changes")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only, so no category changes at any stamp")
         let body = try XCTUnwrap(network.lastPostBody.flatMap {
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
         })
-        // 2020-01-01T00:00:00Z, the record's updated_at: never now, which could out-rank another
-        // device's newer category change (P0-06).
-        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, 1_577_836_800, "the record's time")
+        // No provenance: the edge stamps it with the request time, so the `ccpa_optout` register
+        // lands over the record's (a record-time stamp would tie it, and a tie keeps an opt-out).
+        XCTAssertNil(body["decision_ts"])
         XCTAssertFalse(storage.loadCcpaWritePending(), "the write carried it")
         XCTAssertTrue(sut.getCcpaOptout())
 
@@ -534,7 +530,7 @@ extension UniversalConsentResyncTests {
         XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
 
         XCTAssertEqual(network.methods, [.get, .post])
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "the record's raw opt-in")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only: the record's raw opt-in is untouched")
         XCTAssertEqual(storedMarketing(), false, "local keeps the suppressed view")
     }
 
@@ -553,6 +549,26 @@ extension UniversalConsentResyncTests {
         network.lastPostBody = nil
         XCTAssertNoThrow(try sync(userA).get())
         XCTAssertEqual(writtenCcpaOptout(), true)
+        XCTAssertFalse(storage.loadCcpaWritePending())
+    }
+
+    /// A failed flush still records the adopt it made as the sync state: an ATT transition to denied
+    /// suppressed marketing locally, and the retry must not read that as the user turning it off.
+    func testFailedFlushAfterAnATTDenialDoesNotWriteTheSuppressedViewOnTheRetry() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .authorized).get())
+
+        relaunch()
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+        network.postResult = .failure(.networkError("offline"))
+        XCTAssertThrowsError(try sync(userA, trackingSignal: .denied).get())
+        XCTAssertEqual(storedMarketing(), false, "local holds the suppressed view")
+
+        network.postResult = .success(Data(#"{"status":"ok"}"#.utf8))
+        network.lastPostBody = nil
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        XCTAssertEqual(writtenCcpaOptout(), true, "the retry flushes the pending choice")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only, never the suppressed view")
         XCTAssertFalse(storage.loadCcpaWritePending())
     }
 

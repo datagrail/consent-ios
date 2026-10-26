@@ -131,8 +131,9 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         XCTAssertEqual((writtenBody()?["decision_ts"] as? NSNumber)?.int64Value, localTs)
     }
 
-    /// TRUST-3311 (consent-react #47): a setCcpaOptout write-through carries the stored choice's
-    /// decision time, so the categories riding along cannot out-rank a newer revocation elsewhere.
+    /// TRUST-3311 (consent-react #47): a setCcpaOptout write-through that carries a local change made
+    /// since the sync stamps it with the stored choice's decision time, so it cannot out-rank a newer
+    /// revocation elsewhere. (Unchanged since the sync, it sends no category at all: TRUST-2902.)
     func testSetterWriteThroughCarriesTheStoredChoicesDecisionTime() throws {
         try bindAfterFirstSync()
         try save(marketing: true)

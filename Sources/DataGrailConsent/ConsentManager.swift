@@ -860,16 +860,16 @@ extension ConsentManager {
             if explicitChoice != nil, !keepsStoredCcpa { storage.saveCcpaOptout(localCcpaOptout) }
             // The user's choice carries when they made it, so the edge ranks it by that and not by
             // the send time. Otherwise a pending CCPA choice may be flushed (``pendingCcpaFlush``).
-            if case let (choice, decisionTs)? = explicitChoice.map({ ($0, localDecisionTs) })
-                ?? pendingCcpaFlush(outcome: outcome, binding: binding, localChoice: localChoice) {
+            if let write = explicitChoice.map({ SyncWrite($0, decisionTs: localDecisionTs) })
+                ?? pendingCcpaFlush(outcome: outcome, binding: binding, localChoice: localChoice, userHash: userHash) {
                 writeUniversalConsent(
                     identifier,
                     apiKey: apiKey,
-                    preferences: choice,
-                    decisionTs: decisionTs,
+                    preferences: write.preferences,
+                    decisionTs: write.decisionTs,
                     getSignature: getSignature,
                     // The flag setUserIdentifier reads for the write, in this same critical section.
-                    completion: bindingCompletion(choice, storage.loadCcpaOptout())
+                    completion: bindingCompletion(write.syncedRaw, storage.loadCcpaOptout())
                 )
                 return
             }
@@ -1163,25 +1163,67 @@ extension ConsentManager {
     ///
     /// A bound CCPA choice that has not reached the record yet (a setter call after a relaunch, with
     /// no session to write through, or a failed write) is a local change too, and a re-sync is the
-    /// first moment a session exists again. The write is the found record's RAW choice, so it
-    /// changes only `ccpa_optout`: the categories another device set stay as they are. It is stamped
-    /// with the record's own time, never "now", which would out-rank a newer category change another
-    /// device made since the record was written (P0-06). It needs a found record that carries a
-    /// choice (a miss or a signal-only record has no raw choice to re-send, and the setter never
-    /// seeds config defaults) and an explicit local choice, as a setter write-through does. The
-    /// stored flag is the pending value: the adopt does not replace it. Same rule as consent-android.
+    /// first moment a session exists again. The write is CCPA-only (``ccpaOnly(_:)``): it sends no
+    /// category, so the categories another device set stay as they are whatever the stamp, and it
+    /// carries no decision time, so the edge stamps it with the request time and the `ccpa_optout`
+    /// register lands over the record's older one (a record-time stamp would tie it, and a tie keeps
+    /// the stored opt-out). It needs a found record that carries a choice (a miss or a signal-only
+    /// record has nothing to flush over, and the setter never seeds config defaults) and an explicit
+    /// local choice, as a setter write-through does. The stored flag is the pending value: the adopt
+    /// does not replace it. Same rule as consent-android.
+    ///
+    /// The adopt this re-sync just did is recorded as the sync state BEFORE the write, so a failed
+    /// flush still leaves the baseline matching what was stored. Otherwise a view the adopt changed
+    /// (an ATT transition to denied suppresses marketing) would read as a user change on the retry.
+    /// The flush is a re-sync, so the device is already bound to `userHash`; a success records the
+    /// same state again.
     private func pendingCcpaFlush(
         outcome: RehydrateOutcome,
         binding: LoginBinding,
-        localChoice: ConsentPreferences?
-    ) -> (ConsentPreferences, Int64?)? {
+        localChoice: ConsentPreferences?,
+        userHash: String?
+    ) -> SyncWrite? {
         guard binding.isResync,
               localChoice != nil,
               Self.syncsCcpaOptout(currentConfig),
               storage.loadCcpaWritePending(),
               let raw = outcome.raw
         else { return nil }
-        return (raw, outcome.recordDecisionTs)
+        if let userHash, let saveRevision = outcome.saveRevision {
+            recordSyncState(
+                userHash: userHash,
+                syncedLocal: storage.loadPreferences(),
+                syncedRaw: raw,
+                saveRevision: saveRevision
+            )
+        }
+        return SyncWrite(preferences: Self.ccpaOnly(raw), decisionTs: nil, syncedRaw: raw)
+    }
+
+    /// The write a re-sync sends: the preferences, their decision time (`nil` lets the edge stamp
+    /// the request time), and the raw choice the record holds once it lands.
+    private struct SyncWrite {
+        let preferences: ConsentPreferences
+        let decisionTs: Int64?
+        let syncedRaw: ConsentPreferences
+
+        /// A write of `choice` itself: the record holds it once it lands.
+        init(_ choice: ConsentPreferences, decisionTs: Int64?) {
+            self.init(preferences: choice, decisionTs: decisionTs, syncedRaw: choice)
+        }
+
+        init(preferences: ConsentPreferences, decisionTs: Int64?, syncedRaw: ConsentPreferences) {
+            self.preferences = preferences
+            self.decisionTs = decisionTs
+            self.syncedRaw = syncedRaw
+        }
+    }
+
+    /// A CCPA-only write's preferences: `choice` with no category. The edge merges each category
+    /// separately and leaves an omitted one untouched, so a write that only means to change
+    /// `ccpa_optout` sends none and cannot undo a category choice made elsewhere at any stamp.
+    static func ccpaOnly(_ choice: ConsentPreferences) -> ConsentPreferences {
+        ConsentPreferences(isCustomised: choice.isCustomised, cookieOptions: [])
     }
 
     /// Whether a local choice made at `local` is strictly newer than a record whose latest decision
@@ -1243,14 +1285,19 @@ extension ConsentManager {
                   let localChoice = storage.loadPreferences()
             else { return }
             dispatched = true
+            // Unchanged since the last sync, the write is CCPA-only (TRUST-2902): no category rides
+            // along, so it cannot undo a newer revocation made elsewhere (TRUST-3311), and the choice
+            // made now is stamped now. A category-time stamp would tie the record's `ccpa_optout`
+            // register right after an adopt, and the edge keeps the stored opt-out on a tie, so an
+            // opt-in never landed. A local change since the sync rides along with when it was made.
+            let carriesLocalChange = !unchangedSinceSync(localChoice, userHash: session.userHash)
             writeUniversalConsent(
                 session.identifier,
                 apiKey: session.apiKey,
-                preferences: rawChoice(forStored: localChoice, userHash: session.userHash),
-                // The categories riding along are stamped with when they were chosen, not now, so this
-                // write cannot undo a newer revocation made elsewhere (TRUST-3311, as consent-react #47).
-                // Trade-off: the fresh CCPA choice shares that older stamp and can lose to a newer record.
-                decisionTs: storage.loadDecisionTs(),
+                preferences: carriesLocalChange
+                    ? localChoice
+                    : Self.ccpaOnly(rawChoice(forStored: localChoice, userHash: session.userHash)),
+                decisionTs: carriesLocalChange ? storage.loadDecisionTs() : nil,
                 getSignature: session.getSignature
             ) { [weak self] result in
                 if case .success = result, let self {

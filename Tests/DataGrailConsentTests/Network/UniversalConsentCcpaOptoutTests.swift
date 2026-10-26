@@ -62,7 +62,7 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
 
         XCTAssertEqual(network.methods, [.get, .post, .post])
         XCTAssertEqual(writtenCcpaOptout(), true)
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "RAW local categories ride along")
+        XCTAssertEqual(writtenCookieOptions(), [:], "unchanged since the sync, so no category rides along")
     }
 
     func testSetterStaysLocalWhenGateOff() throws {
@@ -415,7 +415,7 @@ extension UniversalConsentCcpaOptoutTests {
 
         XCTAssertEqual(network.methods, [.get, .post])
         XCTAssertEqual(writtenCcpaOptout(), true)
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "the record's real opt-in survives")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only: the record's real opt-in is untouched")
     }
 
     func testClearingAnAdoptedOptOutWritesTheRecordsRawOptIn() throws {
@@ -427,7 +427,8 @@ extension UniversalConsentCcpaOptoutTests {
 
         XCTAssertEqual(network.methods, [.get, .post])
         XCTAssertEqual(writtenCcpaOptout(), false)
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], true, "not the all-off suppressed view")
+        XCTAssertEqual(writtenCookieOptions(), [:], "CCPA-only, never the all-off suppressed view")
+        XCTAssertNil(writtenJSON()?["decision_ts"], "stamped now, so the opt-in beats the adopted opt-out")
     }
 
     func testSetterAfterALocalChangeSinceTheSyncWritesTheNewLocalChoice() throws {
