@@ -381,7 +381,7 @@ extension UniversalConsentResyncTests {
         XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false)
     }
 
-    /// lucasv-dg (#52): an unchanged re-sync whose read is in flight when the user saves keeps that
+    /// An unchanged re-sync whose read is in flight when the user saves keeps that
     /// save rather than adopting the record over it, and writes it, not the pre-read choice.
     func testSaveDuringAnUnchangedResyncReadIsKeptAndWritten() throws {
         network.getResult = .success(foundRecordJSON(marketing: true))
@@ -401,6 +401,35 @@ extension UniversalConsentResyncTests {
         XCTAssertEqual(network.methods.last, .post, "the mid-read save is written after the read")
         XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false)
         XCTAssertEqual(writtenCookieOptions()?["dg-category-analytics"], true)
+    }
+
+    /// A save made during the read that equals the record's raw choice changes nothing on the
+    /// record, so it is not written; and under ATT denial the suppressed view is never written as a
+    /// user change by the next re-sync either.
+    func testMidReadSaveEqualToTheRecordUnderATTDenialIsNotWrittenNowOrLater() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+
+        network.deferGet = true
+        network.methods = []
+        network.lastPostBody = nil
+        var outcome: Result<Void, ConsentError>?
+        sut.syncUserIdentifier(userA, apiKey: testApiKey, trackingSignal: .denied) { outcome = $0 }
+        // Exactly the record's raw choice (essential and marketing on).
+        try save(ConsentPreferences(isCustomised: true, cookieOptions: [
+            CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
+            CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: true),
+        ]))
+        network.lastPostBody = nil  // the save's own consent-event POST
+        network.deferGet = false
+        try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
+        XCTAssertNoThrow(try XCTUnwrap(outcome).get())
+        XCTAssertNil(network.lastPostBody, "equal to the record's raw choice: nothing to write")
+
+        network.methods = []
+        network.lastPostBody = nil
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        XCTAssertNil(network.lastPostBody, "the suppressed view is not a user change")
     }
 
     func testSetterDuringAFirstLoginReadIsNotRevertedByTheNextResync() throws {

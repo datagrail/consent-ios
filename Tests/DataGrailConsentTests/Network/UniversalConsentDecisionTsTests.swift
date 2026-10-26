@@ -110,15 +110,15 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         network.deferGet = false
         // The user changes their mind while the read is in flight.
         try save(marketing: true)
-        pendingGet(.success(foundRecordJSON(marketing: true, updatedAt: recordTs)))
+        pendingGet(.success(foundRecordJSON(marketing: false, updatedAt: recordTs)))
         wait(for: [synced], timeout: 1.0)
 
         XCTAssertNoThrow(try outcome.get())
         XCTAssertEqual(storedMarketing(), true, "the mid-sync save is kept, not the pre-read choice")
         XCTAssertNotEqual(storage.loadDecisionTs(), recordTs, "the record was not adopted either")
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(storage.loadDecisionTs()), localTs)
-        XCTAssertNil(storage.loadSyncState(), "the mid-sync save still reads as a change for the next re-sync")
-        // The write carries the mid-sync save with its own time, not the pre-read choice (lucasv-dg).
+        XCTAssertNotNil(storage.loadSyncState(), "the written save counts as synced")
+        // The write carries the mid-sync save with its own time, not the pre-read choice.
         let body = try XCTUnwrap(writtenBody())
         let prefs = try XCTUnwrap(body["consent_preferences"] as? [String: Any])
         let written = try XCTUnwrap(prefs["cookieOptions"] as? [String: Bool])

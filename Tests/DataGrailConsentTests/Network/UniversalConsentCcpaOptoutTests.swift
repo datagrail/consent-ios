@@ -112,19 +112,6 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
         XCTAssertFalse(sut.getCcpaOptout())
     }
 
-    func testResyncWriteThroughCarriesTheLocalFlagNotTheRecord() throws {
-        storage.saveBoundUserHash(try hash(userA))
-        try saveUserChoice(marketingChoice(true))
-        storage.saveCcpaOptout(true)
-        network.getResult = .success(foundRecordJSON(marketing: false, ccpaOptout: false))
-
-        XCTAssertNoThrow(try sync(userA).get())
-
-        XCTAssertEqual(network.methods, [.get, .post])
-        XCTAssertEqual(writtenCcpaOptout(), true)
-        XCTAssertTrue(sut.getCcpaOptout())
-    }
-
     func testResyncAdoptTakesTheRecordValueWithGateOn() throws {
         storage.saveBoundUserHash(try hash(userA))
         network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: true))
@@ -510,5 +497,39 @@ extension UniversalConsentCcpaOptoutTests {
     func saveUserChoice(_ preferences: ConsentPreferences) throws {
         try storage.savePreferences(preferences)
         storage.saveDecisionTs()
+    }
+}
+
+// MARK: - A category write-through carries the record's CCPA flag unless a local one is pending
+
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+extension UniversalConsentCcpaOptoutTests {
+    func testResyncWriteThroughCarriesAPendingLocalFlagNotTheRecord() throws {
+        storage.saveBoundUserHash(try hash(userA))
+        try saveUserChoice(marketingChoice(true))
+        storage.saveCcpaOptout(true)
+        storage.saveCcpaWritePending(true)
+        network.getResult = .success(foundRecordJSON(marketing: false, ccpaOptout: false))
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get, .post])
+        XCTAssertEqual(writtenCcpaOptout(), true)
+        XCTAssertTrue(sut.getCcpaOptout())
+    }
+
+    /// With no pending CCPA choice this device's flag is stale: a kept-local category change written
+    /// through carries the record's newer opt-out, not the stale false.
+    func testKeepLocalWriteThroughCarriesTheRecordsNewerCcpaFlag() throws {
+        storage.saveBoundUserHash(try hash(userA))
+        try saveUserChoice(marketingChoice(true))
+        storage.saveCcpaOptout(false)
+        network.getResult = .success(foundRecordJSON(marketing: false, ccpaOptout: true))
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get, .post])
+        XCTAssertEqual(writtenCcpaOptout(), true)
+        XCTAssertTrue(sut.getCcpaOptout())
     }
 }
