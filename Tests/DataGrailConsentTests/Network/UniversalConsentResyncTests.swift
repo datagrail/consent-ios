@@ -381,26 +381,26 @@ extension UniversalConsentResyncTests {
         XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false)
     }
 
-    func testSaveTheResyncsAdoptOverwroteIsNotLaterWrittenAsTheSuppressedView() throws {
+    /// lucasv-dg (#52): an unchanged re-sync whose read is in flight when the user saves keeps that
+    /// save rather than adopting the record over it, and writes it, not the pre-read choice.
+    func testSaveDuringAnUnchangedResyncReadIsKeptAndWritten() throws {
         network.getResult = .success(foundRecordJSON(marketing: true))
         XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
 
         network.deferGet = true
-        var outcome: Result<Void, ConsentError>?
-        sut.syncUserIdentifier(userA, apiKey: testApiKey, trackingSignal: .denied) { outcome = $0 }
-        try save(choice(marketing: true, analytics: false))
-        network.deferGet = false
-        // The adopt lands after the save and overwrites it with the record's suppressed view.
-        try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
-        XCTAssertNoThrow(try XCTUnwrap(outcome).get())
-        XCTAssertEqual(storedMarketing(), false)
-
         network.methods = []
         network.lastPostBody = nil
-        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        var outcome: Result<Void, ConsentError>?
+        sut.syncUserIdentifier(userA, apiKey: testApiKey, trackingSignal: .denied) { outcome = $0 }
+        try save(choice(marketing: false, analytics: true))
+        network.deferGet = false
+        try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
+        XCTAssertNoThrow(try XCTUnwrap(outcome).get())
 
-        XCTAssertEqual(network.methods, [.get], "the suppressed view is not a user change")
-        XCTAssertNil(network.lastPostBody)
+        XCTAssertEqual(storedMarketing(), false, "the record does not replace the mid-read save")
+        XCTAssertEqual(network.methods.last, .post, "the mid-read save is written after the read")
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false)
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-analytics"], true)
     }
 
     func testSetterDuringAFirstLoginReadIsNotRevertedByTheNextResync() throws {

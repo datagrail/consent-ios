@@ -589,9 +589,9 @@ extension ConsentManager {
                     let persisted = try identityGate.ifCurrent(snapshot?.generation) {
                         // Decided before anything is stored, so a kept local choice is never touched.
                         if keepsLocal?(outcome) == true {
+                            // Nothing is stored, the config version included: the kept choice keeps
+                            // the version it was made under, so a config bump still re-prompts.
                             outcome.keptLocal = true
-                            // Still current for the config the app is running (see below).
-                            storage.saveConfigVersion(currentVersion)
                             return
                         }
                         try storage.savePreferences(effective)
@@ -766,7 +766,11 @@ extension ConsentManager {
             snapshot: snapshot,
             // A re-sync writing a local choice newer than the found record keeps it (TRUST-3223).
             keepsLocal: { [weak self] outcome in
-                guard let self, let explicitChoice else { return false }
+                guard let self else { return false }
+                // A save that landed during the read is the newest local choice: the record never
+                // replaces it, whatever the pre-read choice was (it is written below instead).
+                if self.savedDuringRead(since: snapshot, binding: binding) { return true }
+                guard let explicitChoice else { return false }
                 return self.shouldWrite(explicitChoice, decisionTs: localDecisionTs, outcome: outcome, binding: binding)
             },
             completion: { [weak self] result in
@@ -783,7 +787,7 @@ extension ConsentManager {
                         identifier: identifier,
                         apiKey: apiKey,
                         getSignature: getSignature,
-                        localChoice: localChoice,
+                        hadLocalChoice: localChoice != nil,
                         explicitChoice: explicitChoice,
                         localDecisionTs: localDecisionTs,
                         userHash: userHash,
@@ -811,7 +815,7 @@ extension ConsentManager {
         identifier: String,
         apiKey: String,
         getSignature: UniversalConsentSignatureProvider?,
-        localChoice: ConsentPreferences?,
+        hadLocalChoice: Bool,
         explicitChoice: ConsentPreferences?,
         localDecisionTs: Int64?,
         userHash: String?,
@@ -862,16 +866,21 @@ extension ConsentManager {
             // it is already stored, nothing below overwrites it, and a write here carries it.
             let keepsStoredCcpa = identityGate.ccpaChanged(since: snapshot)
             dropPriorIdentityState(binding: binding, keepsStoredCcpa: keepsStoredCcpa)
+            // A save that landed during the read replaced the pre-read choice: it is what is written,
+            // with its own decision time, both read here in the same critical section.
+            let savedDuringRead = savedDuringRead(since: snapshot, binding: binding)
+            let writeDecisionTs = savedDuringRead ? storage.loadDecisionTs() : localDecisionTs
             if let writeChoice = adoptOrKeepLocal(
-                explicitChoice,
-                decisionTs: localDecisionTs, outcome: outcome, binding: binding, onRehydrated: onRehydrated
+                savedDuringRead ? storage.loadPreferences() : explicitChoice,
+                decisionTs: writeDecisionTs, outcome: outcome, binding: binding,
+                writesRegardless: savedDuringRead, onRehydrated: onRehydrated
             ) {
                 writeUniversalConsent(
                     identifier,
                     apiKey: apiKey,
                     preferences: writeChoice,
                     // When the user made it, so the edge ranks it by that and not by the send time.
-                    decisionTs: localDecisionTs,
+                    decisionTs: writeDecisionTs,
                     getSignature: getSignature,
                     // The flag setUserIdentifier reads for the write, in this same critical section.
                     completion: bindingCompletion(writeChoice, storage.loadCcpaOptout())
@@ -881,7 +890,7 @@ extension ConsentManager {
             dropUnreplacedLoginState(
                 outcome: outcome,
                 binding: binding,
-                hadLocalChoice: localChoice != nil,
+                hadLocalChoice: hadLocalChoice,
                 keepsStoredCcpa: keepsStoredCcpa,
                 onRehydrated: onRehydrated
             )
@@ -927,15 +936,26 @@ extension ConsentManager {
         }
     }
 
+    /// Whether a user save landed on a RE-SYNC while its read was in flight (lucasv-dg, #52). That save
+    /// is the newest local choice: the record must not replace it, and the write carries it. A LOGIN
+    /// replaces local state with the record regardless. Run inside the sync's critical section.
+    private func savedDuringRead(since snapshot: IdentityGate.Snapshot, binding: LoginBinding) -> Bool {
+        binding.isResync && identityGate.preferencesSaveRevision != snapshot.saveRevision
+    }
+
     /// After the read: return `explicitChoice` if it is written, else adopt the record
     /// (``completeAdopt``). Over a found record carrying a choice the rehydrate already decided, before
     /// persisting anything (`keptLocal`, TRUST-3223): a kept local choice is still stored as it was, so
     /// local state is unchanged and no listener fires. Otherwise ``shouldWrite`` decides.
+    ///
+    /// `writesRegardless` (a save landed during the read) writes `explicitChoice` over a miss or a
+    /// signal-only record without asking ``shouldWrite``: it is newer than anything the read saw.
     private func adoptOrKeepLocal(
         _ explicitChoice: ConsentPreferences?,
         decisionTs: Int64?,
         outcome: RehydrateOutcome,
         binding: LoginBinding,
+        writesRegardless: Bool,
         onRehydrated: ((ConsentPreferences) -> Void)?
     ) -> ConsentPreferences? {
         if outcome.keptLocal {
@@ -943,6 +963,7 @@ extension ConsentManager {
         }
         completeAdopt(outcome: outcome, binding: binding, onRehydrated: onRehydrated)
         guard outcome.raw == nil else { return nil }
+        if writesRegardless { return explicitChoice }
         return explicitChoice.flatMap {
             shouldWrite($0, decisionTs: decisionTs, outcome: outcome, binding: binding) ? $0 : nil
         }

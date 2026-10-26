@@ -118,6 +118,12 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         XCTAssertNotEqual(storage.loadDecisionTs(), recordTs, "the record was not adopted either")
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(storage.loadDecisionTs()), localTs)
         XCTAssertNil(storage.loadSyncState(), "the mid-sync save still reads as a change for the next re-sync")
+        // The write carries the mid-sync save with its own time, not the pre-read choice (lucasv-dg).
+        let body = try XCTUnwrap(writtenBody())
+        let prefs = try XCTUnwrap(body["consent_preferences"] as? [String: Any])
+        let written = try XCTUnwrap(prefs["cookieOptions"] as? [String: Bool])
+        XCTAssertEqual(written["dg-category-marketing"], true)
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, storage.loadDecisionTs())
     }
 
     func testSameSecondTieAdoptsTheRecord() throws {
