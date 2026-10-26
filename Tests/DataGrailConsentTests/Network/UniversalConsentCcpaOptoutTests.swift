@@ -90,7 +90,8 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
 
     // MARK: - Wire field
 
-    func testWireFieldIsFalseWhenGateOffEvenWithLocalFlag() throws {
+    /// TRUST-3381 (as consent-banner #756): with the gate off the field is left out, never `false`.
+    func testWireFieldIsOmittedWhenGateOffEvenWithLocalFlag() throws {
         makeSut(syncOptout: false)
         try storage.savePreferences(marketingChoice(true))
         storage.saveCcpaOptout(true)
@@ -98,7 +99,7 @@ final class UniversalConsentCcpaOptoutTests: XCTestCase {
 
         XCTAssertNoThrow(try sync(userA).get())
 
-        XCTAssertEqual(writtenCcpaOptout(), false)
+        XCTAssertNil(try XCTUnwrap(writtenJSON(), "the attach write was sent")["ccpa_optout"], "omitted, not false")
     }
 
     func testWireFieldIsNeverDerivedFromMarketingOrATT() throws {
@@ -434,20 +435,6 @@ extension UniversalConsentCcpaOptoutTests {
         )
     }
 
-    func testSetterAfterALocalChangeSinceTheSyncIsCcpaOnlyAndTheResyncWritesTheChange() throws {
-        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
-        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
-        // Matches the suppressed view exactly, yet it is the user's own choice and must win.
-        let saved = expectation(description: "savePreferences")
-        sut.savePreferences(marketingChoice(false)) { _ in saved.fulfill() }
-        wait(for: [saved], timeout: 1.0)
-
-        XCTAssertNoThrow(try setCcpaOptout(true).get())
-        XCTAssertEqual(writtenCookieOptions(), [:], "a CCPA change never resends the category map")
-
-        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false, "the re-sync writes the user's choice")
-    }
 }
 
 // MARK: - A re-sync compares and writes the RAW choice, never the reconciled view
@@ -530,5 +517,43 @@ extension UniversalConsentCcpaOptoutTests {
         XCTAssertNoThrow(try sync(userA).get())
 
         XCTAssertTrue(sut.getCcpaOptout(), "a login is a record-wins reset, the CCPA flag included")
+    }
+
+    /// TRUST-3381 (as consent-banner #756): a choice made with the gate off is not sent, stays
+    /// pending, and the next re-sync after the gate turns on flushes it.
+    func testAChoiceMadeWithTheGateOffIsSentOnceTheGateTurnsOn() throws {
+        makeSut(syncOptout: false)
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA).get())
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+        XCTAssertNil(network.lastPostBody, "not sent with the gate off")
+        XCTAssertTrue(storage.loadCcpaWritePending())
+
+        makeSut(syncOptout: true)
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(writtenCcpaOptout(), true, "flushed once the gate is on")
+        XCTAssertFalse(storage.loadCcpaWritePending())
+        XCTAssertTrue(sut.getCcpaOptout())
+    }
+
+    func testSetterAfterALocalChangeSendsItFirstThenACcpaOnlyWrite() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        // Matches the suppressed view exactly, yet it is the user's own choice and must win.
+        let saved = expectation(description: "savePreferences")
+        sut.savePreferences(marketingChoice(false)) { _ in saved.fulfill() }
+        wait(for: [saved], timeout: 1.0)
+
+        network.postBodies = []
+        XCTAssertNoThrow(try setCcpaOptout(true).get())
+
+        // As consent-banner #756: the unsynced change at its own time, then the CCPA change alone.
+        let bodies = network.postBodies.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        XCTAssertEqual(bodies.count, 2)
+        let first = bodies.first?["consent_preferences"] as? [String: Any]
+        XCTAssertEqual((first?["cookieOptions"] as? [String: Bool])?["dg-category-marketing"], false)
+        XCTAssertEqual(bodies.last?["consent_preferences"] as? [String: [String: Bool]], ["cookieOptions": [:]])
     }
 }

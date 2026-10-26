@@ -154,14 +154,19 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         try bindAfterFirstSync()
         try save(marketing: true)
         storage.saveDecisionTs(1_600_000_100)
+        network.postBodies = []
 
         let expectation = expectation(description: "setCcpaOptout")
         sut.setCcpaOptout(true) { _ in expectation.fulfill() }
         wait(for: [expectation], timeout: 1.0)
 
-        XCTAssertEqual(network.methods, [.post])
-        // TRUST-2591 decision (2026-10-26), same body as consent-banner #756: the flag and its
-        // provenance only. The category change is not resent; the next re-sync writes it.
+        // The unsynced change first at its own time (as consent-banner #756), then the CCPA-only
+        // write (TRUST-2591 decision, 2026-10-26): the flag and its provenance only.
+        XCTAssertEqual(network.methods, [.post, .post])
+        let first = try XCTUnwrap(network.postBodies.first.flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        })
+        XCTAssertEqual((first["decision_ts"] as? NSNumber)?.int64Value, 1_600_000_100, "the change's own time")
         let body = try XCTUnwrap(writtenBody())
         XCTAssertEqual(Set(body.keys), ["customer_id", "user_hash", "consent_preferences", "ccpa_optout",
                                         "is_explicit", "decision_ts"])

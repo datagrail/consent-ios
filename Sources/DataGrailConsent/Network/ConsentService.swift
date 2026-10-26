@@ -788,7 +788,9 @@ public extension ConsentService {
     ) throws -> Data {
         // TRUST-2591: the user's explicit DNSMPI choice, gated per customer by sync_optout.
         // The RAW local flag only: never a category, the reconciled view, or the ATT signal.
-        let wireCcpaOptout = config.universalConsent?.syncOptout == true && ccpaOptout
+        // With the gate off the field is left out entirely (TRUST-3381, as consent-banner #756), never
+        // sent as false: a choice made meanwhile stays pending on the device until the gate turns on.
+        let wireCcpaOptout: Bool? = config.universalConsent?.syncOptout == true ? ccpaOptout : nil
         if ccpaOnly {
             // A CCPA-only write (TRUST-2591 decision, 2026-10-26; same body as consent-banner #756):
             // the flag and its provenance, an empty cookieOptions map, and no isCustomised or record
@@ -797,8 +799,10 @@ public extension ConsentService {
                 "customer_id": config.dgCustomerId,
                 "user_hash": userHash,
                 "consent_preferences": ["cookieOptions": [String: Bool]()],
-                "ccpa_optout": wireCcpaOptout,
             ]
+            if let wireCcpaOptout {
+                payload["ccpa_optout"] = wireCcpaOptout
+            }
             if let decisionTs {
                 payload["is_explicit"] = true
                 payload["decision_ts"] = decisionTs
@@ -828,8 +832,10 @@ public extension ConsentService {
             "consent_mode": config.consentMode,
             "config_version": config.version,
             "platform": Self.universalConsentPlatform,
-            "ccpa_optout": wireCcpaOptout,
         ]
+        if let wireCcpaOptout {
+            payload["ccpa_optout"] = wireCcpaOptout
+        }
         // TRUST-3223: when the choice was made, so a stale device's write cannot out-rank a newer
         // choice made elsewhere. Omitted when unknown: the edge then defaults to the signed timestamp.
         if let decisionTs {

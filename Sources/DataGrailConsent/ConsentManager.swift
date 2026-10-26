@@ -1323,27 +1323,59 @@ extension ConsentManager {
         var dispatched = false
         identityGate.recordCcpaChoice {
             storage.saveCcpaChoice(optedOut)
-            guard Self.syncsCcpaOptout(currentConfig) else { return }
             // Bound: the choice is pending until a write carries it, so a re-sync or rehydrate keeps
             // it rather than adopting the record's older value (also when it cannot be written now).
-            if storage.loadBoundUserHash() != nil {
+            // Whatever the sync_optout gate (TRUST-3381, as consent-banner #756): a choice made with
+            // the gate off is not sent, and the next re-sync after the gate turns on flushes it.
+            if currentConfig?.universalConsent?.enabled == true, storage.loadBoundUserHash() != nil {
                 storage.saveCcpaWritePending(true)
             }
-            guard let session = universalConsentSession,
+            guard Self.syncsCcpaOptout(currentConfig),
+                  let session = universalConsentSession,
                   session.userHash == storage.loadBoundUserHash(),
                   let localChoice = storage.loadPreferences()
             else { return }
             dispatched = true
-            // A CCPA-only write (TRUST-2591 decision, 2026-10-26, as consent-banner #756): the flag
-            // alone, dated when this CCPA choice was made. It never resends the category map, so it
-            // cannot undo a newer revocation made elsewhere (TRUST-3311), and the CCPA register is
-            // not tied to a category time. A local category change made since the sync is written
-            // by the next re-sync with its own decision time.
-            writeUniversalConsent(
+            writeCcpaChoice(optedOut, localChoice: localChoice, session: session, completion: completion)
+        }
+        if !dispatched {
+            completion(.success(()))
+        }
+    }
+
+    /// The ``setCcpaOptout(_:completion:)`` write-through, dispatched inside its critical section.
+    ///
+    /// As consent-banner #756 (withCategories): an unsynced local category change with a known
+    /// decision time goes first, in its own write at its own time, and is recorded as synced. The
+    /// CCPA-only write that follows advances the record's `updated_at` (the latest decision over ALL
+    /// registers), so without that first write the next re-sync would read the change as older than
+    /// the record and adopt over it. Also when the last sync found no category choice, so the CCPA
+    /// write never leaves an empty block. An unknown time is not sent stamped now (P0-06).
+    ///
+    /// Then the CCPA-only write (TRUST-2591 decision, 2026-10-26): the flag alone, dated when this
+    /// CCPA choice was made, never the category map, so it cannot undo a newer revocation made
+    /// elsewhere (TRUST-3311) and the CCPA register is not tied to a category time.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    private func writeCcpaChoice(
+        _ optedOut: Bool,
+        localChoice: ConsentPreferences,
+        session: UniversalConsentSession,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
+        let syncState = syncState(for: session.userHash)
+        let choiceDecisionTs = storage.loadDecisionTs()
+        let sendsCategories =
+            (!unchangedSinceSync(localChoice, userHash: session.userHash) && choiceDecisionTs != nil)
+            || (syncState != nil && syncState?.syncedRaw == nil)
+        let saveRevision = identityGate.preferencesSaveRevision
+        let ccpaDecisionTs = storage.loadCcpaDecisionTs()
+        let sendCcpa: () -> Void = { [weak self] in
+            guard let self else { return completion(.failure(.notInitialized)) }
+            self.writeUniversalConsent(
                 session.identifier,
                 apiKey: session.apiKey,
                 preferences: localChoice,
-                decisionTs: storage.loadCcpaDecisionTs(),
+                decisionTs: ccpaDecisionTs,
                 ccpaOnly: true,
                 getSignature: session.getSignature
             ) { [weak self] result in
@@ -1358,8 +1390,34 @@ extension ConsentManager {
                 completion(result)
             }
         }
-        if !dispatched {
-            completion(.success(()))
+        guard sendsCategories else { return sendCcpa() }
+        writeUniversalConsent(
+            session.identifier,
+            apiKey: session.apiKey,
+            preferences: localChoice,
+            decisionTs: choiceDecisionTs,
+            getSignature: session.getSignature
+        ) { [weak self] result in
+            guard let self, case .success = result else { return completion(result) }
+            // The record now holds this choice, so the next re-sync must not send it again. Not over
+            // a save made since, nor after a logout or a bind to another identity.
+            var stillBound = false
+            self.identityGate.ifCurrent(nil) {
+                stillBound = self.storage.loadBoundUserHash() == session.userHash
+                if stillBound {
+                    self.recordSyncState(
+                        userHash: session.userHash,
+                        syncedLocal: localChoice,
+                        syncedRaw: localChoice,
+                        saveRevision: saveRevision
+                    )
+                }
+            }
+            if stillBound {
+                sendCcpa()
+            } else {
+                completion(.failure(IdentityGate.superseded))
+            }
         }
     }
 
