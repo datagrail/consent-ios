@@ -545,7 +545,8 @@ extension UniversalConsentResyncTests {
         relaunch()
         XCTAssertNoThrow(try setCcpaOptout(true).get())
         network.postResult = .failure(.networkError("offline"))
-        XCTAssertThrowsError(try sync(userA).get())
+        // A failed flush does not fail the sync (lucasv-dg): the read and adopt succeeded.
+        XCTAssertNoThrow(try sync(userA).get())
         XCTAssertTrue(storage.loadCcpaWritePending(), "nothing reached the record")
         XCTAssertTrue(sut.getCcpaOptout(), "the record's older false does not replace it")
 
@@ -553,6 +554,21 @@ extension UniversalConsentResyncTests {
         network.lastPostBody = nil
         XCTAssertNoThrow(try sync(userA).get())
         XCTAssertEqual(writtenCcpaOptout(), true)
+        XCTAssertFalse(storage.loadCcpaWritePending())
+    }
+
+    /// lucasv-dg: a record that already holds the pending flag needs no signed write.
+    func testPendingFlagTheRecordAlreadyHoldsIsClearedWithoutAWrite() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA).get())
+
+        relaunch()
+        XCTAssertNoThrow(try setCcpaOptout(false).get())
+        XCTAssertTrue(storage.loadCcpaWritePending())
+        network.methods = []
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertEqual(network.methods, [.get], "the record already says false")
         XCTAssertFalse(storage.loadCcpaWritePending())
     }
 
@@ -565,7 +581,7 @@ extension UniversalConsentResyncTests {
         relaunch()
         XCTAssertNoThrow(try setCcpaOptout(true).get())
         network.postResult = .failure(.networkError("offline"))
-        XCTAssertThrowsError(try sync(userA, trackingSignal: .denied).get())
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get(), "a failed flush does not fail the sync")
         XCTAssertEqual(storedMarketing(), false, "local holds the suppressed view")
 
         network.postResult = .success(Data(#"{"status":"ok"}"#.utf8))

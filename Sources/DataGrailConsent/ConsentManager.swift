@@ -596,7 +596,9 @@ extension ConsentManager {
                         // so does a bound choice that has not reached the record yet.
                         if adoptsCcpaOptout, !identityGate.ccpaChanged(since: snapshot),
                            replacesLocal || !storage.loadCcpaWritePending() {
-                            storage.saveCcpaOptout(record.ccpaOptout)
+                            // Adopted with the record's time, as a category adopt is, so the next
+                            // toggle here is stamped strictly after it (a tie keeps an opt-out).
+                            storage.restoreCcpaChoice((record.ccpaOptout, record.updatedAtSeconds))
                         }
                         if recordsSyncState {
                             Self.recordStandaloneSyncState(
@@ -860,19 +862,14 @@ extension ConsentManager {
             )
             // The write carries the user's own CCPA flag, not a value the rehydrate adopted.
             if explicitChoice != nil, !keepsStoredCcpa { storage.restoreCcpaChoice(localCcpa) }
-            // The user's choice carries when they made it, so the edge ranks it by that and not by
-            // the send time. Otherwise a pending CCPA choice may be flushed (``pendingCcpaFlush``).
-            if let write = explicitChoice.map({ SyncWrite($0, decisionTs: localDecisionTs) })
-                ?? pendingCcpaFlush(outcome: outcome, binding: binding, localChoice: localChoice, userHash: userHash) {
-                writeUniversalConsent(
-                    identifier,
-                    apiKey: apiKey,
-                    preferences: write.preferences,
-                    decisionTs: write.decisionTs,
-                    getSignature: getSignature,
-                    // The flag setUserIdentifier reads for the write, in this same critical section.
-                    completion: bindingCompletion(write.syncedRaw, storage.loadCcpaOptout())
-                )
+            let target = SyncTarget(
+                identifier: identifier, apiKey: apiKey, getSignature: getSignature, userHash: userHash
+            )
+            if dispatchSyncWrite(
+                explicitChoice.map { SyncWrite($0, decisionTs: localDecisionTs) },
+                outcome: outcome, binding: binding, localChoice: localChoice,
+                target: target, bindingCompletion: bindingCompletion
+            ) {
                 return
             }
             dropUnreplacedLoginState(
@@ -1069,17 +1066,6 @@ extension ConsentManager {
         return stored == syncedLocal
     }
 
-    /// The choice a ``setCcpaOptout(_:completion:)`` write-through sends. While local state is
-    /// still what the last sync left, that is the record's RAW choice, so a suppressed view never
-    /// overwrites the user's real opt-ins for every device. Once the user has changed local state
-    /// since, it is sent as stored.
-    private func rawChoice(forStored stored: ConsentPreferences, userHash: String) -> ConsentPreferences {
-        guard unchangedSinceSync(stored, userHash: userHash),
-              let syncedRaw = syncState(for: userHash)?.syncedRaw
-        else { return stored }
-        return syncedRaw
-    }
-
     /// Persist what a sync left, unless the user saved a choice after `saveRevision` was captured:
     /// that save is a change the next re-sync must write, so no sync state is kept.
     private func recordSyncState(
@@ -1174,18 +1160,11 @@ extension ConsentManager {
     /// provenance (request time). It needs a found record that carries a choice (a miss or a signal-only
     /// record has nothing to flush over, and the setter never seeds config defaults) and an explicit
     /// local choice, as a setter write-through does. The stored flag is the pending value: the adopt
-    /// does not replace it. Same rule as consent-android.
-    ///
-    /// The adopt this re-sync just did is recorded as the sync state BEFORE the write, so a failed
-    /// flush still leaves the baseline matching what was stored. Otherwise a view the adopt changed
-    /// (an ATT transition to denied suppresses marketing) would read as a user change on the retry.
-    /// The flush is a re-sync, so the device is already bound to `userHash`; a success records the
-    /// same state again.
+    /// does not replace it. Same rule as consent-android. No side effects: see ``dispatchSyncWrite``.
     private func pendingCcpaFlush(
         outcome: RehydrateOutcome,
         binding: LoginBinding,
-        localChoice: ConsentPreferences?,
-        userHash: String?
+        localChoice: ConsentPreferences?
     ) -> SyncWrite? {
         guard binding.isResync,
               localChoice != nil,
@@ -1193,15 +1172,81 @@ extension ConsentManager {
               storage.loadCcpaWritePending(),
               let raw = outcome.raw
         else { return nil }
-        if let userHash, let saveRevision = outcome.saveRevision {
+        return SyncWrite(preferences: Self.ccpaOnly(raw), decisionTs: storage.loadCcpaDecisionTs(), syncedRaw: raw)
+    }
+
+    /// Where a sync's write goes: the identity and credentials it was called with.
+    private struct SyncTarget {
+        let identifier: String
+        let apiKey: String
+        let getSignature: UniversalConsentSignatureProvider?
+        let userHash: String?
+    }
+
+    /// Send the sync's write, if any; `false` when nothing was dispatched and the sync goes on to its
+    /// no-write tail. Runs inside the sync's critical section. The user's own choice (`explicit`)
+    /// carries when they made it, so the edge ranks it by that and not by the send time; otherwise a
+    /// pending CCPA choice may be flushed (``pendingCcpaFlush(outcome:binding:localChoice:)``):
+    ///
+    /// - A record that already holds the pending flag needs no signed write: the marker is cleared.
+    /// - The adopt this re-sync just did is recorded as the sync state BEFORE the write, so a failed
+    ///   flush still leaves the baseline matching what was stored (an ATT denial that suppressed a
+    ///   category must not read as a user change on the retry).
+    /// - A failed flush does not fail the sync: the read and adopt succeeded, so the identity binds
+    ///   and the session is set as usual, and the flag stays pending for the next re-sync.
+    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+    private func dispatchSyncWrite(
+        _ explicit: SyncWrite?,
+        outcome: RehydrateOutcome,
+        binding: LoginBinding,
+        localChoice: ConsentPreferences?,
+        target: SyncTarget,
+        bindingCompletion: BindingCompletionFactory
+    ) -> Bool {
+        if let explicit {
+            writeUniversalConsent(
+                target.identifier,
+                apiKey: target.apiKey,
+                preferences: explicit.preferences,
+                decisionTs: explicit.decisionTs,
+                getSignature: target.getSignature,
+                // The flag setUserIdentifier reads for the write, in this same critical section.
+                completion: bindingCompletion(explicit.syncedRaw, storage.loadCcpaOptout())
+            )
+            return true
+        }
+        guard let write = pendingCcpaFlush(outcome: outcome, binding: binding, localChoice: localChoice)
+        else { return false }
+        let pendingFlag = storage.loadCcpaOptout()
+        if outcome.ccpaOptout == pendingFlag {
+            storage.saveCcpaWritePending(false)
+            return false
+        }
+        if let userHash = target.userHash, let saveRevision = outcome.saveRevision {
             recordSyncState(
                 userHash: userHash,
                 syncedLocal: storage.loadPreferences(),
-                syncedRaw: raw,
+                syncedRaw: write.syncedRaw,
                 saveRevision: saveRevision
             )
         }
-        return SyncWrite(preferences: Self.ccpaOnly(raw), decisionTs: storage.loadCcpaDecisionTs(), syncedRaw: raw)
+        let carried = bindingCompletion(write.syncedRaw, pendingFlag)
+        let notCarried = bindingCompletion(write.syncedRaw, nil)
+        writeUniversalConsent(
+            target.identifier,
+            apiKey: target.apiKey,
+            preferences: write.preferences,
+            decisionTs: write.decisionTs,
+            getSignature: target.getSignature
+        ) { result in
+            if case let .failure(error) = result {
+                Logger.error("Pending CCPA choice not written; it stays pending: \(error.localizedDescription)")
+                notCarried(.success(()))
+            } else {
+                carried(result)
+            }
+        }
+        return true
     }
 
     /// The write a re-sync sends: the preferences, their decision time (`nil` lets the edge stamp
@@ -1267,9 +1312,9 @@ extension ConsentManager {
     /// never seeded). Otherwise it stays local and rides the next Universal Consent write. While
     /// bound, the choice is marked pending (``ConsentStorage/loadCcpaWritePending()``) until a write
     /// carries it, so a re-sync or rehydrate does not replace it with the record's older value, and
-    /// the next re-sync writes it with the record's raw choice (see ``pendingCcpaFlush``). The
-    /// RAW choice is the record's own (see ``rawChoice(forStored:userHash:)``) while local state is
-    /// still the possibly-suppressed view the sync left, never that view itself.
+    /// the next re-sync writes it as a CCPA-only write (see ``dispatchSyncWrite``). A write-through is
+    /// CCPA-only too unless categories can ride along safely (see the comment in the body), so a
+    /// possibly-suppressed local view is never sent as the user's choice.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     public func setCcpaOptout(_ optedOut: Bool, completion: @escaping (Result<Void, ConsentError>) -> Void) {
         // Storing the flag, checking the session, and dispatching the write run in one critical
@@ -1301,6 +1346,8 @@ extension ConsentManager {
             // where an empty-category write would leave an answered, all-off block instead).
             let syncState = syncState(for: session.userHash)
             let choiceDecisionTs = storage.loadDecisionTs()
+            // Trade-off when they ride: one write has one decision_ts, so the CCPA flag then shares
+            // the categories' older stamp and can lose to a newer CCPA choice elsewhere (TRUST-3361).
             let carriesCategories =
                 (!unchangedSinceSync(localChoice, userHash: session.userHash) && choiceDecisionTs != nil)
                 || (syncState != nil && syncState?.syncedRaw == nil)
@@ -1309,7 +1356,7 @@ extension ConsentManager {
                 apiKey: session.apiKey,
                 preferences: carriesCategories
                     ? localChoice
-                    : Self.ccpaOnly(rawChoice(forStored: localChoice, userHash: session.userHash)),
+                    : Self.ccpaOnly(localChoice),
                 decisionTs: carriesCategories ? choiceDecisionTs : storage.loadCcpaDecisionTs(),
                 getSignature: session.getSignature
             ) { [weak self] result in
