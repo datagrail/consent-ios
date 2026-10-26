@@ -434,7 +434,7 @@ extension UniversalConsentCcpaOptoutTests {
         )
     }
 
-    func testSetterAfterALocalChangeSinceTheSyncWritesTheNewLocalChoice() throws {
+    func testSetterAfterALocalChangeSinceTheSyncIsCcpaOnlyAndTheResyncWritesTheChange() throws {
         network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: false))
         XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
         // Matches the suppressed view exactly, yet it is the user's own choice and must win.
@@ -443,8 +443,10 @@ extension UniversalConsentCcpaOptoutTests {
         wait(for: [saved], timeout: 1.0)
 
         XCTAssertNoThrow(try setCcpaOptout(true).get())
+        XCTAssertEqual(writtenCookieOptions(), [:], "a CCPA change never resends the category map")
 
-        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false, "the user's own later choice")
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false, "the re-sync writes the user's choice")
     }
 }
 
@@ -514,5 +516,19 @@ extension UniversalConsentCcpaOptoutTests {
     func saveUserChoice(_ preferences: ConsentPreferences) throws {
         try storage.savePreferences(preferences)
         storage.saveDecisionTs()
+    }
+}
+
+// MARK: - TRUST-2591 decision (2026-10-26): a LOGIN adopts the record's flag whatever sync_optout says
+
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+extension UniversalConsentCcpaOptoutTests {
+    func testLoginWithTheGateOffAdoptsTheRecordsFlag() throws {
+        makeSut(syncOptout: false)
+        network.getResult = .success(foundRecordJSON(marketing: true, ccpaOptout: true))
+
+        XCTAssertNoThrow(try sync(userA).get())
+
+        XCTAssertTrue(sut.getCcpaOptout(), "a login is a record-wins reset, the CCPA flag included")
     }
 }

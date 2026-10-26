@@ -319,6 +319,7 @@ public class ConsentManager {
         apiKey: String,
         preferences: ConsentPreferences?,
         decisionTs: Int64?,
+        ccpaOnly: Bool = false,
         getSignature: UniversalConsentSignatureProvider?,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
@@ -349,6 +350,7 @@ public class ConsentManager {
             // When the stored choice was made (TRUST-3223). A caller-supplied choice has no known
             // time, so the edge stamps it with the request time, as before.
             decisionTs: decisionTs ?? (preferences == nil ? storage.loadDecisionTs() : nil),
+            ccpaOnly: ccpaOnly,
             completion: completion
         )
     }
@@ -1151,7 +1153,7 @@ extension ConsentManager {
     ///
     /// A bound CCPA choice that has not reached the record yet (a setter call after a relaunch, with
     /// no session to write through, or a failed write) is a local change too, and a re-sync is the
-    /// first moment a session exists again. The write is CCPA-only (``ccpaOnly(_:)``): it sends no
+    /// first moment a session exists again. The write is CCPA-only (no category, isCustomised or record metadata): it sends no
     /// category, so the categories another device set stay as they are whatever the stamp. It is
     /// stamped with when the setter was called (``ConsentStorage/loadCcpaDecisionTs(now:)``), not
     /// the record's time, which would tie the record's `ccpa_optout` register (every write carries
@@ -1172,7 +1174,7 @@ extension ConsentManager {
               storage.loadCcpaWritePending(),
               let raw = outcome.raw
         else { return nil }
-        return SyncWrite(preferences: Self.ccpaOnly(raw), decisionTs: storage.loadCcpaDecisionTs(), syncedRaw: raw)
+        return SyncWrite(preferences: raw, decisionTs: storage.loadCcpaDecisionTs(), syncedRaw: raw, ccpaOnly: true)
     }
 
     /// Where a sync's write goes: the identity and credentials it was called with.
@@ -1237,6 +1239,7 @@ extension ConsentManager {
             apiKey: target.apiKey,
             preferences: write.preferences,
             decisionTs: write.decisionTs,
+            ccpaOnly: write.ccpaOnly,
             getSignature: target.getSignature
         ) { result in
             if case let .failure(error) = result {
@@ -1255,24 +1258,20 @@ extension ConsentManager {
         let preferences: ConsentPreferences
         let decisionTs: Int64?
         let syncedRaw: ConsentPreferences
+        /// Sent as a CCPA-only write: `preferences` is not sent.
+        let ccpaOnly: Bool
 
         /// A write of `choice` itself: the record holds it once it lands.
         init(_ choice: ConsentPreferences, decisionTs: Int64?) {
-            self.init(preferences: choice, decisionTs: decisionTs, syncedRaw: choice)
+            self.init(preferences: choice, decisionTs: decisionTs, syncedRaw: choice, ccpaOnly: false)
         }
 
-        init(preferences: ConsentPreferences, decisionTs: Int64?, syncedRaw: ConsentPreferences) {
+        init(preferences: ConsentPreferences, decisionTs: Int64?, syncedRaw: ConsentPreferences, ccpaOnly: Bool) {
             self.preferences = preferences
             self.decisionTs = decisionTs
             self.syncedRaw = syncedRaw
+            self.ccpaOnly = ccpaOnly
         }
-    }
-
-    /// A CCPA-only write's preferences: `choice` with no category. The edge merges each category
-    /// separately and leaves an omitted one untouched, so a write that only means to change
-    /// `ccpa_optout` sends none and cannot undo a category choice made elsewhere at any stamp.
-    static func ccpaOnly(_ choice: ConsentPreferences) -> ConsentPreferences {
-        ConsentPreferences(isCustomised: choice.isCustomised, cookieOptions: [])
     }
 
     /// Whether a local choice made at `local` is strictly newer than a record whose latest decision
@@ -1335,29 +1334,17 @@ extension ConsentManager {
                   let localChoice = storage.loadPreferences()
             else { return }
             dispatched = true
-            // Unchanged since the last sync, the write is CCPA-only (TRUST-2902): no category rides
-            // along, so it cannot undo a newer revocation made elsewhere (TRUST-3311), and the choice
-            // is stamped with its own time (just now). A category-time stamp would tie the record's `ccpa_optout`
-            // register right after an adopt, and the edge keeps the stored opt-out on a tie, so an
-            // opt-in never landed. A local change since the sync rides along with when it was made.
-            // The categories ride along only when they cannot out-rank anything they should not: a
-            // local change with a known decision time (an unknown one would go out stamped now,
-            // P0-06), or a last sync that found no category choice (a miss or a signal-only record,
-            // where an empty-category write would leave an answered, all-off block instead).
-            let syncState = syncState(for: session.userHash)
-            let choiceDecisionTs = storage.loadDecisionTs()
-            // Trade-off when they ride: one write has one decision_ts, so the CCPA flag then shares
-            // the categories' older stamp and can lose to a newer CCPA choice elsewhere (TRUST-3361).
-            let carriesCategories =
-                (!unchangedSinceSync(localChoice, userHash: session.userHash) && choiceDecisionTs != nil)
-                || (syncState != nil && syncState?.syncedRaw == nil)
+            // A CCPA-only write (TRUST-2591 decision, 2026-10-26, as consent-banner #756): the flag
+            // alone, dated when this CCPA choice was made. It never resends the category map, so it
+            // cannot undo a newer revocation made elsewhere (TRUST-3311), and the CCPA register is
+            // not tied to a category time. A local category change made since the sync is written
+            // by the next re-sync with its own decision time.
             writeUniversalConsent(
                 session.identifier,
                 apiKey: session.apiKey,
-                preferences: carriesCategories
-                    ? localChoice
-                    : Self.ccpaOnly(localChoice),
-                decisionTs: carriesCategories ? choiceDecisionTs : storage.loadCcpaDecisionTs(),
+                preferences: localChoice,
+                decisionTs: storage.loadCcpaDecisionTs(),
+                ccpaOnly: true,
                 getSignature: session.getSignature
             ) { [weak self] result in
                 if case .success = result, let self {

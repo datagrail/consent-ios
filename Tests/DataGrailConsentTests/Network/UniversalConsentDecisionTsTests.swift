@@ -150,18 +150,24 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
     /// TRUST-3311 (consent-react #47): a setCcpaOptout write-through that carries a local change made
     /// since the sync stamps it with the stored choice's decision time, so it cannot out-rank a newer
     /// revocation elsewhere. (Unchanged since the sync, it sends no category at all: TRUST-2902.)
-    func testSetterWriteThroughCarriesTheStoredChoicesDecisionTime() throws {
+    func testSetterWriteThroughIsCcpaOnlyDatedWhenTheCcpaChoiceWasMade() throws {
         try bindAfterFirstSync()
         try save(marketing: true)
-        let localTs = try XCTUnwrap(storage.loadDecisionTs())
+        storage.saveDecisionTs(1_600_000_100)
 
         let expectation = expectation(description: "setCcpaOptout")
         sut.setCcpaOptout(true) { _ in expectation.fulfill() }
         wait(for: [expectation], timeout: 1.0)
 
         XCTAssertEqual(network.methods, [.post])
-        XCTAssertEqual((writtenBody()?["decision_ts"] as? NSNumber)?.int64Value, localTs, "not now")
-        XCTAssertEqual(writtenBody()?["ccpa_optout"] as? Bool, true)
+        // TRUST-2591 decision (2026-10-26), same body as consent-banner #756: the flag and its
+        // provenance only. The category change is not resent; the next re-sync writes it.
+        let body = try XCTUnwrap(writtenBody())
+        XCTAssertEqual(Set(body.keys), ["customer_id", "user_hash", "consent_preferences", "ccpa_optout",
+                                        "is_explicit", "decision_ts"])
+        XCTAssertEqual(body["consent_preferences"] as? [String: [String: Bool]], ["cookieOptions": [:]])
+        XCTAssertEqual(body["ccpa_optout"] as? Bool, true)
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, storage.loadCcpaDecisionTs(), "the CCPA time")
     }
 
     /// TRUST-2902 (lucasv-dg, consent-android #74): a local change stored before decision times were
