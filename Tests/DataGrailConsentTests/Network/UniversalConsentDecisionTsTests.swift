@@ -334,7 +334,7 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func foundRecordJSON(marketing: Bool, updatedAt: Int64?) -> Data {
+    private func foundRecordJSON(marketing: Bool, updatedAt: Int64?, ccpaOptout: Bool = false) -> Data {
         let updatedAtEntry = updatedAt.map { seconds -> String in
             let iso = ISO8601DateFormatter()
             iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -353,7 +353,7 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
           "consent_mode": "optin",
           "platform": "web",
           "gpc": false,
-          "ccpa_optout": false\(updatedAtEntry)
+          "ccpa_optout": \(ccpaOptout)\(updatedAtEntry)
         }
         """.utf8)
     }
@@ -371,6 +371,54 @@ extension UniversalConsentDecisionTsTests {
         let localTs = try XCTUnwrap(storage.loadDecisionTs())
         let recordTs = localTs - 60
 
+        let outcome = try resyncSavingDuringTheRead(foundRecordJSON(marketing: false, updatedAt: recordTs))
+
+        XCTAssertNoThrow(try outcome.get())
+        XCTAssertEqual(storedMarketing(), true, "the mid-sync save is kept, not the pre-read choice")
+        XCTAssertNotEqual(storage.loadDecisionTs(), recordTs, "the record was not adopted either")
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(storage.loadDecisionTs()), localTs)
+        XCTAssertNotNil(storage.loadSyncState(), "the written save counts as synced")
+        // The write carries the mid-sync save with its own time, not the pre-read choice.
+        let body = try XCTUnwrap(writtenBody())
+        let prefs = try XCTUnwrap(body["consent_preferences"] as? [String: Any])
+        let written = try XCTUnwrap(prefs["cookieOptions"] as? [String: Bool])
+        XCTAssertEqual(written["dg-category-marketing"], true)
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, storage.loadDecisionTs())
+    }
+
+    /// A save made during the read is newer than anything the read saw. A record written by a device
+    /// whose clock is ahead must not out-rank it at the edge, while this sync records it as synced.
+    func testASaveDuringTheReadIsStampedAfterARecordFromAClockAhead() throws {
+        try bindAfterFirstSync()
+        try save(marketing: false)
+        let recordTs = try XCTUnwrap(storage.loadDecisionTs()) + 100
+
+        let outcome = try resyncSavingDuringTheRead(foundRecordJSON(marketing: false, updatedAt: recordTs))
+
+        XCTAssertNoThrow(try outcome.get())
+        XCTAssertEqual(storedMarketing(), true)
+        XCTAssertEqual(storage.loadDecisionTs(), recordTs + 1, "stored so, as a CCPA adopt floors the next toggle")
+        let body = try XCTUnwrap(writtenBody())
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, recordTs + 1)
+    }
+
+    /// The keep-local path adopts the record's CCPA flag with the record's time, as the adopt path
+    /// does, so the next toggle here is stamped strictly after it.
+    func testAKeepLocalReSyncAdoptsTheRecordsCcpaFlagWithItsTime() throws {
+        try bindAfterFirstSync()
+        try save(marketing: false)
+        let recordTs = try XCTUnwrap(storage.loadDecisionTs()) - 60
+        network.getResult = .success(foundRecordJSON(marketing: true, updatedAt: recordTs, ccpaOptout: true))
+
+        try sync().get()
+
+        XCTAssertEqual(storedMarketing(), false, "the newer local choice is kept")
+        XCTAssertTrue(storage.loadCcpaOptout())
+        XCTAssertEqual(storage.loadCcpaDecisionTs(), recordTs)
+    }
+
+    /// Re-sync with the read held open, save `marketing: true` while it is in flight, then answer it.
+    private func resyncSavingDuringTheRead(_ record: Data) throws -> Result<Void, ConsentError> {
         network.deferGet = true
         let synced = expectation(description: "sync")
         var outcome: Result<Void, ConsentError> = .failure(.notInitialized)
@@ -389,21 +437,9 @@ extension UniversalConsentDecisionTsTests {
         )
         let pendingGet = try XCTUnwrap(network.pendingGetCompletion)
         network.deferGet = false
-        // The user changes their mind while the read is in flight.
         try save(marketing: true)
-        pendingGet(.success(foundRecordJSON(marketing: false, updatedAt: recordTs)))
+        pendingGet(.success(record))
         wait(for: [synced], timeout: 1.0)
-
-        XCTAssertNoThrow(try outcome.get())
-        XCTAssertEqual(storedMarketing(), true, "the mid-sync save is kept, not the pre-read choice")
-        XCTAssertNotEqual(storage.loadDecisionTs(), recordTs, "the record was not adopted either")
-        XCTAssertGreaterThanOrEqual(try XCTUnwrap(storage.loadDecisionTs()), localTs)
-        XCTAssertNotNil(storage.loadSyncState(), "the written save counts as synced")
-        // The write carries the mid-sync save with its own time, not the pre-read choice.
-        let body = try XCTUnwrap(writtenBody())
-        let prefs = try XCTUnwrap(body["consent_preferences"] as? [String: Any])
-        let written = try XCTUnwrap(prefs["cookieOptions"] as? [String: Bool])
-        XCTAssertEqual(written["dg-category-marketing"], true)
-        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, storage.loadDecisionTs())
+        return outcome
     }
 }

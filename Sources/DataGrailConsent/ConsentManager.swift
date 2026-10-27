@@ -605,7 +605,11 @@ extension ConsentManager {
                             // Nothing else is stored, the config version included: the kept choice
                             // keeps the version it was made under, so a config bump still re-prompts.
                             outcome.keepReason = reason
-                            if adoptsRecordCcpa { storage.saveCcpaOptout(record.ccpaOptout) }
+                            // With the record's time, as the adopt below, so the next toggle here is
+                            // stamped strictly after it (saveCcpaOptout would drop the time).
+                            if adoptsRecordCcpa {
+                                storage.restoreCcpaChoice((record.ccpaOptout, record.updatedAtSeconds))
+                            }
                             // The baseline the sync compares against: a kept choice that is then
                             // written counts as synced.
                             outcome.saveRevision = identityGate.preferencesSaveRevision
@@ -890,7 +894,9 @@ extension ConsentManager {
             // record the rehydrate already decided that (keepReason); a miss or a signal-only record,
             // which have no persist, is decided here by the same rule (writeDecision).
             let savedDuringRead = writesMidReadSave(outcome, explicitChoice, localDecisionTs, snapshot, binding)
-            let writeDecisionTs = savedDuringRead ? storage.loadDecisionTs() : localDecisionTs
+            let writeDecisionTs = savedDuringRead ? midReadSaveDecisionTs(outcome) : localDecisionTs
+            // A save during the read is a local choice even when there was none before it.
+            let hasLocalChoice = savedDuringRead ? storage.loadPreferences() != nil : hadLocalChoice
             let writeChoice = adoptOrKeepLocal(
                 savedDuringRead ? storage.loadPreferences() : explicitChoice,
                 decisionTs: writeDecisionTs, outcome: outcome, binding: binding,
@@ -899,12 +905,11 @@ extension ConsentManager {
             // The write carries the stored CCPA flag as it is now: the rehydrate adopted the record's
             // unless a local CCPA choice is pending (or landed mid-read), and the flag is its own
             // register, so a write never carries a stale value over a newer CCPA choice made elsewhere.
-            let target = SyncTarget(
-                identifier: identifier, apiKey: apiKey, getSignature: getSignature, userHash: userHash
-            )
+            let target = SyncTarget(identifier: identifier, apiKey: apiKey,
+                                    getSignature: getSignature, userHash: userHash)
             if dispatchSyncWrite(
                 writeChoice.map { SyncWrite($0, decisionTs: writeDecisionTs) },
-                outcome: outcome, binding: binding, hadLocalChoice: hadLocalChoice,
+                outcome: outcome, binding: binding, hadLocalChoice: hasLocalChoice,
                 target: target, bindingCompletion: bindingCompletion
             ) {
                 return
@@ -912,7 +917,7 @@ extension ConsentManager {
             dropUnreplacedLoginState(
                 outcome: outcome,
                 binding: binding,
-                hadLocalChoice: hadLocalChoice,
+                hadLocalChoice: hasLocalChoice,
                 keepsStoredCcpa: keepsStoredCcpa,
                 onRehydrated: onRehydrated
             )
@@ -970,9 +975,26 @@ extension ConsentManager {
         _ snapshot: IdentityGate.Snapshot,
         _ binding: LoginBinding
     ) -> Bool {
-        if outcome.keptLocal { return outcome.keepReason == .savedDuringRead }
+        // Also a save that landed after the rehydrate kept a newer pre-read choice, between its
+        // critical section and this one: it replaced that choice, so it is what is written.
+        if outcome.keptLocal {
+            return outcome.keepReason == .savedDuringRead || savedDuringRead(since: snapshot, binding: binding)
+        }
         return outcome.raw == nil
             && writeDecision(explicitChoice, decisionTs: decisionTs, outcome, snapshot, binding) == .savedDuringRead
+    }
+
+    /// The decision time a save made during the read is written with. That save is newer than
+    /// anything the read saw, so when its own time is not after the record's (a record written from a
+    /// device whose clock is ahead) it is stamped one second after the record, and stored so, as a
+    /// CCPA adopt floors the next toggle: otherwise the edge keeps the record, and this sync would
+    /// still record the save as synced, so the next re-sync would adopt the record over it unseen.
+    private func midReadSaveDecisionTs(_ outcome: RehydrateOutcome) -> Int64? {
+        let saved = storage.loadDecisionTs()
+        guard outcome.raw != nil, let saved, let recordTs = outcome.recordDecisionTs, saved <= recordTs
+        else { return saved }
+        storage.saveDecisionTs(recordTs + 1)
+        return recordTs + 1
     }
 
     /// The one write rule for a re-sync's local choice over what the read found: `savedDuringRead`
