@@ -603,7 +603,12 @@ public extension DataGrailConsent {
     /// - Parameters:
     ///   - optedOut: `true` when the user opts out of sale/sharing.
     ///   - completion: Called on the main queue; a write-through failure is reported here and
-    ///     the local flag is kept.
+    ///     the local flag is kept. A failure can follow a partial write: a write-through that sends
+    ///     the categories first and then the CCPA flag reports `.failure(.notInitialized)` when the
+    ///     categories reached the record but the SDK was released before the CCPA write could be
+    ///     sent. The flag is still stored and pending, so the next successful
+    ///     ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` for that user
+    ///     writes it. Do not retry the whole call on a failure: the choice is already recorded here.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setCcpaOptout(_ optedOut: Bool, completion: ((Result<Void, ConsentError>) -> Void)? = nil) {
         guard let manager else {
