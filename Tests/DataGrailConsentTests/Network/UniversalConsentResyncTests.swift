@@ -381,26 +381,59 @@ extension UniversalConsentResyncTests {
         XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false)
     }
 
-    func testSaveTheResyncsAdoptOverwroteIsNotLaterWrittenAsTheSuppressedView() throws {
+    /// An unchanged re-sync whose read is in flight when the user saves keeps that
+    /// save rather than adopting the record over it, and writes it, not the pre-read choice.
+    func testSaveDuringAnUnchangedResyncReadIsKeptAndWritten() throws {
         network.getResult = .success(foundRecordJSON(marketing: true))
         XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
 
         network.deferGet = true
+        network.methods = []
+        network.lastPostBody = nil
+        network.postBodies = []
         var outcome: Result<Void, ConsentError>?
         sut.syncUserIdentifier(userA, apiKey: testApiKey, trackingSignal: .denied) { outcome = $0 }
-        try save(choice(marketing: true, analytics: false))
+        try save(choice(marketing: false, analytics: true))
         network.deferGet = false
-        // The adopt lands after the save and overwrites it with the record's suppressed view.
         try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
         XCTAssertNoThrow(try XCTUnwrap(outcome).get())
-        XCTAssertEqual(storedMarketing(), false)
+
+        XCTAssertEqual(storedMarketing(), false, "the record does not replace the mid-read save")
+        // The Universal Consent write itself (it carries user_hash), not the save's own event POST.
+        let ucWrites = network.postBodies.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            .filter { $0["user_hash"] != nil }
+        XCTAssertEqual(ucWrites.count, 1, "the mid-read save is written by the sync")
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-marketing"], false)
+        XCTAssertEqual(writtenCookieOptions()?["dg-category-analytics"], true)
+    }
+
+    /// A save made during the read that equals the record's raw choice changes nothing on the
+    /// record, so it is not written; and under ATT denial the suppressed view is never written as a
+    /// user change by the next re-sync either.
+    func testMidReadSaveEqualToTheRecordUnderATTDenialIsNotWrittenNowOrLater() throws {
+        network.getResult = .success(foundRecordJSON(marketing: true))
+        XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
+
+        network.deferGet = true
+        network.methods = []
+        network.lastPostBody = nil
+        var outcome: Result<Void, ConsentError>?
+        sut.syncUserIdentifier(userA, apiKey: testApiKey, trackingSignal: .denied) { outcome = $0 }
+        // Exactly the record's raw choice (essential and marketing on).
+        try save(ConsentPreferences(isCustomised: true, cookieOptions: [
+            CategoryConsent(gtmKey: "dg-category-essential", isEnabled: true),
+            CategoryConsent(gtmKey: "dg-category-marketing", isEnabled: true),
+        ]))
+        network.lastPostBody = nil  // the save's own consent-event POST
+        network.deferGet = false
+        try XCTUnwrap(network.pendingGetCompletion)(network.getResult)
+        XCTAssertNoThrow(try XCTUnwrap(outcome).get())
+        XCTAssertNil(network.lastPostBody, "equal to the record's raw choice: nothing to write")
 
         network.methods = []
         network.lastPostBody = nil
         XCTAssertNoThrow(try sync(userA, trackingSignal: .denied).get())
-
-        XCTAssertEqual(network.methods, [.get], "the suppressed view is not a user change")
-        XCTAssertNil(network.lastPostBody)
+        XCTAssertNil(network.lastPostBody, "the suppressed view is not a user change")
     }
 
     func testSetterDuringAFirstLoginReadIsNotRevertedByTheNextResync() throws {

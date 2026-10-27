@@ -566,7 +566,9 @@ public extension ConsentService {
     }
 
     /// The `platform` this SDK declares on Universal Consent writes and sends as the GET hint.
-    static let universalConsentPlatform = "ios"
+    /// Explicitly `internal`: a member of a `public extension` is otherwise public, and this is a wire
+    /// constant, not host-facing API.
+    internal static let universalConsentPlatform = "ios"
 
     /// Read a user's stored Universal Consent record for cross-device rehydration.
     ///
