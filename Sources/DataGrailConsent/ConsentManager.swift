@@ -11,9 +11,10 @@ public class ConsentManager {
     /// What that sync left is persisted separately (``ConsentStorage/loadSyncState()``).
     var universalConsentSession: UniversalConsentSession?
 
-    /// Test seam: runs once a sync's read has persisted its outcome and before the outcome is
-    /// applied, the window a user save can land in on another thread. `nil` outside tests.
-    var afterSyncReadPersisted: (() -> Void)?
+    /// Test seam, injected once at init and never mutated: runs once a sync's read has persisted its
+    /// outcome and before the outcome is applied, the window a user save can land in on another
+    /// thread. `nil` outside tests (the public initializer never sets it).
+    private let afterSyncReadPersisted: (() -> Void)?
 
     /// Serializes logout/reset against an in-flight ``syncUserIdentifier`` so a login whose
     /// network round-trip outlives a logout cannot persist, notify, write, or rebind after it.
@@ -24,14 +25,30 @@ public class ConsentManager {
         currentConfig
     }
 
-    public init(
+    public convenience init(
         storage: ConsentStorage,
         configService: ConfigService,
         consentService: ConsentService
     ) {
+        self.init(
+            storage: storage,
+            configService: configService,
+            consentService: consentService,
+            afterSyncReadPersisted: nil
+        )
+    }
+
+    /// `afterSyncReadPersisted` is a test seam (see the property); production code passes `nil`.
+    init(
+        storage: ConsentStorage,
+        configService: ConfigService,
+        consentService: ConsentService,
+        afterSyncReadPersisted: (() -> Void)?
+    ) {
         self.storage = storage
         self.configService = configService
         self.consentService = consentService
+        self.afterSyncReadPersisted = afterSyncReadPersisted
         // The persisted sync state only describes the identity it was recorded for.
         if let state = storage.loadSyncState(), state.userHash != storage.loadBoundUserHash() {
             storage.clearSyncState()
@@ -904,7 +921,7 @@ extension ConsentManager {
                 outcome, explicitChoice: explicitChoice, localDecisionTs: localDecisionTs,
                 hadLocalChoice: hadLocalChoice, snapshot: snapshot, binding: binding, onRehydrated: onRehydrated
             )
-            writeLandsAsSent = Self.edgeStoresAsSent(write?.decisionTs)
+            writeLandsAsSent = write.map(Self.landsAsSent) ?? true
             // The write carries the stored CCPA flag as it is now: the rehydrate adopted the record's
             // unless a local CCPA choice is pending (or landed mid-read), and the flag is its own
             // register, so a write never carries a stale value over a newer CCPA choice made elsewhere.
@@ -959,8 +976,18 @@ extension ConsentManager {
             writesRegardless: savedDuringRead, onRehydrated: onRehydrated
         )
         guard let writeChoice else { return (nil, hasLocalChoice) }
-        let decisionTs = savedDuringRead ? midReadSaveDecisionTs(outcome) : localDecisionTs
-        return (SyncWrite(writeChoice, decisionTs: decisionTs), hasLocalChoice)
+        guard savedDuringRead else { return (SyncWrite(writeChoice, decisionTs: localDecisionTs), hasLocalChoice) }
+        let (decisionTs, stampedPastRecord) = midReadSaveDecisionTs(outcome)
+        return (SyncWrite(writeChoice, decisionTs: decisionTs, stampedPastRecord: stampedPastRecord), hasLocalChoice)
+    }
+
+    /// Whether this sync may record `write` as synced, i.e. the edge surely stores it as sent. Not a
+    /// save stamped one second past the record (``midReadSaveDecisionTs(_:)``): that stamp ties a
+    /// record sitting at the edge's future clamp, and this device cannot see the edge's clock, so
+    /// whether it landed is left to the next re-sync (which adopts it if it did, and writes it again
+    /// if the record won the tie). Any other write: ``edgeStoresAsSent(_:now:)``, one clock read.
+    private static func landsAsSent(_ write: SyncWrite) -> Bool {
+        !write.stampedPastRecord && edgeStoresAsSent(write.decisionTs)
     }
 
     /// Whether the edge stores a write's decision time as sent (`nil`, no provenance, is the request
@@ -1023,6 +1050,9 @@ extension ConsentManager {
         // Over an adopted record: a save that landed after the persist, between its critical
         // section and this one, replaced the adopted choice (``completeAdopt`` leaves it alone), so
         // it is written now, as on the keep-local path, not left for a re-sync a logout may preempt.
+        // On a LOGIN too, deliberately (no `isResync` check): the persist already replaced local state
+        // with the record, so a save after it is a choice made over the record, not pre-login state
+        // the login replaces. A save during a LOGIN's read is different: the persist overwrites it.
         if outcome.raw != nil, let saveRevision = outcome.saveRevision {
             return identityGate.preferencesSaveRevision != saveRevision
         }
@@ -1037,20 +1067,24 @@ extension ConsentManager {
     /// still record the save as synced, so the next re-sync would adopt the record over it unseen.
     /// Called only once the save is known to be written, so a save that sends nothing keeps its time.
     ///
-    /// The record's time is first capped at the edge's future clamp (now + 300 s), the latest time
-    /// the edge stores, as consent-react's record floor is. A record already at the clamp leaves
-    /// the save one second past it, which the edge restamps to the clamp, where the tie keeps the
-    /// record: ``applySyncOutcome`` then records no sync state, so the next re-sync (its time now
-    /// within the clamp) writes the save again.
-    private func midReadSaveDecisionTs(_ outcome: RehydrateOutcome) -> Int64? {
+    /// The stamp is never capped: it must sort after the record, or the next re-sync would find the
+    /// save older than the record and adopt the record over it. The edge clamps every stored time to
+    /// its own now + 300 s, so the record already sits at or below that clamp, and one second past it
+    /// is stored as sent once the edge's clock has moved past the record's clamp second. When it has
+    /// not (a record at the clamp, written in the same second), the edge restamps the save to the
+    /// clamp and the tie keeps the record. So the second value (`stampedPastRecord`) tells
+    /// ``applySyncOutcome`` not to record the save as synced: the next re-sync then either finds the
+    /// save on the record and adopts it, or finds the record unchanged, sees the save as newer and
+    /// writes it again. (A record more than 599 s ahead of this clock, i.e. this clock is that far
+    /// behind the edge's, puts the stamp past the stored tolerance, so it reads back as unknown: the
+    /// write still lands, but in that same-second tie the next re-sync adopts the record.)
+    private func midReadSaveDecisionTs(_ outcome: RehydrateOutcome) -> (Int64?, stampedPastRecord: Bool) {
         let saved = storage.loadDecisionTs()
         guard outcome.raw != nil, let saved, let recordTs = outcome.recordDecisionTs, saved <= recordTs
-        else { return saved }
-        let edgeLatest = ConsentStorage.nowSeconds() + ConsentStorage.decisionTsFutureToleranceSeconds
-        let stamp = min(recordTs, edgeLatest) + 1
-        guard stamp > saved else { return saved }
+        else { return (saved, false) }
+        let stamp = recordTs + 1
         storage.saveDecisionTs(stamp)
-        return stamp
+        return (stamp, true)
     }
 
     /// The one write rule for a re-sync's local choice over what the read found: `savedDuringRead`
@@ -1427,16 +1461,29 @@ extension ConsentManager {
         /// Sent as a CCPA-only write: `preferences` is not sent.
         let ccpaOnly: Bool
 
+        /// `decisionTs` was moved one second past the found record's (``midReadSaveDecisionTs(_:)``).
+        let stampedPastRecord: Bool
+
         /// A write of `choice` itself: the record holds it once it lands.
-        init(_ choice: ConsentPreferences, decisionTs: Int64?) {
-            self.init(preferences: choice, decisionTs: decisionTs, syncedRaw: choice, ccpaOnly: false)
+        init(_ choice: ConsentPreferences, decisionTs: Int64?, stampedPastRecord: Bool = false) {
+            self.init(
+                preferences: choice, decisionTs: decisionTs, syncedRaw: choice,
+                ccpaOnly: false, stampedPastRecord: stampedPastRecord
+            )
         }
 
-        init(preferences: ConsentPreferences, decisionTs: Int64?, syncedRaw: ConsentPreferences, ccpaOnly: Bool) {
+        init(
+            preferences: ConsentPreferences,
+            decisionTs: Int64?,
+            syncedRaw: ConsentPreferences,
+            ccpaOnly: Bool,
+            stampedPastRecord: Bool = false
+        ) {
             self.preferences = preferences
             self.decisionTs = decisionTs
             self.syncedRaw = syncedRaw
             self.ccpaOnly = ccpaOnly
+            self.stampedPastRecord = stampedPastRecord
         }
     }
 

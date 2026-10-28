@@ -608,7 +608,10 @@ public extension DataGrailConsent {
     ///     categories reached the record but the SDK was released before the CCPA write could be
     ///     sent. The flag is still stored and pending, so the next successful
     ///     ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` for that user
-    ///     writes it. Do not retry the whole call on a failure: the choice is already recorded here.
+    ///     writes it. Once the SDK is initialized, do not retry the whole call on a failure: the
+    ///     choice is already recorded here. A call made before ``initialize(configUrl:completion:)``
+    ///     has succeeded also fails with `.notInitialized`, but stores nothing: make it again after
+    ///     initialization succeeds.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setCcpaOptout(_ optedOut: Bool, completion: ((Result<Void, ConsentError>) -> Void)? = nil) {
         guard let manager else {

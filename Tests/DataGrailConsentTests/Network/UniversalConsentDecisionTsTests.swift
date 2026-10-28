@@ -12,6 +12,8 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
     private var network: MethodAwareMockNetworkClient!
     private var sut: ConsentManager!
     private var signedPayloads: [UniversalConsentSigningPayload] = []
+    /// Run (once) by the manager's injected seam after a sync's read persisted its outcome.
+    private var onReadPersisted: (() -> Void)?
     private let testApiKey = "dg_live_test_key_123"
     private let privacyDomain = "consent.test.com"
     private let userA = "uc-opaque-id-7f3a9c"
@@ -21,11 +23,17 @@ final class UniversalConsentDecisionTsTests: XCTestCase {
         storage = ConsentStorage()
         storage.clearAll()
         signedPayloads = []
+        onReadPersisted = nil
         network = MethodAwareMockNetworkClient()
         sut = ConsentManager(
             storage: storage,
             configService: ConfigService(networkClient: network, storage: storage),
-            consentService: ConsentService(networkClient: network, storage: storage, privacyDomain: privacyDomain)
+            consentService: ConsentService(networkClient: network, storage: storage, privacyDomain: privacyDomain),
+            afterSyncReadPersisted: { [weak self] in
+                let hook = self?.onReadPersisted
+                self?.onReadPersisted = nil
+                hook?()
+            }
         )
         loadConfig()
     }
@@ -417,28 +425,58 @@ extension UniversalConsentDecisionTsTests {
         XCTAssertLessThan(try XCTUnwrap(storage.loadDecisionTs()), recordTs, "the save keeps its own time")
     }
 
-    /// The stamp that moves a mid-read save past the record is capped at the edge's future clamp
-    /// (now + 300 s), as consent-react caps its record floor. One past the clamp is restamped to it,
-    /// where the record wins the tie, so the save is not recorded as synced: the next re-sync writes
-    /// it again instead of adopting the record over it.
-    func testAMidReadSaveOverARecordPastTheEdgeClampIsCappedAndNotRecordedAsSynced() throws {
+    /// A mid-read save over a record far ahead of this clock (this clock is behind the edge's, which
+    /// clamps to its own now + 300 s) is stamped one second after the record, never capped below it:
+    /// a capped stamp would be older than the record, and the next re-sync would adopt the record
+    /// over the save. It is not recorded as synced; the next re-sync finds it on the record and keeps it.
+    func testAMidReadSaveOverARecordFarAheadIsStampedAfterItUncapped() throws {
         try bindAfterFirstSync()
         try save(marketing: false)
-        let before = ConsentStorage.nowSeconds()
-        let clamp = ConsentStorage.decisionTsFutureToleranceSeconds
-        let recordTs = before + 1000
+        let recordTs = ConsentStorage.nowSeconds() + 1000
 
         let outcome = try resyncSavingDuringTheRead(foundRecordJSON(marketing: false, updatedAt: recordTs))
 
-        let after = ConsentStorage.nowSeconds()
         XCTAssertNoThrow(try outcome.get())
         XCTAssertEqual(storedMarketing(), true)
-        let stamp = try XCTUnwrap(storage.loadDecisionTs(), "the capped stamp still reads back")
-        XCTAssertGreaterThanOrEqual(stamp, before + clamp + 1)
-        XCTAssertLessThanOrEqual(stamp, after + clamp + 1)
         let body = try XCTUnwrap(writtenBody())
-        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, stamp)
-        XCTAssertNil(storage.loadSyncState(), "a write the edge may keep the record over is not synced")
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, recordTs + 1, "after the record, not capped")
+        XCTAssertNil(storage.loadSyncState(), "a stamp one past the record may tie it at the edge's clamp")
+
+        // The edge stored the save (its clock is past the record's clamp second): the next re-sync
+        // finds it on the record and keeps it.
+        network.methods = []
+        network.getResult = .success(foundRecordJSON(marketing: true, updatedAt: recordTs + 1))
+        XCTAssertNoThrow(try sync().get())
+        XCTAssertEqual(network.methods, [.get])
+        XCTAssertEqual(storedMarketing(), true, "the save is not reverted")
+    }
+
+    /// A mid-read save over a record at the edge's future clamp ties it there (the edge restamps one
+    /// past the clamp to the clamp, and a tie keeps the record). The save is not recorded as synced,
+    /// so the next re-sync against the unchanged record sees the save as newer and writes it again.
+    func testAMidReadSaveThatTiesARecordAtTheClampIsWrittenAgainOnTheNextReSync() throws {
+        try bindAfterFirstSync()
+        try save(marketing: false)
+        let recordTs = ConsentStorage.nowSeconds() + ConsentStorage.decisionTsFutureToleranceSeconds
+
+        let outcome = try resyncSavingDuringTheRead(foundRecordJSON(marketing: false, updatedAt: recordTs))
+
+        XCTAssertNoThrow(try outcome.get())
+        XCTAssertEqual(storage.loadDecisionTs(), recordTs + 1, "stored so it still reads back")
+        XCTAssertNil(storage.loadSyncState())
+
+        // The edge kept the record on the tie: the record read back is unchanged.
+        network.methods = []
+        network.postBodies = []
+        network.getResult = .success(foundRecordJSON(marketing: false, updatedAt: recordTs))
+        XCTAssertNoThrow(try sync().get())
+
+        XCTAssertEqual(network.methods, [.get, .post], "the save is written again, not adopted over")
+        let body = try XCTUnwrap(writtenBody())
+        let prefs = try XCTUnwrap(body["consent_preferences"] as? [String: Any])
+        XCTAssertEqual((prefs["cookieOptions"] as? [String: Bool])?["dg-category-marketing"], true)
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, recordTs + 1)
+        XCTAssertEqual(storedMarketing(), true)
     }
 
     /// A save that lands after an adopting re-sync persisted the record, before the sync applies
@@ -449,8 +487,7 @@ extension UniversalConsentDecisionTsTests {
         try save(marketing: false)
         let recordTs = try XCTUnwrap(storage.loadDecisionTs()) + 5
         network.getResult = .success(foundRecordJSON(marketing: false, updatedAt: recordTs))
-        sut.afterSyncReadPersisted = { [unowned self] in
-            self.sut.afterSyncReadPersisted = nil
+        onReadPersisted = { [unowned self] in
             XCTAssertEqual(self.storage.loadDecisionTs(), recordTs, "the record was adopted")
             try? self.save(marketing: true)
         }
@@ -463,6 +500,30 @@ extension UniversalConsentDecisionTsTests {
         let prefs = try XCTUnwrap(body["consent_preferences"] as? [String: Any])
         let written = try XCTUnwrap(prefs["cookieOptions"] as? [String: Bool])
         XCTAssertEqual(written["dg-category-marketing"], true)
+        let stamp = try XCTUnwrap(storage.loadDecisionTs())
+        XCTAssertGreaterThan(stamp, recordTs)
+        XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, stamp)
+    }
+
+    /// On a LOGIN too: the persist already replaced local state with the record, so a save after it
+    /// is a choice made over the record, and the login writes it (deliberately, unlike a save during
+    /// a LOGIN's read, which the persist overwrites).
+    func testASaveAfterALoginsAdoptPersistIsWritten() throws {
+        let recordTs = ConsentStorage.nowSeconds() - 60
+        network.getResult = .success(foundRecordJSON(marketing: false, updatedAt: recordTs))
+        onReadPersisted = { [unowned self] in
+            XCTAssertEqual(self.storage.loadDecisionTs(), recordTs, "the record was adopted")
+            try? self.save(marketing: true)
+        }
+
+        try sync().get()
+
+        XCTAssertNotNil(storage.loadBoundUserHash(), "the login bound")
+        XCTAssertEqual(storedMarketing(), true, "the save is kept, not replaced by the record")
+        XCTAssertEqual(network.methods, [.post])
+        let body = try XCTUnwrap(writtenBody())
+        let prefs = try XCTUnwrap(body["consent_preferences"] as? [String: Any])
+        XCTAssertEqual((prefs["cookieOptions"] as? [String: Bool])?["dg-category-marketing"], true)
         let stamp = try XCTUnwrap(storage.loadDecisionTs())
         XCTAssertGreaterThan(stamp, recordTs)
         XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, stamp)
