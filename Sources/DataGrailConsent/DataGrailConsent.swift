@@ -491,6 +491,10 @@ public extension DataGrailConsent {
     ///   when it was made after the record's latest decision (TRUST-3223). A device returning with
     ///   a choice older than one the user made elsewhere (for example a revocation on the web)
     ///   adopts the record instead of undoing it.
+    /// - A write stamped exactly one second after the record it was written over (a save made just
+    ///   after adopting a record from a device whose clock is ahead) may have tied that record at
+    ///   the edge, so it is not recorded as synced. The next re-sync then adopts the record again
+    ///   and fires the consent-changed listener, even when nothing changed.
     /// When there is nothing to write, the call succeeds without writing.
     ///
     /// What the SDK cannot detect: it cannot tell whether a pre-login choice was made by the
@@ -608,10 +612,13 @@ public extension DataGrailConsent {
     ///     categories reached the record but the SDK was released before the CCPA write could be
     ///     sent. The flag is still stored and pending, so the next successful
     ///     ``setUserIdentifier(_:apiKey:trackingSignal:getSignature:completion:)`` for that user
-    ///     writes it. Once the SDK is initialized, do not retry the whole call on a failure: the
-    ///     choice is already recorded here. A call made before ``initialize(configUrl:completion:)``
-    ///     has succeeded also fails with `.notInitialized`, but stores nothing: make it again after
-    ///     initialization succeeds.
+    ///     writes it. Do not retry the whole call on that failure: the choice is already recorded
+    ///     here. The one `.notInitialized` that stores nothing is a call made before
+    ///     ``initialize(configUrl:completion:)`` created an SDK instance (it was never called, or
+    ///     only with a config URL it rejected): make the call again after initializing. A
+    ///     call made while `initialize` is still loading the config, or after it failed, does reach
+    ///     the SDK: it stores the flag and succeeds, and the flag rides the next Universal Consent
+    ///     write as described above.
     @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
     func setCcpaOptout(_ optedOut: Bool, completion: ((Result<Void, ConsentError>) -> Void)? = nil) {
         guard let manager else {

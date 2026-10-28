@@ -425,14 +425,15 @@ extension UniversalConsentDecisionTsTests {
         XCTAssertLessThan(try XCTUnwrap(storage.loadDecisionTs()), recordTs, "the save keeps its own time")
     }
 
-    /// A mid-read save over a record far ahead of this clock (this clock is behind the edge's, which
-    /// clamps to its own now + 300 s) is stamped one second after the record, never capped below it:
-    /// a capped stamp would be older than the record, and the next re-sync would adopt the record
-    /// over the save. It is not recorded as synced; the next re-sync finds it on the record and keeps it.
+    /// A mid-read save over a record 300-599 s ahead of this clock (this clock is behind the edge's,
+    /// which clamps to its own now + 300 s) is stamped one second after the record, never capped at
+    /// the edge's clamp: a capped stamp would be older than the record, and the next re-sync would
+    /// adopt the record over the save. The stamp is still within the stored tolerance, so it reads
+    /// back. It is not recorded as synced; the next re-sync finds it on the record and keeps it.
     func testAMidReadSaveOverARecordFarAheadIsStampedAfterItUncapped() throws {
         try bindAfterFirstSync()
         try save(marketing: false)
-        let recordTs = ConsentStorage.nowSeconds() + 1000
+        let recordTs = ConsentStorage.nowSeconds() + 400
 
         let outcome = try resyncSavingDuringTheRead(foundRecordJSON(marketing: false, updatedAt: recordTs))
 
@@ -440,6 +441,7 @@ extension UniversalConsentDecisionTsTests {
         XCTAssertEqual(storedMarketing(), true)
         let body = try XCTUnwrap(writtenBody())
         XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, recordTs + 1, "after the record, not capped")
+        XCTAssertEqual(storage.loadDecisionTs(), recordTs + 1, "past the edge's clamp, still readable")
         XCTAssertNil(storage.loadSyncState(), "a stamp one past the record may tie it at the edge's clamp")
 
         // The edge stored the save (its clock is past the record's clamp second): the next re-sync
@@ -477,6 +479,47 @@ extension UniversalConsentDecisionTsTests {
         XCTAssertEqual((prefs["cookieOptions"] as? [String: Bool])?["dg-category-marketing"], true)
         XCTAssertEqual((body["decision_ts"] as? NSNumber)?.int64Value, recordTs + 1)
         XCTAssertEqual(storedMarketing(), true)
+    }
+
+    /// A tied save written again by the next re-sync is still one second past the unchanged record,
+    /// so that retry may tie it too. With this clock 10 s ahead of the edge's (the record sits at the
+    /// edge's clamp, 290 s past this clock), the stamp passes this device's own clamp check, so a
+    /// retry that forgot the uncertainty would be recorded as synced and the following re-sync would
+    /// adopt the record over the save. It stays unsynced until a read finds the save on the record.
+    func testATiedSaveRetriedUnderAClockAheadOfTheEdgeIsNotRecordedAsSynced() throws {
+        try bindAfterFirstSync()
+        try save(marketing: false)
+        let recordTs = ConsentStorage.nowSeconds() + ConsentStorage.decisionTsFutureToleranceSeconds - 10
+
+        XCTAssertNoThrow(try resyncSavingDuringTheRead(foundRecordJSON(marketing: false, updatedAt: recordTs)).get())
+        XCTAssertEqual(storage.loadDecisionTs(), recordTs + 1)
+        XCTAssertTrue(ConsentManager.edgeStoresAsSent(recordTs + 1), "this clock alone would call it stored")
+        XCTAssertNil(storage.loadSyncState())
+
+        // Second POST: the record is unchanged (the edge kept it on the tie), so the save is written
+        // again, and in the same edge second it ties again.
+        network.methods = []
+        network.postBodies = []
+        network.getResult = .success(foundRecordJSON(marketing: false, updatedAt: recordTs))
+        XCTAssertNoThrow(try sync().get())
+        XCTAssertEqual(network.methods, [.get, .post])
+        XCTAssertEqual((try XCTUnwrap(writtenBody())["decision_ts"] as? NSNumber)?.int64Value, recordTs + 1)
+        XCTAssertNil(storage.loadSyncState(), "the retry may have tied too: not recorded as synced")
+
+        // Third read: still unchanged, so the save is written again rather than adopted over.
+        network.methods = []
+        network.postBodies = []
+        XCTAssertNoThrow(try sync().get())
+        XCTAssertEqual(network.methods, [.get, .post], "the save is written again, not adopted over")
+        XCTAssertEqual(storedMarketing(), true)
+
+        // Once a read finds the save on the record, it is adopted and recorded as synced.
+        network.methods = []
+        network.getResult = .success(foundRecordJSON(marketing: true, updatedAt: recordTs + 1))
+        XCTAssertNoThrow(try sync().get())
+        XCTAssertEqual(network.methods, [.get])
+        XCTAssertEqual(storedMarketing(), true)
+        XCTAssertNotNil(storage.loadSyncState(), "a read that found the save settles it")
     }
 
     /// A save that lands after an adopting re-sync persisted the record, before the sync applies
