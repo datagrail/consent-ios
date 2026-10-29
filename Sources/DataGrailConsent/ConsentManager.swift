@@ -976,16 +976,38 @@ extension ConsentManager {
             writesRegardless: savedDuringRead, onRehydrated: onRehydrated
         )
         guard let writeChoice else { return (nil, hasLocalChoice) }
-        guard savedDuringRead else { return (SyncWrite(writeChoice, decisionTs: localDecisionTs), hasLocalChoice) }
-        let (decisionTs, stampedPastRecord) = midReadSaveDecisionTs(outcome)
-        return (SyncWrite(writeChoice, decisionTs: decisionTs, stampedPastRecord: stampedPastRecord), hasLocalChoice)
+        let decisionTs = savedDuringRead ? midReadSaveDecisionTs(outcome) : localDecisionTs
+        let write = SyncWrite(
+            writeChoice, decisionTs: decisionTs,
+            stampedPastRecord: Self.isOneSecondPastRecord(decisionTs, outcome)
+        )
+        return (write, hasLocalChoice)
+    }
+
+    /// Whether a write over a found record carries a decision time exactly one second past the
+    /// record's: the stamp ``midReadSaveDecisionTs(_:)`` gives, or a monotonic stamp right after an
+    /// adopt. Derived from the stored time and the record, not from how the write was built, so a
+    /// later re-sync that writes the same save again over the unchanged record (the record won the
+    /// tie) is flagged too: the uncertainty lasts until a read finds the save on the record. A retry
+    /// built without it would pass ``edgeStoresAsSent(_:now:)`` on a clock a few seconds ahead of
+    /// the edge's, be recorded as synced although the edge kept the record, and the next re-sync
+    /// would then adopt the record over the save.
+    private static func isOneSecondPastRecord(_ decisionTs: Int64?, _ outcome: RehydrateOutcome) -> Bool {
+        guard outcome.raw != nil, let decisionTs, let recordTs = outcome.recordDecisionTs else { return false }
+        return decisionTs == recordTs + 1
     }
 
     /// Whether this sync may record `write` as synced, i.e. the edge surely stores it as sent. Not a
-    /// save stamped one second past the record (``midReadSaveDecisionTs(_:)``): that stamp ties a
+    /// write stamped one second past the record (``isOneSecondPastRecord(_:_:)``): that stamp ties a
     /// record sitting at the edge's future clamp, and this device cannot see the edge's clock, so
     /// whether it landed is left to the next re-sync (which adopts it if it did, and writes it again
     /// if the record won the tie). Any other write: ``edgeStoresAsSent(_:now:)``, one clock read.
+    ///
+    /// This holds whether or not a tie was possible (the edge's clock is unknown here), so after
+    /// such a write the next re-sync is never `unchangedSinceSync`: it runs the full adopt, which
+    /// stores the record again and fires `onRehydrated` (the host's consent-changed listener) with
+    /// state that did not change. That extra callback is the cost of never recording a lost save as
+    /// synced.
     private static func landsAsSent(_ write: SyncWrite) -> Bool {
         !write.stampedPastRecord && edgeStoresAsSent(write.decisionTs)
     }
@@ -1072,19 +1094,26 @@ extension ConsentManager {
     /// its own now + 300 s, so the record already sits at or below that clamp, and one second past it
     /// is stored as sent once the edge's clock has moved past the record's clamp second. When it has
     /// not (a record at the clamp, written in the same second), the edge restamps the save to the
-    /// clamp and the tie keeps the record. So the second value (`stampedPastRecord`) tells
-    /// ``applySyncOutcome`` not to record the save as synced: the next re-sync then either finds the
-    /// save on the record and adopts it, or finds the record unchanged, sees the save as newer and
-    /// writes it again. (A record more than 599 s ahead of this clock, i.e. this clock is that far
-    /// behind the edge's, puts the stamp past the stored tolerance, so it reads back as unknown: the
-    /// write still lands, but in that same-second tie the next re-sync adopts the record.)
-    private func midReadSaveDecisionTs(_ outcome: RehydrateOutcome) -> (Int64?, stampedPastRecord: Bool) {
+    /// clamp and the tie keeps the record. So such a write is not recorded as synced
+    /// (``isOneSecondPastRecord(_:_:)``): the next re-sync then either finds the save on the record
+    /// and adopts it, or finds the record unchanged, sees the save as newer and writes it again.
+    ///
+    /// Residual limit: the stamp is read back only up to this clock + 600 s
+    /// (``ConsentStorage/decisionTsStoredToleranceSeconds``), and the edge stores a record at most at
+    /// its own now + 300 s. So when this clock is more than about 300 s behind the edge's, the stamp
+    /// can be past that tolerance and ``ConsentStorage/loadDecisionTs(now:)`` returns `nil`. The write
+    /// is still sent with the stamp, but if it tied, the next re-sync cannot see the save as newer
+    /// and adopts the record over it. If it landed, the user's NEXT choice on this device is stamped
+    /// with this clock's now, before the record that now holds the stamp, and the next re-sync adopts
+    /// the record over that newer choice without notice. That repeats on every later choice until
+    /// this clock catches up. An adopt of a record that far ahead has the same limit, so it is not new.
+    private func midReadSaveDecisionTs(_ outcome: RehydrateOutcome) -> Int64? {
         let saved = storage.loadDecisionTs()
         guard outcome.raw != nil, let saved, let recordTs = outcome.recordDecisionTs, saved <= recordTs
-        else { return (saved, false) }
+        else { return saved }
         let stamp = recordTs + 1
         storage.saveDecisionTs(stamp)
-        return (stamp, true)
+        return stamp
     }
 
     /// The one write rule for a re-sync's local choice over what the read found: `savedDuringRead`
@@ -1461,7 +1490,8 @@ extension ConsentManager {
         /// Sent as a CCPA-only write: `preferences` is not sent.
         let ccpaOnly: Bool
 
-        /// `decisionTs` was moved one second past the found record's (``midReadSaveDecisionTs(_:)``).
+        /// `decisionTs` is exactly one second past the found record's (``isOneSecondPastRecord(_:_:)``),
+        /// so it may tie the record at the edge's clamp and is not recorded as synced.
         let stampedPastRecord: Bool
 
         /// A write of `choice` itself: the record holds it once it lands.
