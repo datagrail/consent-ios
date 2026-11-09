@@ -5,6 +5,9 @@ on:
     types: [opened, synchronize, reopened]
   merge_group:
 
+permissions:
+  contents: read
+
 jobs:
   TruffleHog:
     # Doesn't need to run on merge queue
@@ -12,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Secrets Scan - TruffleHog OSS
@@ -21,3 +24,4 @@ jobs:
           path: ./
           base: ${{ github.event.pull_request.base.sha }}
           head: ${{ github.event.pull_request.head.sha }}
+          version: "3.94.1"
