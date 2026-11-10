@@ -1,27 +1,12 @@
-name: trufflehog
+name: Secrets Scan - TruffleHog
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
   merge_group:
 
 permissions:
   contents: read
 
 jobs:
-  TruffleHog:
-    # Doesn't need to run on merge queue
-    if: github.event_name != 'merge_group'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - name: Secrets Scan - TruffleHog OSS
-        uses: trufflesecurity/trufflehog@586f66d7886cd0b037c7c245d4a6e34ef357ab10 # v3.94.1
-        with:
-          path: ./
-          base: ${{ github.event.pull_request.base.sha }}
-          head: ${{ github.event.pull_request.head.sha }}
-          version: "3.94.1"
+  trufflehog:
+    uses: datagrail/dg-github-actions/.github/workflows/secrets-scanning.yml@7d41855d28a11c20aae0ac269580059a161f87f0 # v1.4.0
