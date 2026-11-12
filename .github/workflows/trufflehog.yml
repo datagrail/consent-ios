@@ -1,0 +1,32 @@
+name: Secrets Scan - TruffleHog
+
+# Standalone copy, kept in sync with datagrail/dg-github-actions' reusable
+# secrets-scanning.yml. This repo is public and GitHub forbids a public repo from
+# calling a reusable workflow in an internal repo, so it can't share that workflow.
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  TruffleHog:
+    # Only run on pull_request: the scan reads github.event.pull_request.base/head. An allowlist
+    # fails closed, and merge-queue runs skip (a skipped required check counts as passing).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Secrets Scan - TruffleHog OSS
+        uses: trufflesecurity/trufflehog@31ce31ee1abbcc7dc8eee5764c17121c3044c8b2 # v3.99.7
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          # --fail-on-scan-errors fails closed on an incomplete scan instead of passing silently.
+          extra_args: --results=verified,unknown --fail-on-scan-errors
