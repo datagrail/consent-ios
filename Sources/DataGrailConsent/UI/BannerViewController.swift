@@ -156,9 +156,12 @@
         ) {
             super.viewWillTransition(to: size, with: coordinator)
             let progress = scrollProgress()
-            coordinator.animate(alongsideTransition: nil) { [weak self] _ in
-                self?.restoreScrollProgress(progress)
-            }
+            // Restore alongside the animation so the position moves with the reflow instead of snapping afterwards;
+            // restore again on completion in case the final layout settled differently.
+            coordinator.animate(
+                alongsideTransition: { [weak self] _ in self?.restoreScrollProgress(progress) },
+                completion: { [weak self] _ in self?.restoreScrollProgress(progress) }
+            )
         }
 
         /// Scroll position as a 0...1 fraction of the scrollable range. A size change alters the content
