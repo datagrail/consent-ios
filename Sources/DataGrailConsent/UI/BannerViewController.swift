@@ -151,6 +151,38 @@
             renderLayer(currentLayerKey)
         }
 
+        override public func viewWillTransition(
+            to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator
+        ) {
+            super.viewWillTransition(to: size, with: coordinator)
+            let progress = scrollProgress()
+            // Restore alongside the animation so the position moves with the reflow instead of snapping afterwards;
+            // restore again on completion in case the final layout settled differently.
+            coordinator.animate(
+                alongsideTransition: { [weak self] _ in self?.restoreScrollProgress(progress) },
+                completion: { [weak self] _ in self?.restoreScrollProgress(progress) }
+            )
+        }
+
+        /// Scroll position as a 0...1 fraction of the scrollable range. A size change alters the content
+        /// height, so the absolute offset can't be carried across it.
+        func scrollProgress() -> CGFloat {
+            let maxOffset = maxScrollOffsetY()
+            guard maxOffset > 0 else { return 0 }
+            return min(max((scrollView.contentOffset.y + scrollView.adjustedContentInset.top) / maxOffset, 0), 1)
+        }
+
+        func restoreScrollProgress(_ progress: CGFloat) {
+            view.layoutIfNeeded()
+            let maxOffset = max(maxScrollOffsetY(), 0)
+            scrollView.contentOffset.y = progress * maxOffset - scrollView.adjustedContentInset.top
+        }
+
+        private func maxScrollOffsetY() -> CGFloat {
+            let inset = scrollView.adjustedContentInset
+            return scrollView.contentSize.height + inset.top + inset.bottom - scrollView.bounds.height
+        }
+
         // MARK: - UI Setup
 
         private func setupUI() {
@@ -206,8 +238,12 @@
             // Container constraints - centered with 90% height within safe area
             NSLayoutConstraint.activate([
                 containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-                containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-                containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+                containerView.leadingAnchor.constraint(
+                    equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 20
+                ),
+                containerView.trailingAnchor.constraint(
+                    equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20
+                ),
                 containerView.heightAnchor.constraint(equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.9),
             ])
 
@@ -229,8 +265,8 @@
             // Container constraints - full screen
             NSLayoutConstraint.activate([
                 containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-                containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                containerView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+                containerView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
                 containerView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             ])
 
