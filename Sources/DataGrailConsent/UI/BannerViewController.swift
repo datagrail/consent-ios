@@ -47,6 +47,8 @@
         private let contentStackView = UIStackView()
         private let closeButton = UIButton(type: .system)
         private var scrollViewTopConstraint: NSLayoutConstraint?
+        /// Scroll fraction captured at the start of a size transition, held until the layout it triggers settles.
+        private var pendingScrollProgress: CGFloat?
 
         // MARK: - Initialization
 
@@ -156,12 +158,36 @@
         ) {
             super.viewWillTransition(to: size, with: coordinator)
             let progress = scrollProgress()
-            // Restore alongside the animation so the position moves with the reflow instead of snapping afterwards;
-            // restore again on completion in case the final layout settled differently.
+            pendingScrollProgress = progress
+            // Restore alongside the animation so the position moves with the reflow instead of snapping afterwards.
+            // The bottom safe area (home indicator) and, on a fold, the new display's insets can settle after this
+            // transition ends, so the fraction stays pending and is re-applied on each layout and inset change.
             coordinator.animate(
                 alongsideTransition: { [weak self] _ in self?.restoreScrollProgress(progress) },
-                completion: { [weak self] _ in self?.restoreScrollProgress(progress) }
+                completion: { [weak self] _ in
+                    self?.restoreScrollProgress(progress)
+                    // Hold one more run-loop turn so insets that settle right after completion are still caught.
+                    DispatchQueue.main.async { [weak self] in
+                        self?.restoreScrollProgress(progress)
+                        if self?.pendingScrollProgress == progress { self?.pendingScrollProgress = nil }
+                    }
+                }
             )
+        }
+
+        override public func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            applyPendingScrollProgress()
+        }
+
+        override public func viewSafeAreaInsetsDidChange() {
+            super.viewSafeAreaInsetsDidChange()
+            applyPendingScrollProgress()
+        }
+
+        private func applyPendingScrollProgress() {
+            guard let progress = pendingScrollProgress else { return }
+            restoreScrollProgress(progress)
         }
 
         /// Scroll position as a 0...1 fraction of the scrollable range. A size change alters the content
