@@ -49,6 +49,10 @@
         private var scrollViewTopConstraint: NSLayoutConstraint?
         /// Scroll fraction captured at the start of a size transition, held until the layout it triggers settles.
         private var pendingScrollProgress: CGFloat?
+        /// Set once the transition has finished, so only layouts after it count toward "settled".
+        private var scrollTransitionCompleted = false
+        /// Insets the pending fraction was last applied against; a layout that finds them unchanged has settled.
+        private var lastRestoredInsets: UIEdgeInsets?
 
         // MARK: - Initialization
 
@@ -159,18 +163,19 @@
             super.viewWillTransition(to: size, with: coordinator)
             let progress = scrollProgress()
             pendingScrollProgress = progress
+            scrollTransitionCompleted = false
+            lastRestoredInsets = nil
             // Restore alongside the animation so the position moves with the reflow instead of snapping afterwards.
-            // The bottom safe area (home indicator) and, on a fold, the new display's insets can settle after this
-            // transition ends, so the fraction stays pending and is re-applied on each layout and inset change.
+            // The bottom safe area (home indicator) and, on a fold, the new display's insets can settle well after
+            // this transition ends (iOS 27.1 on the first unfold), so the fraction stays pending and is re-applied
+            // on each layout and inset change until a layout finds the insets unchanged or the user scrolls.
             coordinator.animate(
                 alongsideTransition: { [weak self] _ in self?.restoreScrollProgress(progress) },
                 completion: { [weak self] _ in
-                    self?.restoreScrollProgress(progress)
-                    // Hold one more run-loop turn so insets that settle right after completion are still caught.
-                    DispatchQueue.main.async { [weak self] in
-                        self?.restoreScrollProgress(progress)
-                        if self?.pendingScrollProgress == progress { self?.pendingScrollProgress = nil }
-                    }
+                    guard let self, self.pendingScrollProgress == progress else { return }
+                    self.restoreScrollProgress(progress)
+                    self.scrollTransitionCompleted = true
+                    self.lastRestoredInsets = self.scrollView.adjustedContentInset
                 }
             )
         }
@@ -188,6 +193,19 @@
         private func applyPendingScrollProgress() {
             guard let progress = pendingScrollProgress else { return }
             restoreScrollProgress(progress)
+            guard scrollTransitionCompleted else { return }
+            let insets = scrollView.adjustedContentInset
+            if insets == lastRestoredInsets {
+                clearPendingScrollProgress()
+            } else {
+                lastRestoredInsets = insets
+            }
+        }
+
+        fileprivate func clearPendingScrollProgress() {
+            pendingScrollProgress = nil
+            scrollTransitionCompleted = false
+            lastRestoredInsets = nil
         }
 
         /// Scroll position as a 0...1 fraction of the scrollable range. A size change alters the content
@@ -244,6 +262,7 @@
 
             // Scroll view
             scrollView.translatesAutoresizingMaskIntoConstraints = false
+            scrollView.delegate = self
             containerView.addSubview(scrollView)
 
             // Content stack view
@@ -359,6 +378,7 @@
         // MARK: - Layer Rendering
 
         private func renderLayer(_ layerKey: String) {
+            clearPendingScrollProgress()
             // Clear current content
             contentStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
@@ -970,4 +990,11 @@
         }
     }
     // swiftlint:enable type_body_length
+
+    extension BannerViewController: UIScrollViewDelegate {
+        /// The user took over the scroll position, so a late inset change must not pull it back.
+        public func scrollViewWillBeginDragging(_: UIScrollView) {
+            clearPendingScrollProgress()
+        }
+    }
 #endif

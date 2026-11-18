@@ -165,5 +165,28 @@
             let maxOffset = scrollView.contentSize.height + inset.top + inset.bottom - scrollView.bounds.height
             XCTAssertEqual(scrollView.contentOffset.y + inset.top, maxOffset, accuracy: 1)
         }
+
+        /// Once the user takes over the scroll, a late inset change must not pull the position back.
+        func testUserScrollEndsPendingRestore() throws {
+            let config = BannerAccessibilityTestHelpers.createConfigWithCategories()
+            let vc = present(.fullScreen, config: config, size: CGSize(width: 400, height: 200))
+            let scrollView = try XCTUnwrap(
+                BannerAccessibilityTestHelpers.findView(in: vc.view) { $0 is UIScrollView } as? UIScrollView
+            )
+            scrollView.contentOffset.y = scrollView.contentSize.height - scrollView.bounds.height
+
+            let newSize = CGSize(width: 300, height: 150)
+            let coordinator = StubTransitionCoordinator()
+            vc.viewWillTransition(to: newSize, with: coordinator)
+            window?.frame = CGRect(origin: .zero, size: newSize)
+            coordinator.runTransition()
+
+            vc.scrollViewWillBeginDragging(scrollView)
+            scrollView.contentOffset.y = 0
+            vc.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 21, right: 0)
+            vc.view.layoutIfNeeded()
+
+            XCTAssertEqual(scrollView.contentOffset.y, -scrollView.adjustedContentInset.top, accuracy: 1)
+        }
     }
 #endif
