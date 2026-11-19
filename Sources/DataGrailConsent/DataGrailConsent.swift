@@ -250,17 +250,18 @@ public class DataGrailConsent {
             return
         }
 
-        manager.savePreferences(preferences) { [weak self] result in
-            if case .success = result {
-                // Notify callback on main thread
-                DispatchQueue.main.async {
-                    self?.onConsentChangedCallback?(preferences)
-                }
+        // The choice is in force as soon as it is stored locally, so notify then rather than on the
+        // backend result: a failed or offline sync is retried from the queue and must not leave the
+        // app tracking against an opt-out.
+        manager.savePreferences(preferences, onLocalSave: { [weak self] in
+            DispatchQueue.main.async {
+                self?.onConsentChangedCallback?(preferences)
             }
+        }, completion: { result in
             DispatchQueue.main.async {
                 completion(result)
             }
-        }
+        })
     }
 
     /// Accept all categories

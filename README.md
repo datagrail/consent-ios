@@ -181,7 +181,7 @@ The SDK never derives `ccpa_optout` from a consent category, ATT or any other si
 | Method | Description |
 |--------|-------------|
 | `trackBannerShown(completion:)` | Record a banner impression event |
-| `onConsentChanged(_:)` | Register a callback invoked whenever preferences change |
+| `onConsentChanged(_:)` | Register a callback invoked whenever preferences change, including when a save's network sync fails |
 
 ### Offline Support
 
@@ -251,6 +251,8 @@ DataGrailConsent.shared.savePreferences(preferences) { result in
     }
 }
 ```
+
+`onConsentChanged` fires as soon as the choice is stored on the device, before the network request and even if it fails. Apply consent there (or read `isCategoryEnabled`) and your app respects an opt-out while offline; the `completion` result only reports whether the sync to DataGrail succeeded, and a failed sync is retried later.
 
 ### Accept All
 
