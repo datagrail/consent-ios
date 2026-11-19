@@ -112,27 +112,66 @@
             func view(forKey key: UITransitionContextViewKey) -> UIView? { nil }
         }
 
-        private func assertScrollFractionSurvivesSizeChange(_ fraction: CGFloat) throws {
+        /// Same range the production code uses, so an inset error in it is not masked by matching zero insets.
+        private func maxOffsetY(_ scrollView: UIScrollView) -> CGFloat {
+            let inset = scrollView.adjustedContentInset
+            return scrollView.contentSize.height + inset.top + inset.bottom - scrollView.bounds.height
+        }
+
+        private func scrollToBottom(_ scrollView: UIScrollView) {
+            scrollView.contentOffset.y = maxOffsetY(scrollView) - scrollView.adjustedContentInset.top
+        }
+
+        private func assertAtBottom(_ scrollView: UIScrollView, file: StaticString = #filePath, line: UInt = #line) {
+            let offset = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+            XCTAssertEqual(offset, maxOffsetY(scrollView), accuracy: 1, file: file, line: line)
+        }
+
+        private func presentScrollable() throws -> (BannerViewController, UIScrollView) {
             let config = BannerAccessibilityTestHelpers.createConfigWithCategories()
             let vc = present(.fullScreen, config: config, size: CGSize(width: 400, height: 200))
             let scrollView = try XCTUnwrap(
                 BannerAccessibilityTestHelpers.findView(in: vc.view) { $0 is UIScrollView } as? UIScrollView
             )
-            let maxOffset = scrollView.contentSize.height - scrollView.bounds.height
-            guard maxOffset > 0 else { return XCTFail("Content must be scrollable") }
+            return (vc, scrollView)
+        }
 
-            scrollView.contentOffset.y = fraction * maxOffset
-            XCTAssertEqual(vc.scrollProgress(), fraction, accuracy: 0.001)
-
+        private func startTransition(_ vc: BannerViewController) -> StubTransitionCoordinator {
             let newSize = CGSize(width: 300, height: 150)
             let coordinator = StubTransitionCoordinator()
             vc.viewWillTransition(to: newSize, with: coordinator)
             window?.frame = CGRect(origin: .zero, size: newSize)
-            coordinator.runTransition()
+            return coordinator
+        }
 
-            let newMaxOffset = scrollView.contentSize.height - scrollView.bounds.height
+        /// A layout pass that changes nothing, like the ones UIKit runs between a transition and a late inset.
+        private func runNoOpLayout(_ vc: BannerViewController) {
+            vc.view.setNeedsLayout()
+            vc.view.layoutIfNeeded()
+        }
+
+        private func applyLateBottomInset(_ vc: BannerViewController) {
+            vc.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 21, right: 0)
+            vc.view.layoutIfNeeded()
+        }
+
+        private func assertScrollFractionSurvivesSizeChange(
+            _ fraction: CGFloat, contentInset: UIEdgeInsets = .zero
+        ) throws {
+            let (vc, scrollView) = try presentScrollable()
+            scrollView.contentInset = contentInset
+            vc.view.layoutIfNeeded()
+            guard maxOffsetY(scrollView) > 0 else { return XCTFail("Content must be scrollable") }
+
+            scrollView.contentOffset.y = fraction * maxOffsetY(scrollView) - scrollView.adjustedContentInset.top
+            XCTAssertEqual(vc.scrollProgress(), fraction, accuracy: 0.001)
+
+            startTransition(vc).runTransition()
+
+            let newMaxOffset = maxOffsetY(scrollView)
             XCTAssertGreaterThan(newMaxOffset, 0)
-            XCTAssertEqual(scrollView.contentOffset.y, fraction * newMaxOffset, accuracy: 1)
+            let offset = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+            XCTAssertEqual(offset, fraction * newMaxOffset, accuracy: 1)
         }
 
         func testScrollPositionAtBottomSurvivesSizeChange() throws {
@@ -140,51 +179,50 @@
         }
 
         func testScrollPositionAtMidpointSurvivesSizeChange() throws {
-            try assertScrollFractionSurvivesSizeChange(0.5)
+            try assertScrollFractionSurvivesSizeChange(
+                0.5, contentInset: UIEdgeInsets(top: 10, left: 0, bottom: 30, right: 0)
+            )
         }
 
-        /// The home-indicator inset can arrive after the transition completes; the bottom must still be the bottom.
+        /// The home-indicator inset can arrive after the transition completes, with unrelated layouts in between;
+        /// the bottom must still be the bottom.
         func testScrollPositionAtBottomSurvivesLateBottomInset() throws {
-            let config = BannerAccessibilityTestHelpers.createConfigWithCategories()
-            let vc = present(.fullScreen, config: config, size: CGSize(width: 400, height: 200))
-            let scrollView = try XCTUnwrap(
-                BannerAccessibilityTestHelpers.findView(in: vc.view) { $0 is UIScrollView } as? UIScrollView
-            )
-            scrollView.contentOffset.y = scrollView.contentSize.height - scrollView.bounds.height
+            let (vc, scrollView) = try presentScrollable()
+            scrollToBottom(scrollView)
 
-            let newSize = CGSize(width: 300, height: 150)
-            let coordinator = StubTransitionCoordinator()
-            vc.viewWillTransition(to: newSize, with: coordinator)
-            window?.frame = CGRect(origin: .zero, size: newSize)
-            coordinator.runTransition()
+            startTransition(vc).runTransition()
+            runNoOpLayout(vc)
+            applyLateBottomInset(vc)
 
-            vc.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 21, right: 0)
-            vc.view.layoutIfNeeded()
-
-            let inset = scrollView.adjustedContentInset
-            let maxOffset = scrollView.contentSize.height + inset.top + inset.bottom - scrollView.bounds.height
-            XCTAssertEqual(scrollView.contentOffset.y + inset.top, maxOffset, accuracy: 1)
+            assertAtBottom(scrollView)
         }
 
-        /// Once the user takes over the scroll, a late inset change must not pull the position back.
+        /// An earlier transition's completion, landing while a later one is still running, must not end the restore.
+        func testOverlappingTransitionsKeepScrollPosition() throws {
+            let (vc, scrollView) = try presentScrollable()
+            scrollToBottom(scrollView)
+
+            let first = startTransition(vc)
+            let second = StubTransitionCoordinator()
+            vc.viewWillTransition(to: CGSize(width: 350, height: 160), with: second)
+            window?.frame = CGRect(origin: .zero, size: CGSize(width: 350, height: 160))
+            first.runTransition()
+            runNoOpLayout(vc)
+            second.runTransition()
+            applyLateBottomInset(vc)
+
+            assertAtBottom(scrollView)
+        }
+
+        /// Once the user moves the scroll position by any means (here a programmatic scroll, as a status-bar tap
+        /// or VoiceOver scroll would), a late inset change must not pull it back.
         func testUserScrollEndsPendingRestore() throws {
-            let config = BannerAccessibilityTestHelpers.createConfigWithCategories()
-            let vc = present(.fullScreen, config: config, size: CGSize(width: 400, height: 200))
-            let scrollView = try XCTUnwrap(
-                BannerAccessibilityTestHelpers.findView(in: vc.view) { $0 is UIScrollView } as? UIScrollView
-            )
-            scrollView.contentOffset.y = scrollView.contentSize.height - scrollView.bounds.height
+            let (vc, scrollView) = try presentScrollable()
+            scrollToBottom(scrollView)
 
-            let newSize = CGSize(width: 300, height: 150)
-            let coordinator = StubTransitionCoordinator()
-            vc.viewWillTransition(to: newSize, with: coordinator)
-            window?.frame = CGRect(origin: .zero, size: newSize)
-            coordinator.runTransition()
-
-            vc.scrollViewWillBeginDragging(scrollView)
-            scrollView.contentOffset.y = 0
-            vc.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 21, right: 0)
-            vc.view.layoutIfNeeded()
+            startTransition(vc).runTransition()
+            scrollView.contentOffset.y = -scrollView.adjustedContentInset.top
+            applyLateBottomInset(vc)
 
             XCTAssertEqual(scrollView.contentOffset.y, -scrollView.adjustedContentInset.top, accuracy: 1)
         }

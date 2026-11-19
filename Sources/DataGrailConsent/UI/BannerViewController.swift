@@ -47,12 +47,12 @@
         private let contentStackView = UIStackView()
         private let closeButton = UIButton(type: .system)
         private var scrollViewTopConstraint: NSLayoutConstraint?
-        /// Scroll fraction captured at the start of a size transition, held until the layout it triggers settles.
+        /// Scroll fraction captured at the start of a size transition, held until the user moves the scroll position.
         private var pendingScrollProgress: CGFloat?
-        /// Set once the transition has finished, so only layouts after it count toward "settled".
-        private var scrollTransitionCompleted = false
-        /// Insets the pending fraction was last applied against; a layout that finds them unchanged has settled.
-        private var lastRestoredInsets: UIEdgeInsets?
+        /// Offset the pending fraction last set; any other offset means the user scrolled, by any means.
+        private var lastRestoredOffsetY: CGFloat?
+        /// Identifies the latest size transition, so an earlier overlapping transition's completion is ignored.
+        private var scrollTransitionGeneration = 0
 
         // MARK: - Initialization
 
@@ -162,50 +162,49 @@
         ) {
             super.viewWillTransition(to: size, with: coordinator)
             let progress = scrollProgress()
+            scrollTransitionGeneration += 1
+            let generation = scrollTransitionGeneration
             pendingScrollProgress = progress
-            scrollTransitionCompleted = false
-            lastRestoredInsets = nil
+            lastRestoredOffsetY = nil
             // Restore alongside the animation so the position moves with the reflow instead of snapping afterwards.
             // The bottom safe area (home indicator) and, on a fold, the new display's insets can settle well after
-            // this transition ends (iOS 27.1 on the first unfold), so the fraction stays pending and is re-applied
-            // on each layout and inset change until a layout finds the insets unchanged or the user scrolls.
+            // this transition ends (iOS 27.1 on the first unfold), with unrelated layouts in between, so the
+            // fraction stays pending and is re-applied on each layout until the user moves the scroll position.
             coordinator.animate(
-                alongsideTransition: { [weak self] _ in self?.restoreScrollProgress(progress) },
+                alongsideTransition: { [weak self] _ in self?.applyPendingScrollProgress() },
                 completion: { [weak self] _ in
-                    guard let self, self.pendingScrollProgress == progress else { return }
-                    self.restoreScrollProgress(progress)
-                    self.scrollTransitionCompleted = true
-                    self.lastRestoredInsets = self.scrollView.adjustedContentInset
+                    guard let self, self.scrollTransitionGeneration == generation else { return }
+                    self.applyPendingScrollProgress()
                 }
             )
         }
 
         override public func viewDidLayoutSubviews() {
             super.viewDidLayoutSubviews()
-            applyPendingScrollProgress()
+            applyPendingScrollProgress(fromLayout: true)
         }
 
+        /// A safe-area change does not always lay out this view, so request one to re-apply the pending fraction.
         override public func viewSafeAreaInsetsDidChange() {
             super.viewSafeAreaInsetsDidChange()
-            applyPendingScrollProgress()
-        }
-
-        private func applyPendingScrollProgress() {
-            guard let progress = pendingScrollProgress else { return }
-            restoreScrollProgress(progress)
-            guard scrollTransitionCompleted else { return }
-            let insets = scrollView.adjustedContentInset
-            if insets == lastRestoredInsets {
-                clearPendingScrollProgress()
-            } else {
-                lastRestoredInsets = insets
+            if pendingScrollProgress != nil {
+                view.setNeedsLayout()
             }
         }
 
-        fileprivate func clearPendingScrollProgress() {
+        /// From a layout callback, only the container is laid out, so this never re-enters `viewDidLayoutSubviews`.
+        private func applyPendingScrollProgress(fromLayout: Bool = false) {
+            guard let progress = pendingScrollProgress else { return }
+            if let lastOffsetY = lastRestoredOffsetY, abs(scrollView.contentOffset.y - lastOffsetY) > 0.5 {
+                return clearPendingScrollProgress()
+            }
+            restoreScrollProgress(progress, fromLayout: fromLayout)
+            lastRestoredOffsetY = scrollView.contentOffset.y
+        }
+
+        private func clearPendingScrollProgress() {
             pendingScrollProgress = nil
-            scrollTransitionCompleted = false
-            lastRestoredInsets = nil
+            lastRestoredOffsetY = nil
         }
 
         /// Scroll position as a 0...1 fraction of the scrollable range. A size change alters the content
@@ -216,8 +215,12 @@
             return min(max((scrollView.contentOffset.y + scrollView.adjustedContentInset.top) / maxOffset, 0), 1)
         }
 
-        func restoreScrollProgress(_ progress: CGFloat) {
-            view.layoutIfNeeded()
+        func restoreScrollProgress(_ progress: CGFloat, fromLayout: Bool = false) {
+            if fromLayout {
+                containerView.layoutIfNeeded()
+            } else {
+                view.layoutIfNeeded()
+            }
             let maxOffset = max(maxScrollOffsetY(), 0)
             scrollView.contentOffset.y = progress * maxOffset - scrollView.adjustedContentInset.top
         }
@@ -262,7 +265,6 @@
 
             // Scroll view
             scrollView.translatesAutoresizingMaskIntoConstraints = false
-            scrollView.delegate = self
             containerView.addSubview(scrollView)
 
             // Content stack view
@@ -990,11 +992,4 @@
         }
     }
     // swiftlint:enable type_body_length
-
-    extension BannerViewController: UIScrollViewDelegate {
-        /// The user took over the scroll position, so a late inset change must not pull it back.
-        public func scrollViewWillBeginDragging(_: UIScrollView) {
-            clearPendingScrollProgress()
-        }
-    }
 #endif
