@@ -47,6 +47,12 @@
         private let contentStackView = UIStackView()
         private let closeButton = UIButton(type: .system)
         private var scrollViewTopConstraint: NSLayoutConstraint?
+        /// Scroll fraction captured at the start of a size transition, held until the user moves the scroll position.
+        private var pendingScrollProgress: CGFloat?
+        /// Offset the pending fraction last set; any other offset means the user scrolled, by any means.
+        private var lastRestoredOffsetY: CGFloat?
+        /// Identifies the latest size transition, so an earlier overlapping transition's completion is ignored.
+        private var scrollTransitionGeneration = 0
 
         // MARK: - Initialization
 
@@ -151,6 +157,79 @@
             renderLayer(currentLayerKey)
         }
 
+        override public func viewWillTransition(
+            to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator
+        ) {
+            super.viewWillTransition(to: size, with: coordinator)
+            let progress = scrollProgress()
+            scrollTransitionGeneration += 1
+            let generation = scrollTransitionGeneration
+            pendingScrollProgress = progress
+            lastRestoredOffsetY = nil
+            // Restore alongside the animation so the position moves with the reflow instead of snapping afterwards.
+            // The bottom safe area (home indicator) and, on a fold, the new display's insets can settle well after
+            // this transition ends (iOS 27.1 on the first unfold), with unrelated layouts in between, so the
+            // fraction stays pending and is re-applied on each layout until the user moves the scroll position.
+            coordinator.animate(
+                alongsideTransition: { [weak self] _ in self?.applyPendingScrollProgress() },
+                completion: { [weak self] _ in
+                    guard let self, self.scrollTransitionGeneration == generation else { return }
+                    self.applyPendingScrollProgress()
+                }
+            )
+        }
+
+        override public func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            applyPendingScrollProgress(fromLayout: true)
+        }
+
+        /// A safe-area change does not always lay out this view, so request one to re-apply the pending fraction.
+        override public func viewSafeAreaInsetsDidChange() {
+            super.viewSafeAreaInsetsDidChange()
+            if pendingScrollProgress != nil {
+                view.setNeedsLayout()
+            }
+        }
+
+        /// From a layout callback, only the container is laid out, so this never re-enters `viewDidLayoutSubviews`.
+        private func applyPendingScrollProgress(fromLayout: Bool = false) {
+            guard let progress = pendingScrollProgress else { return }
+            if let lastOffsetY = lastRestoredOffsetY, abs(scrollView.contentOffset.y - lastOffsetY) > 0.5 {
+                return clearPendingScrollProgress()
+            }
+            restoreScrollProgress(progress, fromLayout: fromLayout)
+            lastRestoredOffsetY = scrollView.contentOffset.y
+        }
+
+        private func clearPendingScrollProgress() {
+            pendingScrollProgress = nil
+            lastRestoredOffsetY = nil
+        }
+
+        /// Scroll position as a 0...1 fraction of the scrollable range. A size change alters the content
+        /// height, so the absolute offset can't be carried across it.
+        func scrollProgress() -> CGFloat {
+            let maxOffset = maxScrollOffsetY()
+            guard maxOffset > 0 else { return 0 }
+            return min(max((scrollView.contentOffset.y + scrollView.adjustedContentInset.top) / maxOffset, 0), 1)
+        }
+
+        func restoreScrollProgress(_ progress: CGFloat, fromLayout: Bool = false) {
+            if fromLayout {
+                containerView.layoutIfNeeded()
+            } else {
+                view.layoutIfNeeded()
+            }
+            let maxOffset = max(maxScrollOffsetY(), 0)
+            scrollView.contentOffset.y = progress * maxOffset - scrollView.adjustedContentInset.top
+        }
+
+        private func maxScrollOffsetY() -> CGFloat {
+            let inset = scrollView.adjustedContentInset
+            return scrollView.contentSize.height + inset.top + inset.bottom - scrollView.bounds.height
+        }
+
         // MARK: - UI Setup
 
         private func setupUI() {
@@ -206,8 +285,12 @@
             // Container constraints - centered with 90% height within safe area
             NSLayoutConstraint.activate([
                 containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-                containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-                containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+                containerView.leadingAnchor.constraint(
+                    equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 20
+                ),
+                containerView.trailingAnchor.constraint(
+                    equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20
+                ),
                 containerView.heightAnchor.constraint(equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.9),
             ])
 
@@ -229,8 +312,8 @@
             // Container constraints - full screen
             NSLayoutConstraint.activate([
                 containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-                containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                containerView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+                containerView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
                 containerView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             ])
 
@@ -297,6 +380,7 @@
         // MARK: - Layer Rendering
 
         private func renderLayer(_ layerKey: String) {
+            clearPendingScrollProgress()
             // Clear current content
             contentStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
