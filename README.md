@@ -274,6 +274,8 @@ DataGrailConsent.shared.showBanner(from: viewController, style: .modal) { prefer
 }
 ```
 
+The completion receives the user's choice once it is stored on the device, even if the sync to DataGrail fails. It is `nil` only when the banner was dismissed or the choice could not be stored.
+
 ### Check Category Status
 
 ```swift
