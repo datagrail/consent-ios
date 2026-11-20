@@ -23,6 +23,7 @@ Major release. See "Upgrading to 2.0.0" in the README for upgrade steps.
 
 ### Changed
 
+- **Behavior change:** `savePreferences`, `acceptAll`, `rejectAll` and the banner now fire `onConsentChanged` as soon as the choice is stored locally, whether or not the `/save_preferences` request succeeds. Before, the callback ran only on a successful request, so an opt-out made offline (or rejected with a 4xx) was stored but never reached an app that applies consent in `onConsentChanged`, which kept tracking until the next launch. The completion still reports the backend result, and a failed request is still queued for retry. A local storage failure still fires nothing. This gating dates from the initial commit (1.0.0).
 - Fetched configs are now validated with `ConfigValidator` before being cached. An invalid config falls back to the cached config, or fails with `.validationError` if none exists, and is not retried.
 - `ConfigValidator` (public) now accepts `ConsentLayerLanguagePickerElement` and applies per-type translation rules: link elements need non-empty `links`, each with translations; category, language picker, tracking details, and browser signal notice elements don't need top-level `translations`. Previously it rejected real published configs.
 - A config-cache write failure no longer discards a freshly fetched, valid config.

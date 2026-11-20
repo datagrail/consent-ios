@@ -245,22 +245,33 @@ public class DataGrailConsent {
         _ preferences: ConsentPreferences,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
+        savePreferences(preferences, didStoreLocally: nil, completion: completion)
+    }
+
+    /// - Parameter didStoreLocally: Called once the choice is persisted, before the backend result
+    private func savePreferences(
+        _ preferences: ConsentPreferences,
+        didStoreLocally: (() -> Void)?,
+        completion: @escaping (Result<Void, ConsentError>) -> Void
+    ) {
         guard let manager else {
             completion(.failure(.notInitialized))
             return
         }
 
-        manager.savePreferences(preferences) { [weak self] result in
-            if case .success = result {
-                // Notify callback on main thread
-                DispatchQueue.main.async {
-                    self?.onConsentChangedCallback?(preferences)
-                }
+        // The choice is in force as soon as it is stored locally, so notify then rather than on the
+        // backend result: a failed or offline sync is retried from the queue and must not leave the
+        // app tracking against an opt-out.
+        manager.savePreferences(preferences, onLocalSave: { [weak self] in
+            didStoreLocally?()
+            DispatchQueue.main.async {
+                self?.onConsentChangedCallback?(preferences)
             }
+        }, completion: { result in
             DispatchQueue.main.async {
                 completion(result)
             }
-        }
+        })
     }
 
     /// Accept all categories
@@ -376,7 +387,8 @@ public class DataGrailConsent {
         /// Show the consent banner UI in modal style
         /// - Parameters:
         ///   - presentingViewController: The view controller to present from
-        ///   - completion: Called when user saves preferences or dismisses (nil if dismissed)
+        ///   - completion: Called with the user's choice once it is stored on the device, even if the sync to
+        ///     DataGrail fails; nil if dismissed or the choice could not be stored
         public func showBanner(
             from presentingViewController: UIViewController,
             completion: @escaping (ConsentPreferences?) -> Void
@@ -389,7 +401,8 @@ public class DataGrailConsent {
         ///   - presentingViewController: The view controller to present from
         ///   - style: Display style (.modal or .fullScreen)
         ///   - textStyleConfig: Optional font overrides for banner text elements
-        ///   - completion: Called when user saves preferences or dismisses (nil if dismissed)
+        ///   - completion: Called with the user's choice once it is stored on the device, even if the sync to
+        ///     DataGrail fails; nil if dismissed or the choice could not be stored
         public func showBanner(
             from presentingViewController: UIViewController,
             style: BannerDisplayStyle,
@@ -414,15 +427,17 @@ public class DataGrailConsent {
                         return
                     }
 
-                    // Save preferences
-                    self.savePreferences(preferences) { result in
+                    // A choice stored on the device is reported even when the sync fails, matching
+                    // `onConsentChanged`; nil is only for a dismissal or a choice that was not stored.
+                    var storedLocally = false
+                    self.savePreferences(preferences, didStoreLocally: { storedLocally = true }, completion: { result in
                         switch result {
                         case .success:
                             completion(preferences)
                         case .failure:
-                            completion(nil)
+                            completion(storedLocally ? preferences : nil)
                         }
-                    }
+                    })
                 }
             )
 
