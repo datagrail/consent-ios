@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.0] - 2026-11-20
 
-Major release. See "Breaking changes" in the README for upgrade steps.
+Major release. See "Upgrading to 2.0.0" in the README for upgrade steps.
 
 ### Added
 
