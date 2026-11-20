@@ -175,9 +175,12 @@ public class ConsentManager {
     /// Save consent preferences
     /// - Parameters:
     ///   - preferences: The preferences to save
-    ///   - completion: Completion handler with result
+    ///   - onLocalSave: Called once the choice is persisted locally, before the backend request,
+    ///     so the choice is applied even when that request fails or the device is offline
+    ///   - completion: Completion handler with the backend result
     public func savePreferences(
         _ preferences: ConsentPreferences,
+        onLocalSave: (() -> Void)? = nil,
         completion: @escaping (Result<Void, ConsentError>) -> Void
     ) {
         guard let config = currentConfig else {
@@ -198,6 +201,8 @@ public class ConsentManager {
                 storage.saveConfigVersion(config.version)
                 storage.clearSyncState()
             }
+
+            onLocalSave?()
 
             // Send to backend
             consentService.savePreferences(

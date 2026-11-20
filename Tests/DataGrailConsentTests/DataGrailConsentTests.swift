@@ -160,6 +160,48 @@ final class DataGrailConsentTests: XCTestCase {
         waitForExpectations(timeout: 5.0)
     }
 
+    // MARK: - onConsentChanged on save
+
+    func testSavePreferences_BackendFails_StillFiresOnConsentChangedAfterLocalSave() throws {
+        let configFile = try XCTUnwrap(Bundle.module.url(forResource: "test-config", withExtension: "json"))
+        let networkClient = MockNetworkClient()
+        networkClient.requestResult = try .success(Data(contentsOf: configFile))
+        let suiteName = "DataGrailConsentTests.savePreferencesOffline"
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        let storage = try ConsentStorage(userDefaults: XCTUnwrap(UserDefaults(suiteName: suiteName)))
+        let instance = DataGrailConsent()
+        let configUrl = try XCTUnwrap(URL(string: "https://consent.example.com/config.json"))
+
+        let initialized = expectation(description: "initialize")
+        instance.initialize(configUrl: configUrl, networkClient: networkClient, storage: storage) { _ in
+            initialized.fulfill()
+        }
+        wait(for: [initialized], timeout: 2.0)
+
+        let notified = expectation(description: "onConsentChanged")
+        notified.expectedFulfillmentCount = 1
+        var notifiedPreferences: ConsentPreferences?
+        instance.onConsentChanged {
+            notifiedPreferences = $0
+            notified.fulfill()
+        }
+        networkClient.requestResult = .failure(.httpError(statusCode: 403, message: "forbidden"))
+
+        let saved = expectation(description: "rejectAll")
+        var outcome: Result<Void, ConsentError>?
+        instance.rejectAll { result in
+            outcome = result
+            saved.fulfill()
+        }
+        wait(for: [saved, notified], timeout: 2.0)
+
+        guard case .failure = try XCTUnwrap(outcome) else { return XCTFail("Expected the backend failure") }
+        let stored = try XCTUnwrap(storage.loadPreferences())
+        XCTAssertTrue(stored.isCustomised)
+        XCTAssertEqual(notifiedPreferences, stored, "the stored choice must reach onConsentChanged")
+    }
+
     func testSavePreferences_CallbackOnMainThread_Always() {
         // This test verifies callbacks are dispatched to main thread
         // Would require a proper setup with mocked manager
