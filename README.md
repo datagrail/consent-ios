@@ -11,7 +11,7 @@ Add the DataGrail pod to your `Podfile`:
 ```ruby
 target 'YourApp' do
   use_frameworks!
-  pod 'DataGrailConsent', '~> 1.5'
+  pod 'DataGrailConsent', '~> 2.0'
 end
 ```
 
@@ -29,15 +29,36 @@ Add the package in Xcode:
 
 1. File > Add Packages
 2. Enter: `https://github.com/datagrail/consent-ios.git`
-3. Select version `1.6.0`
+3. Select version `2.0.0`
 
 Or add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/datagrail/consent-ios.git", from: "1.6.0")
+    .package(url: "https://github.com/datagrail/consent-ios.git", from: "2.0.0")
 ]
 ```
+
+## Upgrading to 2.0.0
+
+2.0.0 contains the following breaking changes. See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
+- **`ConsentError` has a new case, `configNotPublished(statusCode:)`.** A config fetch rejected with a definite 4xx
+  (any 4xx except 408 and 429, including 403) when nothing is cached now fails with `.configNotPublished` instead of
+  `.httpError`, and is not retried. If you `switch` exhaustively over `ConsentError`, add the new case. A cached config
+  is still served as before.
+- **Signed Universal Consent writes use a new signing format.** The HMAC `stringToSign` gains a fifth `provDigest`
+  segment. Servers that verify signatures must reconstruct the 5-segment string (consent-backend #1040). Make sure
+  that verifier is live before shipping an app on 2.0.0, or every signed write will fail verification.
+- **Universal Consent writes now include `ccpa_optout`** (when `universalConsent.sync_optout` is on), taken from
+  `setCcpaOptout`. A found record's `ccpa_optout` replaces the local flag on login.
+- **`setUserIdentifier` login rule changed.** A stored record now replaces local state on login, and a re-sync only
+  writes a local change made after the record's `updated_at`; otherwise it adopts the record. Call
+  `clearUserIdentifier()` on logout. The SDK cannot detect logout on its own.
+- **`setUserIdentifier` with nothing to write now succeeds** instead of failing with "No consent preferences to sync".
+- **Config validation.** Fetched configs are validated before they are cached. An invalid config falls back to the
+  cached one, or fails with `.validationError` when none exists.
+- **`initialize` always calls its completion on the main queue**, on success and failure.
 
 ## Quick Start
 
@@ -128,65 +149,66 @@ DataGrailConsent.shared.initialize(
 
 ### Initialization
 
-| Method | Description |
-|--------|-------------|
-| `DataGrailConsent.shared` | Singleton instance |
-| `initialize(configUrl:completion:)` | Initialize the SDK with a remote config URL. `configUrl` is a `URL`. |
+| Method                                            | Description                                                                                                                                        |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DataGrailConsent.shared`                         | Singleton instance                                                                                                                                 |
+| `initialize(configUrl:completion:)`               | Initialize the SDK with a remote config URL. `configUrl` is a `URL`.                                                                               |
 | `initialize(configUrl:onConfigError:completion:)` | Same, and `onConfigError` receives a config refresh failure the cached config masked (not called on success, on a 304, or when nothing is cached). |
 
 ### Consent Status
 
 These methods throw `ConsentError.notInitialized` if called before `initialize` completes.
 
-| Method | Return Type | Description |
-|--------|-------------|-------------|
-| `shouldDisplayBanner()` | `Bool` | Whether the consent banner should be shown |
-| `hasUserConsent()` | `Bool` | Whether the user has previously saved preferences |
-| `getUserPreferences()` | `ConsentPreferences?` | The user's saved preferences, if any |
-| `getCategories()` | `ConsentPreferences?` | Effective categories (saved preferences or config defaults) |
-| `isCategoryEnabled(_:)` | `Bool` | Whether a specific category is enabled |
-| `getConfig()` | `ConsentConfig?` | The loaded configuration (does not throw) |
+| Method                  | Return Type           | Description                                                 |
+| ----------------------- | --------------------- | ----------------------------------------------------------- |
+| `shouldDisplayBanner()` | `Bool`                | Whether the consent banner should be shown                  |
+| `hasUserConsent()`      | `Bool`                | Whether the user has previously saved preferences           |
+| `getUserPreferences()`  | `ConsentPreferences?` | The user's saved preferences, if any                        |
+| `getCategories()`       | `ConsentPreferences?` | Effective categories (saved preferences or config defaults) |
+| `isCategoryEnabled(_:)` | `Bool`                | Whether a specific category is enabled                      |
+| `getConfig()`           | `ConsentConfig?`      | The loaded configuration (does not throw)                   |
 
 ### Consent Management
 
-| Method | Description |
-|--------|-------------|
+| Method                           | Description                               |
+| -------------------------------- | ----------------------------------------- |
 | `savePreferences(_:completion:)` | Save user preferences and sync to backend |
-| `acceptAll(completion:)` | Accept all consent categories |
-| `rejectAll(completion:)` | Reject all non-essential categories |
-| `reset()` | Clear all stored consent data |
+| `acceptAll(completion:)`         | Accept all consent categories             |
+| `rejectAll(completion:)`         | Reject all non-essential categories       |
+| `reset()`                        | Clear all stored consent data             |
 
 ### CCPA "Do Not Sell or Share"
 
-| Method | Description |
-|--------|-------------|
+| Method                         | Description                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `setCcpaOptout(_:completion:)` | Record the user's explicit CCPA/CPRA "Do Not Sell or Share My Personal Information" choice. iOS has no native DNSMPI signal, so call this from your app's own control. Stored on the device and changes no category. Written to the Universal Consent record as `ccpa_optout` when `universalConsent.sync_optout` is on and the user is signed in via `setUserIdentifier`. |
-| `getCcpaOptout()` | The stored choice (`false` when never set). A login that finds a stored record takes the record's value; `clearUserIdentifier()` resets it to `false`. |
+| `getCcpaOptout()`              | The stored choice (`false` when never set). A login that finds a stored record takes the record's value; `clearUserIdentifier()` resets it to `false`.                                                                                                                                                                                                                     |
 
 The SDK never derives `ccpa_optout` from a consent category, ATT or any other signal.
 
 ### Banner Display
 
-| Method | Description |
-|--------|-------------|
-| `showBanner(from:completion:)` | Present the consent banner modally from a view controller |
-| `showBanner(from:style:completion:)` | Present with a specific `BannerDisplayStyle` |
+| Method                               | Description                                               |
+| ------------------------------------ | --------------------------------------------------------- |
+| `showBanner(from:completion:)`       | Present the consent banner modally from a view controller |
+| `showBanner(from:style:completion:)` | Present with a specific `BannerDisplayStyle`              |
 
 `BannerDisplayStyle` options:
+
 - `.modal` — 90% height sheet with rounded corners (default)
 - `.fullScreen` — Full screen presentation
 
 ### Event Tracking & Callbacks
 
-| Method | Description |
-|--------|-------------|
-| `trackBannerShown(completion:)` | Record a banner impression event |
-| `onConsentChanged(_:)` | Register a callback invoked whenever preferences change, including when a save's network sync fails |
+| Method                          | Description                                             |
+| ------------------------------- | ------------------------------------------------------- |
+| `trackBannerShown(completion:)` | Record a banner impression event                        |
+| `onConsentChanged(_:)`          | Register a callback invoked whenever preferences change |
 
 ### Offline Support
 
-| Method | Description |
-|--------|-------------|
+| Method                              | Description                                                                                              |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `retryPendingRequests(completion:)` | Retry any queued requests that failed while offline. Completion receives `(successCount, failureCount)`. |
 
 ## Models
