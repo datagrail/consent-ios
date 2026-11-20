@@ -82,7 +82,7 @@ public class ConsentService {
     /// ponytail: no build-time version injection exists for this package (podspec version
     /// isn't readable at runtime); keep this in sync manually with DataGrailConsent.podspec's s.version.
     /// `SDKVersionSyncTests` fails the build if this drifts from the podspec.
-    static let sdkVersion = "1.7.0"
+    static let sdkVersion = "2.0.0"
 
     /// Wire schema version this SDK's models are written against: the `package` version of the
     /// dgapp consent_schema `config.proto` vendored under `consent_schema/` (provenance in
